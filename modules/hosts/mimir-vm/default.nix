@@ -50,7 +50,10 @@
       };
 
       home-manager.users.jeeemieee = {
-        imports = [ topLevel.config.flake.modules.homeManager.vscode ];
+        imports = [
+          topLevel.config.flake.modules.homeManager.vscode
+          topLevel.config.flake.modules.homeManager.git
+        ];
         home.stateVersion = "25.11";
 
         # Apply the declared VM mode after Plasma has restored any saved display state

@@ -32,6 +32,7 @@
         assert user.systemd.user.services ? mimir-vm-display;
         assert vm.home-manager.useGlobalPkgs && vm.home-manager.useUserPackages;
         assert vscode.enable && !vscode.mutableExtensionsDir;
+        assert lib.hasSuffix "@users.noreply.github.com" user.programs.git.settings.user.email;
         pkgs.runCommand "mimir-vm-config-check" { } ''
           touch "$out"
         '';
