@@ -4,8 +4,7 @@ Encrypted data lives in the private [nixos-secrets](https://github.com/Jeeemieee
 
 ## Current stage: test-secret decryption verified
 
-The VM's public recipient was enrolled in secrets commit `6b71eb46900f026889995a1f14b0f6fe5d41a966`; the recovery recipient was added in
-`04a83fab6237188902a56287c8d19d7cbd0581c3`, now pinned here. `hostSpec.hasSecrets = true` enables only the harmless test secret. The user confirmed both services active and `400 root:root` permissions in the actual VM, including after reboot. No production credentials are configured.
+The VM's public recipient was enrolled in secrets commit `6b71eb46900f026889995a1f14b0f6fe5d41a966`; the recovery recipient was added in `04a83fab6237188902a56287c8d19d7cbd0581c3`, now pinned here. `hostSpec.hasSecrets = true` enables only the harmless test secret. Decryption in the VM is verified with the commands below, also after a reboot. No production credentials are configured.
 
 The reusable modules in `modules/core/security/personal-secrets.nix` preserve the guest's identity at `/var/lib/sops-nix/key.txt` (root-owned, mode `0600`, directory `0700`). The Ubuntu development identity is never copied into the VM. After the key service succeeds, `sops-nix` decrypts `message` into `/run/secrets/bootstrap-test`, root-owned with mode `0400`.
 
@@ -26,7 +25,6 @@ For a replacement disk or another machine, enroll its own public recipient first
 - Ubuntu test editing key: `~/.config/sops/age/nixos-secrets-dev.agekey`
 - VM test identity: `/var/lib/sops-nix/key.txt` inside the guest disk; never reuse it for a different machine
 - Recovery identity: Bitwarden secure note "nixos-secrets recovery age key"; its recipient is on every creation rule. Restore and recovery-only decryption tested on 2026-10-19
-- Bitwarden can hold a private-key backup; test restoration and maintain independent recovery before introducing important credentials
 - Keep private keys and plaintext outside both Git repositories and the Nix store, including ignored files. The development and experimental VM identities remain test-only
 - The guest's key is not encrypted at rest by this setup. Anyone who can read the VM disk can obtain it; keep production credentials out of this experimental VM
 - Replacing the guest disk creates a new identity and requires enrollment again. Rebuilding with the same disk preserves it
