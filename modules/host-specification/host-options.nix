@@ -28,9 +28,13 @@ let
       type = lib.types.bool;
       default = false;
       description = ''
-        Used to indicate a host does have sops configured yet, as configurations without on secrets need extra care.
-        It goes without saying that this is a temporary switch and as such sops should be configured prompty.
-        '';
+        Whether this host's age recipient is enrolled in the pinned encrypted secrets, so that its
+        configured secrets are enabled. Leave false to generate the host's age key and enrol it first.
+
+        Several inherited modules under modules/users, modules/core and modules/services (for example
+        users/mkusers, core/networking, caddy, tailscale, pocket-id and opencloud) also read this flag and
+        expect the removed futura-secrets data. Do not set it on a host that imports them.
+      '';
     };
     hasZfs = lib.mkOption {
       type = lib.types.bool;
@@ -204,16 +208,10 @@ let
 in
 {
   flake.modules.nixos.hostSpec =
-    { config, lib, inputs, ... }:
+    { ... }:
     {
+      # Hosts supply their own metadata without a mandatory private flake
       options.hostSpec = hostOptions;
-      config.hostSpec = {
-        inherit (inputs.futura-secrets)
-          networking
-          users
-          services
-          ;
-      };
     };
 
   flake.modules.homeManager.hostSpec =

@@ -1,4 +1,12 @@
-# The ever-evolving NixOS configuration
+# Mimir: personal NixOS configuration
+
+Start here: **[Minimal KDE VM setup and usage](docs/MIMIR-VM.md)**.
+
+Personal secrets: **[Private nixos-secrets repository and integration plan](docs/SECRETS.md)**.
+
+The active target is `mimir-vm`, a VM-only trial for `jeeemieee`. The inherited hosts remain below as reference material, but are excluded from personal outputs and their private secrets input has been removed. Their old deployment instructions and helper recipes are **not** the workflow for this VM. Public dependency versions are retained while the personal configuration is established.
+
+## Inherited configuration overview
 
 My personal (hence highly-opiniated) NixOS configuration structured with a [dendritic pattern](https://github.com/mightyiam/dendritic), hosting my personal infrastructure. The dendritic pattern makes every file a flake-parts module, and pairing it with [vic/import-tree](https://github.com/vic/import-tree) makes it a super flexible setup; I can shuffle files around without breaking all the glue-code that's normally required. Host configurations rely on importing flake modules (e.g. `core`) and setting more fine-grained `hostSpec` settings, see [continuum](https://github.com/thmsdelange/nix-futura/tree/main/modules/hosts/continuum/default.nix) as an example of a host configuration.
 

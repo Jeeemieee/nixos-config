@@ -1,5 +1,5 @@
 {
-  description = "My Nixos configuration \"Futura\"";
+  description = "Personal NixOS configuration for Mimir";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
@@ -56,9 +56,9 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    futura-secrets = {
-      url = "git+ssh://git@github.com/thmsdelange/futura-secrets.git?ref=main&shallow=1";
-      inputs = { };
+    nixos-secrets = {
+      url = "git+https://github.com/Jeeemieee/nixos-secrets.git?ref=main";
+      flake = false;
     };
 
     niri = {

@@ -20,6 +20,8 @@
   flake =
     { lib, config, ... }:
     {
+      # The isVM filter below keeps mimir-vm out of the deploy nodes, but it would also drop any
+      # future VM-hosted server such as yggdrasil, so replace it with an explicit opt-in then
       deploy.nodes = lib.mapAttrs' (
         hostname: nixosConfiguration:
         let
@@ -51,6 +53,6 @@
             };
           };
         }
-      ) config.nixosConfigurations;
+      ) (lib.filterAttrs (_: host: !host.config.hostSpec.isVM) config.nixosConfigurations);
     };
 }

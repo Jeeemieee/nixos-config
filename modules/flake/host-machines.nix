@@ -7,7 +7,8 @@
 }:
 let
   prefix = "host-";
-  hostModules = lib.filterAttrs (name: _: lib.hasPrefix prefix name) config.flake.modules.nixos;
+  # Keep inherited hosts as references, not personal build/deployment targets
+  hostModules = lib.filterAttrs (name: _: builtins.elem name [ "host-mimir-vm" ]) config.flake.modules.nixos;
 
   # Evaluate only hostSpec for each host to extract zfs info
   getHostSpec = name: module:
@@ -65,6 +66,10 @@ in
               { nixpkgs.pkgs = pkgs; }
               {
                 home-manager = {
+                  # Use the system package set and install user packages through the system closure
+                  # instead of imperatively into each user's mutable nix profile
+                  useGlobalPkgs = true;
+                  useUserPackages = true;
                   extraSpecialArgs = specialArgs;
                   sharedModules = [
                     config.flake.modules.homeManager.hostSpec
