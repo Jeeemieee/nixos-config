@@ -7,6 +7,7 @@
         let
           vm = config.flake.nixosConfigurations.mimir-vm.config;
           user = vm.home-manager.users.jeeemieee;
+          vscode = user.programs.vscode;
           normalUsers = lib.filterAttrs (_: account: account.isNormalUser) vm.users.users;
         in
         assert builtins.attrNames config.flake.nixosConfigurations == [ "mimir-vm" ];
@@ -30,6 +31,7 @@
         assert !vm.virtualisation.writableStoreUseTmpfs;
         assert user.systemd.user.services ? mimir-vm-display;
         assert vm.home-manager.useGlobalPkgs && vm.home-manager.useUserPackages;
+        assert vscode.enable && !vscode.mutableExtensionsDir;
         pkgs.runCommand "mimir-vm-config-check" { } ''
           touch "$out"
         '';

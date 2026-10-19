@@ -10,6 +10,7 @@ A minimal, persistent NixOS KDE Plasma trial for `jeeemieee`. This is **not** an
 - QEMU user-mode networking with no incoming port forwards and no SSH server
 - Home Manager integration, managing the VM display mode without inherited dotfiles or themes
 - A guest-only age identity and root-only encrypted test secret; see [SECRETS.md](SECRETS.md)
+- VS Code, configured entirely from Nix; see [VS Code](#vs-code)
 
 There are no physical disk mappings, GPU passthrough, home/project shares, friend-specific credentials, Disko layouts, ZFS, or impermanence. The guest mounts the Ubuntu host's `/nix/store` read-only and uses its own persistent writable overlay. Do not use this trial to run untrusted code: it has network access, and it can read the host store. It is not a portable, standalone VM image.
 
@@ -67,6 +68,20 @@ systemctl --user status mimir-vm-display.service --no-pager
 
 The service should be `active (exited)` after a successful login. Its declared target is VM-specific; it is not a monitor policy for the physical laptop or server.
 
+## VS Code
+
+`modules/dev/editors/vscode.nix` defines the reusable `homeManager.vscode` module; the VM imports it for `jeeemieee`. Start it from the application menu or with `code`.
+
+Everything it manages is declared in that file and **read-only** at runtime:
+
+- `settings.json` is a symlink into the Nix store. Telemetry is off, the AI/Copilot UI is disabled, and the theme is Default Dark Modern. Changes made in the settings UI cannot be saved
+- Extensions come only from Nix and are fixed: Nix (`nix-ide`, with `nil` supplied as its language server), Python (with Pylance and debugpy), Jupyter (with its four companion extensions), and C/C++ (`cpptools`). The extensions directory is read-only, so installing from the Marketplace fails by design
+- VS Code and its extensions never update themselves; versions change only when `flake.lock` does
+
+To change anything, edit `vscode.nix`, rebuild, and relaunch the VM. Pylance, `cpptools`, and VS Code itself are unfree; the repository already permits unfree packages. Home Manager uses the system package set (`useGlobalPkgs`) and installs user packages through the system closure (`useUserPackages`), so `code` comes from `/etc/profiles/per-user/jeeemieee` rather than a mutable user profile. Both are set for every host in `modules/flake/host-machines.nix`.
+
+Not covered: compilers, Python interpreters/kernels, and CMake tooling come from per-project or later declarative environments. Runtime state, such as the welcome page's progress or window layout, is not configuration and is not declared.
+
 ## Shut down and restart
 
 Use **Application menu → Shut Down**, or run `sudo poweroff` inside the guest. Wait for the QEMU process/window to exit before launching again. Avoid closing the QEMU window or killing the process while the guest is writing data.
@@ -88,6 +103,7 @@ Relevant files:
 - `modules/desktop/environment/kde/default.nix`: reusable stock KDE desktop module
 - `modules/flake/host-machines.nix`: personal host allowlist
 - `modules/flake/checks.nix`: configuration safety and encrypted-manifest checks
+- `modules/dev/editors/vscode.nix`: reusable declarative VS Code
 - `modules/core/security/personal-secrets.nix`: shared key provisioning and opt-in test-secret modules
 
 Other selected applications can be added later without replacing this VM's data disk. The physical `mimir` host will need a separate hardware/boot/storage configuration and its own acceptance tests.
@@ -98,7 +114,7 @@ This keeps the original **flakes + flake-parts + import-tree** (dendritic) archi
 
 `flake.modules.nixos.desktop-kde` defines Plasma/SDDM once and imports the existing shared `desktop` audio module. The VM imports `desktop-kde`; a future physical `mimir` can import exactly the same desktop. Applications added later should likewise be named shared NixOS or Home Manager modules, selected by each host/user rather than copied into every host. A server need not inherit workstation applications.
 
-The account's VM-only initial password, virtual hardware, and temporary host defaults deliberately stay in `host-mimir-vm`. Home Manager currently manages the VM display service; further application and dotfile modules will be added as needed. Do not reuse the VM host wholesale for the physical laptop: create a separate host, reuse the desired shared modules, and add it to the personal host allowlist.
+The account's VM-only initial password, virtual hardware, and temporary host defaults deliberately stay in `host-mimir-vm`. Home Manager currently manages the VM display service and VS Code; further application and dotfile modules will be added as needed. Do not reuse the VM host wholesale for the physical laptop: create a separate host, reuse the desired shared modules, and add it to the personal host allowlist.
 
 The inherited `core` group is intentionally not imported by this VM because it combines friend-specific secrets, security, boot, and storage assumptions. Its files remain unchanged as references, not as a promise that those legacy hosts can still be built without their original private metadata. VM targets are excluded from deploy-rs.
 
@@ -108,7 +124,7 @@ The inherited `core` group is intentionally not imported by this VM because it c
 nix --extra-experimental-features 'nix-command flakes' flake check --no-write-lock-file 'path:'"$PWD"
 ```
 
-Three checks cover this VM. `mimir-vm-config` asserts the policies that matter: the personal-only host list, no auto-login, a single normal account, locked root, password-authenticated sudo, disabled SSH, an enabled firewall, no port forwards, restricted directory sharing, declarative Home Manager packages, and the secrets key's location and permissions. `mimir-vm-secrets` validates the encrypted test secret and the enrollment-only mode without a decryption key. `mimir-vm-system` builds the whole system closure. They complement, rather than replace, a real boot and desktop test.
+Three checks cover this VM. `mimir-vm-config` asserts the policies that matter: the personal-only host list, no auto-login, a single normal account, locked root, password-authenticated sudo, disabled SSH, an enabled firewall, no port forwards, restricted directory sharing, declarative Home Manager packages, a read-only VS Code configuration, and the secrets key's location and permissions. `mimir-vm-secrets` validates the encrypted test secret and the enrollment-only mode without a decryption key. `mimir-vm-system` builds the whole system closure. They complement, rather than replace, a real boot and desktop test.
 
 After booting, check that login, Konsole, networking, sudo, shutdown, and restart work, and that a test file in your home survives restart. Check display scaling, keyboard behavior, and basic desktop responsiveness. Virtual graphics do not validate the laptop's NVIDIA hybrid graphics, suspend, docking, or Secure Boot.
 
