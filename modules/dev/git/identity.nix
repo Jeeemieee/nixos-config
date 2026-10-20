@@ -1,4 +1,4 @@
-# Minimal declared Git identity; hosts and users opt in by importing homeManager.git
+# Minimal declared Git identity and global ignores; hosts and users opt in by importing homeManager.git
 {
   flake.modules.homeManager.git = {
     programs.git = {
@@ -11,6 +11,9 @@
         };
         init.defaultBranch = "main";
       };
+
+      # nix-direnv's per-project cache must never be committed
+      ignores = [ ".direnv/" ];
     };
   };
 }

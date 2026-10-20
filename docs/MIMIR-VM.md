@@ -10,8 +10,9 @@ A minimal, persistent NixOS KDE Plasma trial for `jeeemieee`. This is **not** an
 - QEMU user-mode networking with no incoming port forwards and no SSH server
 - Home Manager integration, managing the VM display mode without inherited dotfiles or themes
 - A guest-only age identity and root-only encrypted test secret; see [SECRETS.md](SECRETS.md)
-- VS Code, configured entirely from Nix; see [VS Code](#vs-code)
-- A declared Git identity (`Jeeemieee`, GitHub noreply email, default branch `main`) from `homeManager.git`
+- VSCodium with free extensions only, configured entirely from Nix; see [VSCodium](#vscodium)
+- System-wide direnv with nix-direnv, so a project's devShell loads automatically in Konsole and VSCodium; see [direnv](#direnv)
+- A declared Git identity (`Jeeemieee`, GitHub noreply email, default branch `main`, global `.direnv/` ignore) from `homeManager.git`
 
 There are no physical disk mappings, GPU passthrough, home/project shares, friend-specific credentials, Disko layouts, ZFS, or impermanence. The guest mounts the Ubuntu host's `/nix/store` read-only and uses its own persistent writable overlay. Do not use this trial to run untrusted code: it has network access, and it can read the host store. It is not a portable, standalone VM image.
 
@@ -69,19 +70,37 @@ systemctl --user status mimir-vm-display.service --no-pager
 
 The service should be `active (exited)` after a successful login. Its declared target is VM-specific; it is not a monitor policy for the physical laptop or server.
 
-## VS Code
+## VSCodium
 
-`modules/dev/editors/vscode.nix` defines the reusable `homeManager.vscode` module; the VM imports it for `jeeemieee`. Start it from the application menu or with `code`.
+`modules/dev/editors/vscode.nix` defines the reusable `homeManager.vscode` module (the name is kept from its VS Code origin); the VM imports it for `jeeemieee`. Start it from the application menu or with `codium`.
 
 Everything it manages is declared in that file and **read-only** at runtime:
 
 - `settings.json` is a symlink into the Nix store. Telemetry is off, the AI/Copilot UI is disabled, and the theme is Default Dark Modern. Changes made in the settings UI cannot be saved
-- Extensions come only from Nix and are fixed: Nix (`nix-ide`, with `nil` supplied as its language server), Python (with Pylance and debugpy), Jupyter (with its four companion extensions), and C/C++ (`cpptools`). The extensions directory is read-only, so installing from the Marketplace fails by design
-- VS Code and its extensions never update themselves; versions change only when `flake.lock` does
+- Extensions come only from Nix and are fixed: Nix (`nix-ide`, with `nil` supplied as its language server), Python (`ms-python.python` and debugpy), basedpyright as the only Python language server (`python.languageServer` is `None`, type checking `standard`), Jupyter (with its four companion extensions), C/C++ through clangd (`vscode-clangd`), CodeLLDB (`vscode-lldb`) for debugging, and direnv (`mkhl.direnv`). The extensions directory is read-only, so installing from the Marketplace fails by design
+- VSCodium and its extensions never update themselves; versions change only when `flake.lock` does
 
-To change anything, edit `vscode.nix`, rebuild, and relaunch the VM. Pylance, `cpptools`, and VS Code itself are unfree; the repository already permits unfree packages. Home Manager uses the system package set (`useGlobalPkgs`) and installs user packages through the system closure (`useUserPackages`), so `code` comes from `/etc/profiles/per-user/jeeemieee` rather than a mutable user profile. Both are set for every host in `modules/flake/host-machines.nix`.
+To change anything, edit `vscode.nix`, rebuild, and relaunch the VM. The editor stack is free software; `mimir-vm-config` rejects unfree extensions. The repository still allows unfree packages for other applications. Home Manager uses the system package set (`useGlobalPkgs`) and installs user packages through the system closure (`useUserPackages`), so `codium` comes from `/etc/profiles/per-user/jeeemieee` rather than a mutable user profile. Both are set for every host in `modules/flake/host-machines.nix`.
 
 Not covered: compilers, Python interpreters/kernels, and CMake tooling come from per-project or later declarative environments. Runtime state, such as the welcome page's progress or window layout, is not configuration and is not declared.
+
+**clangd comes from each project's devShell.** Put `clang-tools` (which provides `clangd`) in the devShell next to the project's compiler, and generate `compile_commands.json` (for CMake: `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`). The extension finds `clangd` on the `PATH` that `mkhl.direnv` loads; update checks are off (`clangd.checkUpdates`). If clangd is missing, the extension offers to download one: decline it and fix the devShell instead. DevShells used for debugging need `hardeningDisable = [ "fortify" ];`: otherwise Nix's compiler wrapper adds `-O2`, so CMake "Debug" builds are optimised and breakpoints land in inlined library code.
+
+**Jupyter is a local override.** nixpkgs downloads `ms-toolsai.jupyter` without a target platform, and that build only contains ARM ZeroMQ libraries, so on x86-64 the extension cannot talk to kernels directly and asks for `pip` and `notebook`. `vscode.nix` therefore uses the `linux-x64` build of the same version, keeps only its x86-64 glibc ZeroMQ libraries, and patches them against the Nix store; a project's devShell only needs `ipykernel`. When nixpkgs bumps the extension, `mimir-vm-config` fails on the version check: set `jupyterVersion` to the new version and update the hash (`nix store prefetch-file` on the Marketplace URL with `?targetPlatform=linux-x64`). Remove the override once nixpkgs downloads the `linux-x64` build itself.
+
+VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk that previously ran VS Code, the old `~/.config/Code` folder is harmless leftover state.
+
+## direnv
+
+`modules/dev/direnv.nix` defines `nixos.direnv`, which enables direnv with nix-direnv for every shell; the VM imports it. It is hooked in only there, not through Home Manager. To load a flake's devShell whenever you enter a project directory:
+
+```bash
+echo 'use flake' > .envrc && direnv allow
+```
+
+Leaving the directory unloads the environment. nix-direnv caches the evaluated shell in `.direnv/` (add it to the project's `.gitignore`; on these machines it is also ignored globally by `homeManager.git`) and keeps it from garbage collection, so re-entering is fast. Every change to `.envrc` must be approved again with `direnv allow`. In VSCodium, `mkhl.direnv` applies the same environment to language servers, debuggers, and Jupyter kernels.
+
+Project flakes must name nixpkgs explicitly, for example `inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";`, and commit their `flake.lock`. A bare `nixpkgs` input is locked through the global registry, which points to nixpkgs-unstable, not the system's pinned nixpkgs.
 
 ## Shut down and restart
 
@@ -104,7 +123,8 @@ Relevant files:
 - `modules/desktop/environment/kde/default.nix`: reusable stock KDE desktop module
 - `modules/flake/host-machines.nix`: personal host allowlist
 - `modules/flake/checks.nix`: configuration safety and encrypted-manifest checks
-- `modules/dev/editors/vscode.nix`: reusable declarative VS Code
+- `modules/dev/editors/vscode.nix`: reusable declarative VSCodium
+- `modules/dev/direnv.nix`: system-wide direnv with nix-direnv
 - `modules/dev/git/identity.nix`: reusable declared Git identity
 - `modules/core/security/personal-secrets.nix`: shared key provisioning and opt-in test-secret modules
 
@@ -116,7 +136,7 @@ This keeps the original **flakes + flake-parts + import-tree** (dendritic) archi
 
 `flake.modules.nixos.desktop-kde` defines Plasma/SDDM once and imports the existing shared `desktop` audio module. The VM imports `desktop-kde`; a future physical `mimir` can import exactly the same desktop. Applications added later should likewise be named shared NixOS or Home Manager modules, selected by each host/user rather than copied into every host. A server need not inherit workstation applications.
 
-The account's VM-only initial password, virtual hardware, and temporary host defaults deliberately stay in `host-mimir-vm`. Home Manager currently manages the VM display service, VS Code and the Git identity; further application and dotfile modules will be added as needed. Do not reuse the VM host wholesale for the physical laptop: create a separate host, reuse the desired shared modules, and add it to the personal host allowlist.
+The account's VM-only initial password, virtual hardware, and temporary host defaults deliberately stay in `host-mimir-vm`. Home Manager currently manages the VM display service, VSCodium and the Git identity; further application and dotfile modules will be added as needed. Do not reuse the VM host wholesale for the physical laptop: create a separate host, reuse the desired shared modules, and add it to the personal host allowlist.
 
 One SSH key per machine, generated on that machine; only public keys are declared; no SSH keys in sops. The VM has no GitHub key.
 
@@ -128,7 +148,7 @@ The inherited `core` group is intentionally not imported by this VM because it c
 nix --extra-experimental-features 'nix-command flakes' flake check --no-write-lock-file 'path:'"$PWD"
 ```
 
-Three checks cover this VM. `mimir-vm-config` asserts the policies that matter: the personal-only host list, no auto-login, a single normal account, locked root, password-authenticated sudo, disabled SSH, an enabled firewall, no port forwards, restricted directory sharing, declarative Home Manager packages, a read-only VS Code configuration, a GitHub noreply Git email, and the secrets key's location and permissions. `mimir-vm-secrets` validates the encrypted test secret and the enrollment-only mode without a decryption key. `mimir-vm-system` builds the whole system closure. They complement, rather than replace, a real boot and desktop test.
+Four checks cover this VM. `mimir-vm-config` asserts the policies that matter: the personal-only host list, no auto-login, a single normal account, locked root, password-authenticated sudo, disabled SSH, an enabled firewall, no port forwards, restricted directory sharing, declarative Home Manager packages, a read-only VSCodium configuration with free extensions only, basedpyright as the only Python language server, a Jupyter override matching the nixpkgs version, telemetry, AI features and update checks off, direnv enabled only at system level, a GitHub noreply Git email, and the secrets key's location and permissions. `mimir-vm-editor-binaries` checks the built extensions: every ELF file is x86-64, Jupyter's x86-64 ZeroMQ library is present, every Node add-on resolves its libraries, and Node can load the ZeroMQ binding. `mimir-vm-secrets` validates the encrypted test secret and the enrollment-only mode without a decryption key. `mimir-vm-system` builds the whole system closure. They complement, rather than replace, a real boot and desktop test.
 
 After booting, check that login, Konsole, networking, sudo, shutdown, and restart work, and that a test file in your home survives restart. Check display scaling, keyboard behavior, and basic desktop responsiveness. Virtual graphics do not validate the laptop's NVIDIA hybrid graphics, suspend, docking, or Secure Boot.
 

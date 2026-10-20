@@ -6,6 +6,7 @@
       imports = [
         "${inputs.nixpkgs}/nixos/modules/virtualisation/qemu-vm.nix"
         topLevel.config.flake.modules.nixos.desktop-kde
+        topLevel.config.flake.modules.nixos.direnv
         topLevel.config.flake.modules.nixos.secrets-test
       ];
 
