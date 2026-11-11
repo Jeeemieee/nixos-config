@@ -8,7 +8,7 @@ A minimal, persistent NixOS KDE Plasma trial for `jeeemieee`. This is **not** an
 - A normal `jeeemieee` account with password-authenticated `sudo`; root login is locked
 - 4 virtual CPUs, 8 GiB RAM, and a dynamically allocated 24 GiB ext4 guest disk
 - QEMU user-mode networking with no incoming port forwards and no SSH server
-- Home Manager integration, managing the VM display mode without inherited dotfiles or themes
+- Home Manager integration, managing the VM display mode
 - A guest-only age identity and root-only encrypted test secret; see [SECRETS.md](SECRETS.md)
 - VSCodium with free extensions only, configured entirely from Nix; see [VSCodium](#vscodium)
 - System-wide direnv with nix-direnv, so a project's devShell loads automatically in Konsole and VSCodium; see [direnv](#direnv)
@@ -18,7 +18,7 @@ A minimal, persistent NixOS KDE Plasma trial for `jeeemieee`. This is **not** an
 - Unfree software limited to an allowlist (Obsidian, Discord, Spotify) in `modules/flake/nixpkgs.nix`
 - Home Manager session variables, such as `EDITOR`, reach every login shell and the Plasma session through an `environment.extraInit` that sources `hm-session-vars.sh`, in the shared Home Manager module of `modules/flake/host-machines.nix`
 
-There are no physical disk mappings, GPU passthrough, home/project shares, friend-specific credentials, Disko layouts, ZFS, or impermanence. The guest mounts the Ubuntu host's `/nix/store` read-only and uses its own persistent writable overlay. Do not use this trial to run untrusted code: it has network access, and it can read the host store. It is not a portable, standalone VM image.
+There are no physical disk mappings, GPU passthrough, home/project shares, Disko layouts, or ZFS. The guest mounts the Ubuntu host's `/nix/store` read-only and uses its own persistent writable overlay. Do not use this trial to run untrusted code: it has network access, and it can read the host store. It is not a portable, standalone VM image.
 
 This uses the generated QEMU launcher directly, **not virt-manager/libvirt**. It will not appear in virt-manager. Building does not boot the VM, install NixOS onto Ubuntu, or modify Ubuntu's bootloader.
 
@@ -35,7 +35,7 @@ nix --extra-experimental-features 'nix-command flakes' build --no-write-lock-fil
 
 `result` is a build-output symlink, not the guest disk. Keep it while using the VM so the required host store paths remain reachable by Nix garbage collection. The explicit `path:` reference includes new, unstaged configuration files without requiring `git add`. Do not put private keys or other secrets in this repository: a path flake copies its source into the Nix store.
 
-The existing public dependency revisions are retained. The friend's private `futura-secrets` input and its otherwise-unused dependency were removed. Your private `nixos-secrets` repository is now a pinned non-flake input; fetching an uncached revision requires GitHub authentication on Ubuntu. This command does not update the lockfile or pass GitHub credentials into the guest.
+Your private `nixos-secrets` repository is a pinned non-flake input; fetching an uncached revision requires GitHub authentication on Ubuntu. This command does not update the lockfile or pass GitHub credentials into the guest.
 
 ## Launch and log in
 
@@ -119,34 +119,32 @@ Home files, settings, and the changed login password persist in `~/.local/state/
 3. Run the validation and build commands below/on this page
 4. Launch again with the **same** `NIX_DISK_IMAGE` path
 
-The launcher directly boots the newly built kernel/system while retaining guest data. Do **not** use the inherited `just rebuild`, bootstrap, Disko, or deploy-rs recipes. Do not run `nixos-rebuild switch` on Ubuntu. For this launcher-based trial, rebuild on Ubuntu rather than switching system configurations inside the guest; it boots the system selected by the launcher, not an in-guest bootloader generation.
+The launcher directly boots the newly built kernel/system while retaining guest data. Do not run `nixos-rebuild switch` on Ubuntu. For this launcher-based trial, rebuild on Ubuntu rather than switching system configurations inside the guest; it boots the system selected by the launcher, not an in-guest bootloader generation.
 
 Relevant files:
 
 - `modules/hosts/mimir-vm/default.nix`: desktop selection, account, locale, and virtual hardware
 - `modules/desktop/environment/kde/default.nix`: reusable stock KDE desktop module
-- `modules/flake/host-machines.nix`: personal host allowlist and shared Home Manager settings, including the session-variable `extraInit`
+- `modules/flake/host-machines.nix`: turns every `host-<name>` module into a system, with shared Home Manager settings, including the session-variable `extraInit`
 - `modules/flake/nixpkgs.nix`: package set and unfree allowlist
 - `modules/flake/checks.nix`: configuration safety and encrypted-manifest checks
 - `modules/dev/editors/vscode.nix`: reusable declarative VSCodium
 - `modules/dev/direnv.nix`: system-wide direnv with nix-direnv
 - `modules/dev/git/identity.nix`: reusable declared Git identity
-- `modules/core/security/personal-secrets.nix`: shared key provisioning and opt-in test-secret modules
+- `modules/security/secrets.nix`: shared key provisioning and opt-in test-secret modules
 - `modules/apps/`: reusable application modules and default applications; see [APPS.md](APPS.md)
 
 Other selected applications can be added later without replacing this VM's data disk. The physical `mimir` host will need a separate hardware/boot/storage configuration and its own acceptance tests.
 
 ## Shared configuration architecture
 
-This keeps the original **flakes + flake-parts + import-tree** (dendritic) architecture; the repository does not use Snowfall. `flake.nix` discovers module files, and `host-machines.nix` assembles the explicitly selected personal hosts. New files under `modules/` must be flake-parts modules, not bare NixOS modules accidentally fed to the import tree.
+The configuration uses **flakes + flake-parts + import-tree** (the [dendritic pattern](https://github.com/mightyiam/dendritic)). `flake.nix` discovers module files, and `host-machines.nix` turns every `flake.modules.nixos.host-<name>` into `nixosConfigurations.<name>`. New files under `modules/` must be flake-parts modules, not bare NixOS modules accidentally fed to the import tree.
 
-`flake.modules.nixos.desktop-kde` defines Plasma/SDDM once and imports the existing shared `desktop` audio module. The VM imports `desktop-kde`; a future physical `mimir` can import exactly the same desktop. Applications added later should likewise be named shared NixOS or Home Manager modules, selected by each host/user rather than copied into every host. A server need not inherit workstation applications.
+`flake.modules.nixos.desktop-kde` defines Plasma/SDDM once and imports the shared `desktop` audio module. The VM imports `desktop-kde`; a future physical `mimir` can import exactly the same desktop. Applications added later should likewise be named shared NixOS or Home Manager modules, selected by each host/user rather than copied into every host. A server need not inherit workstation applications.
 
-The account's VM-only initial password, virtual hardware, and temporary host defaults deliberately stay in `host-mimir-vm`. Home Manager currently manages the VM display service, VSCodium, the Git identity and the user's applications from `modules/apps/`; further dotfile modules will be added as needed. Do not reuse the VM host wholesale for the physical laptop: create a separate host, reuse the desired shared modules, and add it to the personal host allowlist.
+The account's VM-only initial password, virtual hardware, and temporary host defaults deliberately stay in `host-mimir-vm`. Home Manager currently manages the VM display service, VSCodium, the Git identity and the user's applications from `modules/apps/`; further dotfile modules will be added as needed. Do not reuse the VM host wholesale for the physical laptop: create a separate host, reuse the desired shared modules, and add its name to the host list asserted in `modules/flake/checks.nix`.
 
 One SSH key per machine, generated on that machine; only public keys are declared; no SSH keys in sops. The VM has no GitHub key.
-
-The inherited `core` group is intentionally not imported by this VM because it combines friend-specific secrets, security, boot, and storage assumptions. Its files remain unchanged as references, not as a promise that those legacy hosts can still be built without their original private metadata. VM targets are excluded from deploy-rs.
 
 ## Validate
 
@@ -154,7 +152,7 @@ The inherited `core` group is intentionally not imported by this VM because it c
 nix --extra-experimental-features 'nix-command flakes' flake check --no-write-lock-file 'path:'"$PWD"
 ```
 
-Four checks cover this VM. `mimir-vm-config` asserts the policies that matter: the personal-only host list, no auto-login, a single normal account, locked root, password-authenticated sudo, disabled SSH, an enabled firewall, no port forwards, restricted directory sharing, declarative Home Manager packages, a read-only VSCodium configuration with free extensions only, basedpyright as the only Python language server, a Jupyter override matching the nixpkgs version, telemetry, AI features and update checks off, direnv enabled only at system level, a GitHub noreply Git email, the secrets key's location and permissions, `NIXOS_OZONE_WL=1`, Home Manager session variables in login shells, every Brave telemetry and AI policy in the generated policy file with Bitwarden force-installed, the four Thunderbird telemetry preferences set to false, a forced `mimeapps.list`, and that every unfree package in the system and the user's packages is on the allowlist. `mimir-vm-editor-binaries` checks the built extensions: every ELF file is x86-64, Jupyter's x86-64 ZeroMQ library is present, every Node add-on resolves its libraries, and Node can load the ZeroMQ binding. `mimir-vm-secrets` validates the encrypted test secret and the enrollment-only mode without a decryption key. `mimir-vm-system` builds the whole system closure. They complement, rather than replace, a real boot and desktop test.
+Four checks cover this VM. `mimir-vm-config` asserts the policies that matter: the expected host list, no auto-login, a single normal account, locked root, password-authenticated sudo, disabled SSH, an enabled firewall, no port forwards, restricted directory sharing, declarative Home Manager packages, a read-only VSCodium configuration with free extensions only, basedpyright as the only Python language server, a Jupyter override matching the nixpkgs version, telemetry, AI features and update checks off, direnv enabled only at system level, a GitHub noreply Git email, the secrets key's location and permissions, `NIXOS_OZONE_WL=1`, Home Manager session variables in login shells, every Brave telemetry and AI policy in the generated policy file with Bitwarden force-installed, the four Thunderbird telemetry preferences set to false, a forced `mimeapps.list`, and that every unfree package in the system and the user's packages is on the allowlist. `mimir-vm-editor-binaries` checks the built extensions: every ELF file is x86-64, Jupyter's x86-64 ZeroMQ library is present, every Node add-on resolves its libraries, and Node can load the ZeroMQ binding. `mimir-vm-secrets` validates the encrypted test secret and the enrollment-only mode without a decryption key. `mimir-vm-system` builds the whole system closure. They complement, rather than replace, a real boot and desktop test.
 
 After booting, check that login, Konsole, networking, sudo, shutdown, and restart work, and that a test file in your home survives restart. Check display scaling, keyboard behavior, and basic desktop responsiveness. Virtual graphics do not validate the laptop's NVIDIA hybrid graphics, suspend, docking, or Secure Boot.
 

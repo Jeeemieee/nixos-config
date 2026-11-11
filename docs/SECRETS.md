@@ -6,7 +6,7 @@ Encrypted data lives in the private [nixos-secrets](https://github.com/Jeeemieee
 
 The VM's public recipient was enrolled in secrets commit `6b71eb46900f026889995a1f14b0f6fe5d41a966`; the recovery recipient was added in `04a83fab6237188902a56287c8d19d7cbd0581c3`, now pinned here. `hostSpec.hasSecrets = true` enables only the harmless test secret. Decryption in the VM is verified with the commands below, also after a reboot. No production credentials are configured.
 
-The reusable modules in `modules/core/security/personal-secrets.nix` preserve the guest's identity at `/var/lib/sops-nix/key.txt` (root-owned, mode `0600`, directory `0700`). The Ubuntu development identity is never copied into the VM. After the key service succeeds, `sops-nix` decrypts `message` into `/run/secrets/bootstrap-test`, root-owned with mode `0400`.
+The reusable modules in `modules/security/secrets.nix` preserve the guest's identity at `/var/lib/sops-nix/key.txt` (root-owned, mode `0600`, directory `0700`). The Ubuntu development identity is never copied into the VM. After the key service succeeds, `sops-nix` decrypts `message` into `/run/secrets/bootstrap-test`, root-owned with mode `0400`.
 
 Fully shut down the older QEMU instance, then launch the rebuilt `result` using the **same guest disk**, as described in [MIMIR-VM.md](MIMIR-VM.md). In the VM's Konsole:
 
@@ -47,5 +47,3 @@ The checks relevant here:
 - `mimir-vm-system` builds the VM's whole system closure
 
 Decryption itself cannot be checked at build time. It is proven only in a VM whose recipient is enrolled, using the commands above. A fresh disk generates a new identity that the pinned ciphertext does not include, so `sops-install-secrets` fails there until it is enrolled; that is expected, not a fault.
-
-Do not enable the inherited `core` group for secrets support: its old `sops.nix` still refers to the friend's removed input. Use the separate personal modules above.

@@ -1,35 +1,27 @@
 # Mimir: personal NixOS configuration
 
-Start here: **[Minimal KDE VM setup and usage](docs/MIMIR-VM.md)**.
+NixOS configuration for `jeeemieee`. The only host is `mimir-vm`, a KDE Plasma trial in a local QEMU VM that will become the configuration for the laptop `mimir`.
 
-Personal secrets: **[Private nixos-secrets repository and integration plan](docs/SECRETS.md)**.
+- **[Mimir VM](docs/MIMIR-VM.md)**: build, launch, change and validate the VM
+- **[Applications](docs/APPS.md)**: installed programs and how to add more
+- **[Secrets](docs/SECRETS.md)**: the private [nixos-secrets](https://github.com/Jeeemieee/nixos-secrets) repository and its sops-nix integration
 
-The active target is `mimir-vm`, a VM-only trial for `jeeemieee`. The inherited hosts remain below as reference material, but are excluded from personal outputs and their private secrets input has been removed. Their old deployment instructions and helper recipes are **not** the workflow for this VM. Public dependency versions are retained while the personal configuration is established.
+## Layout
 
-## Inherited configuration overview
+Every file under `modules/` is a [flake-parts](https://flake.parts) module, discovered by [import-tree](https://github.com/vic/import-tree) (the [dendritic pattern](https://github.com/mightyiam/dendritic)). Files define named NixOS or Home Manager modules, and hosts select the ones they need.
 
-My personal (hence highly-opiniated) NixOS configuration structured with a [dendritic pattern](https://github.com/mightyiam/dendritic), hosting my personal infrastructure. The dendritic pattern makes every file a flake-parts module, and pairing it with [vic/import-tree](https://github.com/vic/import-tree) makes it a super flexible setup; I can shuffle files around without breaking all the glue-code that's normally required. Host configurations rely on importing flake modules (e.g. `core`) and setting more fine-grained `hostSpec` settings, see [continuum](https://github.com/thmsdelange/nix-futura/tree/main/modules/hosts/continuum/default.nix) as an example of a host configuration.
+| Path | Contents |
+| --- | --- |
+| `modules/hosts/mimir-vm/` | The VM host: account, locale, virtual hardware, selected modules |
+| `modules/apps/` | Desktop applications, fonts and default applications |
+| `modules/desktop/` | KDE Plasma and PipeWire audio |
+| `modules/dev/` | VSCodium, direnv and the Git identity |
+| `modules/security/` | Machine age identity and sops-nix secrets |
+| `modules/host-specification/` | Per-host settings (`hostSpec`) read by shared modules |
+| `modules/flake/` | Flake wiring: hosts, package set and unfree allowlist, checks, dev shell, formatter |
 
-- disko
-- zfs
-- impermanence
-
-## [TODO's](docs/TODO.md)
-
-## Secrets
-
-Using [sops-nix](https://github.com/Mic92/sops-nix) with the secrets hosted in a private repository and pulled into the config as a flake input. Largely inspired by [EmergentMind's guide](https://unmovedcentre.com/posts/secrets-management/). An example of a private secrets repository can be found [here](https://github.com/EmergentMind/nix-secrets-reference/tree/complex).
-
-- Host secrets are decrypted using an age key derived from the host ssh key `/etc/ssh/ssh_host_ed25519_key`
-- User secrets are decrypted using an age key derived from the user ssh key `~/.ssh/id_ed25519`
-- Shared secrets can be accessed by all hosts
+The dev shell (`nix develop`, or automatically through `.envrc` with direnv) provides `sops`, `age` and `ssh-to-age`.
 
 ## Acknowledgements
 
-Inspiration and insights were found in
-
-- [EmergentMind/nix-config](https://github.com/EmergentMind/nix-config)
-- [yomaq/nix-config](https://github.com/yomaq/nix-config)
-- [drupol/infra](https://github.com/drupol/infra)
-- [hyperparabolic/nix-config](https://github.com/hyperparabolic/nix-config)
-- [adamarbour/nix-alchemy](https://github.com/adamarbour/nix-alchemy)
+Started from [thmsdelange/nix-futura](https://github.com/thmsdelange/nix-futura).

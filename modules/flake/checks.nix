@@ -19,7 +19,6 @@
           unfreePackages = builtins.filter (package: package.meta.unfree or false) (vm.environment.systemPackages ++ user.home.packages);
         in
         assert builtins.attrNames config.flake.nixosConfigurations == [ "mimir-vm" ];
-        assert config.flake.deploy.nodes == { };
         assert !vm.services.displayManager.autoLogin.enable;
         assert builtins.attrNames normalUsers == [ "jeeemieee" ];
         assert vm.users.users.root.hashedPassword == "!";

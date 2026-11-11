@@ -1,10 +1,5 @@
-.direnv
-.ruff_cache
-tmp
-
-# From build command testing
+# Build output links from nix build
 result
-*.iso
 
-node_modules
-/.pre-commit-config.yaml
+# nix-direnv cache from .envrc
+.direnv/

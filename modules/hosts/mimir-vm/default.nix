@@ -13,15 +13,8 @@
       ];
 
       # This is a disposable VM target, not the physical laptop configuration
-      hostSpec = {
-        isVM = true;
-        # The existing VM disk's public recipient is in the pinned test ciphertext
-        hasSecrets = true;
-        users.jeeemieee = {
-          name = "jeeemieee";
-          isAdmin = true;
-        };
-      };
+      # The existing VM disk's public recipient is in the pinned test ciphertext
+      hostSpec.hasSecrets = true;
 
       networking = {
         hostName = "mimir-vm";
