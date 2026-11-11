@@ -13,9 +13,10 @@ A minimal, persistent NixOS KDE Plasma trial for `jeeemieee`. This is **not** an
 - VSCodium with free extensions only, configured entirely from Nix; see [VSCodium](#vscodium)
 - System-wide direnv with nix-direnv, so a project's devShell loads automatically in Konsole and VSCodium; see [direnv](#direnv)
 - A declared Git identity (`Jeeemieee`, GitHub noreply email, default branch `main`, global `.direnv/` ignore) from `homeManager.git`
-- Desktop applications from shared modules in `modules/apps/`: Brave with managed privacy policies and a force-installed Bitwarden extension, LibreOffice with an English dictionary, Scribus, Pympress, Thunderbird with telemetry off, Obsidian, Zotero, GIMP, Inkscape, Blender, ParaView, PrusaSlicer, fstl, Discord, Spotify, Bitwarden, Vim as `EDITOR`, btop and tree, plus Office-compatible fonts and declared default applications; see [APPS.md](APPS.md)
+- Desktop applications from shared modules in `modules/apps/`: Brave with managed privacy policies and a force-installed Bitwarden extension, LibreOffice with an English dictionary, Scribus, Pympress, Thunderbird with telemetry off, Obsidian, Zotero, GIMP, Inkscape, Blender, gThumb, ImageMagick, ParaView, PrusaSlicer, fstl, MeshLab, gnuplot, TeX Live (full), Discord, Spotify, VLC, ffmpeg, Teams (`teams-for-linux`), Zoom, RustDesk, Bitwarden, Raspberry Pi Imager, Vim as `EDITOR`, btop, tree, nmap, TestDisk, smartmontools and fastfetch, plus Office-compatible fonts and declared default applications; see [APPS.md](APPS.md)
+- Services from `modules/services/`: Tailscale, Mullvad and eduVPN, rootless Docker, and libvirt with virt-manager; see [APPS.md](APPS.md#services)
 - Electron and Chromium apps run natively on Wayland (`NIXOS_OZONE_WL=1`, set in `nixos.desktop-kde`)
-- Unfree software limited to an allowlist (Obsidian, Discord, Spotify) in `modules/flake/nixpkgs.nix`
+- Unfree software limited to an allowlist (Obsidian, Discord, Spotify, Zoom) in `modules/flake/nixpkgs.nix`
 - Home Manager session variables, such as `EDITOR`, reach every login shell and the Plasma session through an `environment.extraInit` that sources `hm-session-vars.sh`, in the shared Home Manager module of `modules/flake/host-machines.nix`
 
 There are no physical disk mappings, GPU passthrough, home/project shares, Disko layouts, or ZFS. The guest mounts the Ubuntu host's `/nix/store` read-only and uses its own persistent writable overlay. Do not use this trial to run untrusted code: it has network access, and it can read the host store. It is not a portable, standalone VM image.
@@ -133,6 +134,7 @@ Relevant files:
 - `modules/dev/git/identity.nix`: reusable declared Git identity
 - `modules/security/secrets.nix`: shared key provisioning and opt-in test-secret modules
 - `modules/apps/`: reusable application modules and default applications; see [APPS.md](APPS.md)
+- `modules/services/`: VPN clients, rootless Docker and libvirt; see [APPS.md](APPS.md#services)
 
 Other selected applications can be added later without replacing this VM's data disk. The physical `mimir` host will need a separate hardware/boot/storage configuration and its own acceptance tests.
 

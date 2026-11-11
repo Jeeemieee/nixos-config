@@ -10,6 +10,9 @@
         topLevel.config.flake.modules.nixos.secrets-test
         topLevel.config.flake.modules.nixos.browser
         topLevel.config.flake.modules.nixos.fonts
+        topLevel.config.flake.modules.nixos.vpn
+        topLevel.config.flake.modules.nixos.docker
+        topLevel.config.flake.modules.nixos.libvirt
       ];
 
       # This is a disposable VM target, not the physical laptop configuration
@@ -36,7 +39,8 @@
         isNormalUser = true;
         uid = 1000;
         description = "jeeemieee";
-        extraGroups = [ "wheel" "networkmanager" ];
+        # libvirtd manages system VMs and is close to root; docker is rootless and needs no group
+        extraGroups = [ "wheel" "networkmanager" "libvirtd" ];
         initialPassword = "mimir";
       };
       users.users.root.hashedPassword = "!";
@@ -58,6 +62,9 @@
           topLevel.config.flake.modules.homeManager.passwords
           topLevel.config.flake.modules.homeManager.cli
           topLevel.config.flake.modules.homeManager.default-apps
+          topLevel.config.flake.modules.homeManager.meetings
+          topLevel.config.flake.modules.homeManager.tex
+          topLevel.config.flake.modules.homeManager.rpi
         ];
         home.stateVersion = "25.11";
 

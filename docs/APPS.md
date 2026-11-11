@@ -20,20 +20,49 @@ Versions are those of the current `flake.lock` (nixos-26.05).
 | GIMP | `homeManager.graphics` | `gimp` | 3.0.8 | no | Package | Settings, plug-ins |
 | Inkscape | `homeManager.graphics` | `inkscape` | 1.4.4 | no | Package | Settings, extensions |
 | Blender | `homeManager.graphics` | `blender` | 5.1.1 | no | Package | Preferences, add-ons |
+| gThumb | `homeManager.graphics` | `gthumb` | 3.12.10 | no | Package | Settings, catalogues |
+| ImageMagick | `homeManager.graphics` | `imagemagick` | 7.1.2-34 | no | Package (`magick`) | None |
 | ParaView | `homeManager.engineering` | `paraview` | 6.0.1 | no | Package | Settings, state files |
 | PrusaSlicer | `homeManager.engineering` | `prusa-slicer` | 2.9.4 | no | Package | Printer, filament and print profiles, Prusa account |
 | fstl | `homeManager.engineering` | `fstl` | 0.11.1 | no | Package; a menu entry (`fstl.desktop`, nixpkgs installs none) | None |
+| MeshLab | `homeManager.engineering` | `meshlab` | 2025.07 | no | Package | Settings |
+| gnuplot | `homeManager.engineering` | `gnuplot` | 6.0.4 | no | Package | None |
+| TeX Live (full) | `homeManager.tex` | `texliveFull` | 2025 (r78234) | no | Package; every TeX Live package, including `pdflatex`, `lualatex` and `latexmk` | None |
 | Discord | `homeManager.media` | `discord` | 1.0.159 | yes | Package | Login, servers; Discord downloads its own modules into `~/.config/discord` |
 | Spotify | `homeManager.media` | `spotify` | 1.2.90.451 | yes | Package | Login, cache |
+| VLC | `homeManager.media` | `vlc` | 3.0.24 | no | Package | Settings, playlists |
+| ffmpeg | `homeManager.media` | `ffmpeg` | 8.1.3 | no | Package | None |
+| Teams | `homeManager.meetings` | `teams-for-linux` | 2.29.0 | no | Package; unofficial client around Teams for the web | Work account login |
+| Zoom | `homeManager.meetings` | `zoom-us` | 7.1.5.4332 | yes | Package | Login |
+| RustDesk | `homeManager.meetings` | `rustdesk-flutter` | 1.4.5 | no | Package; the Flutter client, since `rustdesk` depends on the unfree `libsciter` | ID, password, trusted devices |
 | Bitwarden | `homeManager.passwords` | `bitwarden-desktop` | 2026.8.0 | no | Package | Login, vault, unlock settings |
 | Bitwarden CLI | `homeManager.passwords` | `bitwarden-cli` | 2026.4.2 | no | Package (`bw`) | Login, session |
 | Vim | `homeManager.cli` | `vim-full` (Home Manager's `programs.vim` default) | 9.2.1252 | no | `programs.vim` with `defaultEditor`, so `EDITOR=vim` | None |
 | btop | `homeManager.cli` | `btop` | 1.4.8 | no | `programs.btop` | None |
 | tree | `homeManager.cli` | `tree` | 2.3.2 | no | Package | None |
+| nmap | `homeManager.cli` | `nmap` | 7.99 | no | Package | None |
+| TestDisk and PhotoRec | `homeManager.cli` | `testdisk` | 7.2 | no | Package; disk access needs `sudo` | None |
+| smartmontools | `homeManager.cli` | `smartmontools` | 7.5 | no | Package (`smartctl`, needs `sudo`) | None |
+| fastfetch | `homeManager.cli` | `fastfetch` | 2.63.1 | no | Package | None |
+| Raspberry Pi Imager | `homeManager.rpi` | `rpi-imager` | 2.0.9 | no | Package | Settings |
 
 VSCodium (`homeManager.vscode`, `vscodium`) is described in [MIMIR-VM.md](MIMIR-VM.md#vscodium); Okular comes with Plasma.
 
-`nixos.desktop-kde` sets `NIXOS_OZONE_WL=1`, so the Electron and Chromium apps (VSCodium, Brave, Obsidian, Discord, Bitwarden, Spotify) run natively on Wayland.
+`nixos.desktop-kde` sets `NIXOS_OZONE_WL=1`, so the Electron and Chromium apps (VSCodium, Brave, Obsidian, Discord, Bitwarden, Spotify, Teams) run natively on Wayland.
+
+## Services
+
+System services come from NixOS modules in `modules/services/`, imported by the host.
+
+| Service | Module | Version | Declared | Manual state |
+| --- | --- | --- | --- | --- |
+| Tailscale | `nixos.vpn` | 1.104.5 | `services.tailscale` | Login (`sudo tailscale up`), device keys in `/var/lib/tailscale` |
+| Mullvad VPN | `nixos.vpn` | 2026.3 | `services.mullvad-vpn` with the desktop app (`mullvad-vpn`) | Account login, settings |
+| eduVPN | `nixos.vpn` | 4.6.0 | Package, plus NetworkManager's OpenVPN plugin | Institution login, the NetworkManager connections it creates |
+| Docker (rootless) | `nixos.docker` | 29.9.2 | `virtualisation.docker.rootless` with `DOCKER_HOST` set; no root daemon and no `docker` group | Images, containers, volumes in `~/.local/share/docker` |
+| libvirt, virt-manager | `nixos.libvirt` | 12.2.0, 5.1.0 | `virtualisation.libvirtd`, `programs.virt-manager`; users need the `libvirtd` group, set by the host | VMs, networks, storage pools |
+
+Docker is rootless because membership of a `docker` group is equivalent to root: any process of that user could start a container that mounts the whole disk. Rootless containers only have the user's own permissions. `mimir-vm-config` rejects a root daemon or `docker` group members. The `libvirtd` group is similarly powerful and must stay out of sandboxes.
 
 ## Default applications
 

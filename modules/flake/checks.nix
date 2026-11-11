@@ -15,7 +15,7 @@
           braveDefaults = builtins.fromJSON vm.environment.etc."brave/policies/managed/default.json".text;
           thunderbird = user.programs.thunderbird.profiles.default;
           # Must match the allowlist in modules/flake/nixpkgs.nix
-          unfreeAllowed = [ "obsidian" "discord" "spotify" ];
+          unfreeAllowed = [ "obsidian" "discord" "spotify" "zoom" ];
           unfreePackages = builtins.filter (package: package.meta.unfree or false) (vm.environment.systemPackages ++ user.home.packages);
         in
         assert builtins.attrNames config.flake.nixosConfigurations == [ "mimir-vm" ];
@@ -69,6 +69,12 @@
         assert (thunderbird.settings."datareporting.policy.dataSubmissionEnabled" or null) == false;
         assert (thunderbird.settings."app.shield.optoutstudies.enabled" or null) == false;
         assert user.xdg.configFile."mimeapps.list".force;
+        # Docker is rootless only: no root daemon, and nobody in a docker group
+        assert vm.virtualisation.docker.rootless.enable && !vm.virtualisation.docker.enable;
+        assert (vm.users.groups.docker.members or [ ]) == [ ];
+        assert builtins.all (account: !(builtins.elem "docker" account.extraGroups)) (builtins.attrValues normalUsers);
+        assert vm.services.tailscale.enable && vm.services.mullvad-vpn.enable;
+        assert vm.virtualisation.libvirtd.enable;
         # Defence in depth: even if the nixpkgs predicate is widened, only allowlisted unfree packages may be installed
         assert builtins.all (package: builtins.elem (lib.getName package) unfreeAllowed) unfreePackages;
         pkgs.runCommand "mimir-vm-config-check" { } ''

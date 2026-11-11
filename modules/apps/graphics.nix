@@ -1,4 +1,4 @@
-# Raster, vector and 3D graphics; users opt in by importing homeManager.graphics
+# Raster, vector and 3D graphics, image viewing and conversion; users opt in by importing homeManager.graphics
 {
   flake.modules.homeManager.graphics =
     { pkgs, ... }:
@@ -7,6 +7,8 @@
         gimp
         inkscape
         blender
+        gthumb
+        imagemagick
       ];
     };
 }

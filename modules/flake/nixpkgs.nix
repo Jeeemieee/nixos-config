@@ -14,6 +14,7 @@
               "obsidian"
               "discord"
               "spotify"
+              "zoom"
             ];
         };
       };

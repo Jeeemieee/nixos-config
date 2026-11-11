@@ -1,4 +1,4 @@
-# Terminal editor and tools; users opt in by importing homeManager.cli
+# Terminal editor, network, disk and system tools; users opt in by importing homeManager.cli
 {
   flake.modules.homeManager.cli =
     { pkgs, ... }:
@@ -10,6 +10,12 @@
       };
       programs.btop.enable = true;
 
-      home.packages = [ pkgs.tree ];
+      home.packages = with pkgs; [
+        tree
+        nmap
+        testdisk
+        smartmontools
+        fastfetch
+      ];
     };
 }

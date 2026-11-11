@@ -1,4 +1,4 @@
-# Visualisation, slicing and STL viewing; users opt in by importing homeManager.engineering
+# Visualisation, plotting, mesh processing, slicing and STL viewing; users opt in by importing homeManager.engineering
 {
   flake.modules.homeManager.engineering =
     { pkgs, ... }:
@@ -7,6 +7,8 @@
         paraview
         prusa-slicer
         fstl
+        meshlab
+        gnuplot
       ];
 
       # nixpkgs' fstl installs no menu entry; this mirrors upstream's xdg/fstlapp-fstl.desktop
