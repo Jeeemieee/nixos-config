@@ -1,6 +1,6 @@
 # Mimir VM
 
-A minimal, persistent NixOS KDE Plasma trial for `jeeemieee`. This is **not** an installer or a configuration for the physical laptop. ParaView, solver environments, backup/sync services, and other applications are deferred until the desktop works well.
+A minimal, persistent NixOS KDE Plasma trial for `jeeemieee`. This is **not** an installer or a configuration for the physical laptop. Solver environments, backup/sync services, and other applications are deferred until the desktop works well.
 
 ## What is included
 
@@ -13,6 +13,10 @@ A minimal, persistent NixOS KDE Plasma trial for `jeeemieee`. This is **not** an
 - VSCodium with free extensions only, configured entirely from Nix; see [VSCodium](#vscodium)
 - System-wide direnv with nix-direnv, so a project's devShell loads automatically in Konsole and VSCodium; see [direnv](#direnv)
 - A declared Git identity (`Jeeemieee`, GitHub noreply email, default branch `main`, global `.direnv/` ignore) from `homeManager.git`
+- Desktop applications from shared modules in `modules/apps/`: Brave with managed privacy policies and a force-installed Bitwarden extension, LibreOffice with an English dictionary, Scribus, Pympress, Thunderbird with telemetry off, Obsidian, Zotero, GIMP, Inkscape, Blender, ParaView, PrusaSlicer, fstl, Discord, Spotify, Bitwarden, Vim as `EDITOR`, btop and tree, plus Office-compatible fonts and declared default applications; see [APPS.md](APPS.md)
+- Electron and Chromium apps run natively on Wayland (`NIXOS_OZONE_WL=1`, set in `nixos.desktop-kde`)
+- Unfree software limited to an allowlist (Obsidian, Discord, Spotify) in `modules/flake/nixpkgs.nix`
+- Home Manager session variables, such as `EDITOR`, reach every login shell and the Plasma session through an `environment.extraInit` that sources `hm-session-vars.sh`, in the shared Home Manager module of `modules/flake/host-machines.nix`
 
 There are no physical disk mappings, GPU passthrough, home/project shares, friend-specific credentials, Disko layouts, ZFS, or impermanence. The guest mounts the Ubuntu host's `/nix/store` read-only and uses its own persistent writable overlay. Do not use this trial to run untrusted code: it has network access, and it can read the host store. It is not a portable, standalone VM image.
 
@@ -80,7 +84,7 @@ Everything it manages is declared in that file and **read-only** at runtime:
 - Extensions come only from Nix and are fixed: Nix (`nix-ide`, with `nil` supplied as its language server), Python (`ms-python.python` and debugpy), basedpyright as the only Python language server (`python.languageServer` is `None`, type checking `standard`), Jupyter (with its four companion extensions), C/C++ through clangd (`vscode-clangd`), CodeLLDB (`vscode-lldb`) for debugging, and direnv (`mkhl.direnv`). The extensions directory is read-only, so installing from the Marketplace fails by design
 - VSCodium and its extensions never update themselves; versions change only when `flake.lock` does
 
-To change anything, edit `vscode.nix`, rebuild, and relaunch the VM. The editor stack is free software; `mimir-vm-config` rejects unfree extensions. The repository still allows unfree packages for other applications. Home Manager uses the system package set (`useGlobalPkgs`) and installs user packages through the system closure (`useUserPackages`), so `codium` comes from `/etc/profiles/per-user/jeeemieee` rather than a mutable user profile. Both are set for every host in `modules/flake/host-machines.nix`.
+To change anything, edit `vscode.nix`, rebuild, and relaunch the VM. The editor stack is free software; `mimir-vm-config` rejects unfree extensions. Other unfree software is limited to an explicit allowlist; see [APPS.md](APPS.md#add-an-unfree-program). Home Manager uses the system package set (`useGlobalPkgs`) and installs user packages through the system closure (`useUserPackages`), so `codium` comes from `/etc/profiles/per-user/jeeemieee` rather than a mutable user profile. Both are set for every host in `modules/flake/host-machines.nix`.
 
 Not covered: compilers, Python interpreters/kernels, and CMake tooling come from per-project or later declarative environments. Runtime state, such as the welcome page's progress or window layout, is not configuration and is not declared.
 
@@ -121,12 +125,14 @@ Relevant files:
 
 - `modules/hosts/mimir-vm/default.nix`: desktop selection, account, locale, and virtual hardware
 - `modules/desktop/environment/kde/default.nix`: reusable stock KDE desktop module
-- `modules/flake/host-machines.nix`: personal host allowlist
+- `modules/flake/host-machines.nix`: personal host allowlist and shared Home Manager settings, including the session-variable `extraInit`
+- `modules/flake/nixpkgs.nix`: package set and unfree allowlist
 - `modules/flake/checks.nix`: configuration safety and encrypted-manifest checks
 - `modules/dev/editors/vscode.nix`: reusable declarative VSCodium
 - `modules/dev/direnv.nix`: system-wide direnv with nix-direnv
 - `modules/dev/git/identity.nix`: reusable declared Git identity
 - `modules/core/security/personal-secrets.nix`: shared key provisioning and opt-in test-secret modules
+- `modules/apps/`: reusable application modules and default applications; see [APPS.md](APPS.md)
 
 Other selected applications can be added later without replacing this VM's data disk. The physical `mimir` host will need a separate hardware/boot/storage configuration and its own acceptance tests.
 
@@ -136,7 +142,7 @@ This keeps the original **flakes + flake-parts + import-tree** (dendritic) archi
 
 `flake.modules.nixos.desktop-kde` defines Plasma/SDDM once and imports the existing shared `desktop` audio module. The VM imports `desktop-kde`; a future physical `mimir` can import exactly the same desktop. Applications added later should likewise be named shared NixOS or Home Manager modules, selected by each host/user rather than copied into every host. A server need not inherit workstation applications.
 
-The account's VM-only initial password, virtual hardware, and temporary host defaults deliberately stay in `host-mimir-vm`. Home Manager currently manages the VM display service, VSCodium and the Git identity; further application and dotfile modules will be added as needed. Do not reuse the VM host wholesale for the physical laptop: create a separate host, reuse the desired shared modules, and add it to the personal host allowlist.
+The account's VM-only initial password, virtual hardware, and temporary host defaults deliberately stay in `host-mimir-vm`. Home Manager currently manages the VM display service, VSCodium, the Git identity and the user's applications from `modules/apps/`; further dotfile modules will be added as needed. Do not reuse the VM host wholesale for the physical laptop: create a separate host, reuse the desired shared modules, and add it to the personal host allowlist.
 
 One SSH key per machine, generated on that machine; only public keys are declared; no SSH keys in sops. The VM has no GitHub key.
 
@@ -148,7 +154,7 @@ The inherited `core` group is intentionally not imported by this VM because it c
 nix --extra-experimental-features 'nix-command flakes' flake check --no-write-lock-file 'path:'"$PWD"
 ```
 
-Four checks cover this VM. `mimir-vm-config` asserts the policies that matter: the personal-only host list, no auto-login, a single normal account, locked root, password-authenticated sudo, disabled SSH, an enabled firewall, no port forwards, restricted directory sharing, declarative Home Manager packages, a read-only VSCodium configuration with free extensions only, basedpyright as the only Python language server, a Jupyter override matching the nixpkgs version, telemetry, AI features and update checks off, direnv enabled only at system level, a GitHub noreply Git email, and the secrets key's location and permissions. `mimir-vm-editor-binaries` checks the built extensions: every ELF file is x86-64, Jupyter's x86-64 ZeroMQ library is present, every Node add-on resolves its libraries, and Node can load the ZeroMQ binding. `mimir-vm-secrets` validates the encrypted test secret and the enrollment-only mode without a decryption key. `mimir-vm-system` builds the whole system closure. They complement, rather than replace, a real boot and desktop test.
+Four checks cover this VM. `mimir-vm-config` asserts the policies that matter: the personal-only host list, no auto-login, a single normal account, locked root, password-authenticated sudo, disabled SSH, an enabled firewall, no port forwards, restricted directory sharing, declarative Home Manager packages, a read-only VSCodium configuration with free extensions only, basedpyright as the only Python language server, a Jupyter override matching the nixpkgs version, telemetry, AI features and update checks off, direnv enabled only at system level, a GitHub noreply Git email, the secrets key's location and permissions, `NIXOS_OZONE_WL=1`, Home Manager session variables in login shells, every Brave telemetry and AI policy in the generated policy file with Bitwarden force-installed, the four Thunderbird telemetry preferences set to false, a forced `mimeapps.list`, and that every unfree package in the system and the user's packages is on the allowlist. `mimir-vm-editor-binaries` checks the built extensions: every ELF file is x86-64, Jupyter's x86-64 ZeroMQ library is present, every Node add-on resolves its libraries, and Node can load the ZeroMQ binding. `mimir-vm-secrets` validates the encrypted test secret and the enrollment-only mode without a decryption key. `mimir-vm-system` builds the whole system closure. They complement, rather than replace, a real boot and desktop test.
 
 After booting, check that login, Konsole, networking, sudo, shutdown, and restart work, and that a test file in your home survives restart. Check display scaling, keyboard behavior, and basic desktop responsiveness. Virtual graphics do not validate the laptop's NVIDIA hybrid graphics, suspend, docking, or Secure Boot.
 

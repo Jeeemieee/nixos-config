@@ -75,6 +75,13 @@ in
                     config.flake.modules.homeManager.hostSpec
                   ];
                 };
+
+                # Home Manager does not load its session variables unless it manages the shell, so every login shell sources them here
+                environment.extraInit = ''
+                  if [ -f "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh" ]; then
+                    . "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh"
+                  fi
+                '';
               }
               ({ config, ... }: {
                 home-manager.sharedModules = [

@@ -14,7 +14,15 @@
       _module.args.pkgs = import inputs.nixpkgs {
         inherit system;
         config = {
-          allowUnfreePredicate = _pkg: true;
+          # Unfree software is limited to this allowlist; the master and unstable overlays inherit it
+          # Every new unfree package needs an explicit entry here and in unfreeAllowed in modules/flake/checks.nix, plus a row in docs/APPS.md
+          allowUnfreePredicate =
+            pkg:
+            builtins.elem (inputs.nixpkgs.lib.getName pkg) [
+              "obsidian"
+              "discord"
+              "spotify"
+            ];
         };
         overlays = [
           (final: _prev: {

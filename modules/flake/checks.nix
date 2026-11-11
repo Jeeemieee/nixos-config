@@ -11,6 +11,12 @@
           editor = vscode.profiles.default;
           jupyter = lib.findSingle (extension: (extension.vscodeExtUniqueId or null) == "ms-toolsai.jupyter") null null editor.extensions;
           normalUsers = lib.filterAttrs (_: account: account.isNormalUser) vm.users.users;
+          bravePolicies = builtins.fromJSON vm.environment.etc."brave/policies/managed/extra.json".text;
+          braveDefaults = builtins.fromJSON vm.environment.etc."brave/policies/managed/default.json".text;
+          thunderbird = user.programs.thunderbird.profiles.default;
+          # Must match the allowlist in modules/flake/nixpkgs.nix
+          unfreeAllowed = [ "obsidian" "discord" "spotify" ];
+          unfreePackages = builtins.filter (package: package.meta.unfree or false) (vm.environment.systemPackages ++ user.home.packages);
         in
         assert builtins.attrNames config.flake.nixosConfigurations == [ "mimir-vm" ];
         assert config.flake.deploy.nodes == { };
@@ -46,6 +52,24 @@
         assert vm.programs.direnv.enable && vm.programs.direnv.nix-direnv.enable;
         assert !user.programs.direnv.enable;
         assert lib.hasSuffix "@users.noreply.github.com" user.programs.git.settings.user.email;
+        assert (vm.environment.sessionVariables.NIXOS_OZONE_WL or null) == "1";
+        # Login shells must load Home Manager's session variables, such as EDITOR
+        assert lib.hasInfix "hm-session-vars.sh" vm.environment.extraInit;
+        # Brave's generated policy files: telemetry, AI and paid features off, Bitwarden force-installed
+        assert (bravePolicies.BraveRewardsDisabled or null) == true && (bravePolicies.BraveWalletDisabled or null) == true;
+        assert (bravePolicies.BraveVPNDisabled or null) == true && (bravePolicies.BraveAIChatEnabled or null) == false;
+        assert (bravePolicies.BraveP3AEnabled or null) == false && (bravePolicies.BraveStatsPingEnabled or null) == false;
+        assert (bravePolicies.BraveWebDiscoveryEnabled or null) == false && (bravePolicies.MetricsReportingEnabled or null) == false;
+        assert builtins.elem "nngceckbapebfimnlniiiahkandclblb" (braveDefaults.ExtensionInstallForcelist or [ ]);
+        # Thunderbird telemetry and studies off
+        assert thunderbird.isDefault;
+        assert (thunderbird.settings."toolkit.telemetry.enabled" or null) == false;
+        assert (thunderbird.settings."datareporting.healthreport.uploadEnabled" or null) == false;
+        assert (thunderbird.settings."datareporting.policy.dataSubmissionEnabled" or null) == false;
+        assert (thunderbird.settings."app.shield.optoutstudies.enabled" or null) == false;
+        assert user.xdg.configFile."mimeapps.list".force;
+        # Defence in depth: even if the nixpkgs predicate is widened, only allowlisted unfree packages may be installed
+        assert builtins.all (package: builtins.elem (lib.getName package) unfreeAllowed) unfreePackages;
         pkgs.runCommand "mimir-vm-config-check" { } ''
           touch "$out"
         '';

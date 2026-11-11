@@ -8,6 +8,8 @@
         topLevel.config.flake.modules.nixos.desktop-kde
         topLevel.config.flake.modules.nixos.direnv
         topLevel.config.flake.modules.nixos.secrets-test
+        topLevel.config.flake.modules.nixos.browser
+        topLevel.config.flake.modules.nixos.fonts
       ];
 
       # This is a disposable VM target, not the physical laptop configuration
@@ -54,6 +56,15 @@
         imports = [
           topLevel.config.flake.modules.homeManager.vscode
           topLevel.config.flake.modules.homeManager.git
+          topLevel.config.flake.modules.homeManager.office
+          topLevel.config.flake.modules.homeManager.mail
+          topLevel.config.flake.modules.homeManager.notes
+          topLevel.config.flake.modules.homeManager.graphics
+          topLevel.config.flake.modules.homeManager.engineering
+          topLevel.config.flake.modules.homeManager.media
+          topLevel.config.flake.modules.homeManager.passwords
+          topLevel.config.flake.modules.homeManager.cli
+          topLevel.config.flake.modules.homeManager.default-apps
         ];
         home.stateVersion = "25.11";
 
