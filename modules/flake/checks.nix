@@ -7,7 +7,7 @@
         let
           vm = config.flake.nixosConfigurations.mimir-vm.config;
           user = vm.home-manager.users.jeeemieee;
-          vscode = user.programs.vscode;
+          vscode = user.programs.vscodium;
           editor = vscode.profiles.default;
           jupyter = lib.findSingle (extension: (extension.vscodeExtUniqueId or null) == "ms-toolsai.jupyter") null null editor.extensions;
           normalUsers = lib.filterAttrs (_: account: account.isNormalUser) vm.users.users;
@@ -40,6 +40,8 @@
         assert vm.home-manager.useGlobalPkgs && vm.home-manager.useUserPackages;
         assert vscode.enable && !vscode.mutableExtensionsDir;
         assert vscode.package.pname == "vscodium";
+        # The VS Code module would write VSCodium's configuration to VS Code's paths
+        assert !user.programs.vscode.enable;
         assert builtins.all (extension: !(extension.meta.unfree or false)) editor.extensions;
         assert editor.userSettings."python.languageServer" == "None";
         assert editor.userSettings."basedpyright.analysis.typeCheckingMode" == "standard";

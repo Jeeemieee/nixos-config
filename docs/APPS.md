@@ -4,32 +4,32 @@ Desktop applications come from the pinned nixpkgs (`flake.lock`) through shared 
 
 ## Programs
 
-Versions are those of the current `flake.lock` (nixos-25.11).
+Versions are those of the current `flake.lock` (nixos-26.05).
 
 | Program | Module | nixpkgs attribute | Version | Unfree | Declared | Manual state |
 | --- | --- | --- | --- | --- | --- | --- |
-| Brave | `nixos.browser` | `brave` | 1.88.138 | no | Package; managed policies in `/etc/brave/policies/managed/`: Rewards, Wallet, Brave VPN, Leo AI (`BraveAIChatEnabled`), P3A, the stats ping, Web Discovery and metrics reporting off; Bitwarden extension force-installed | Profile, sync, bookmarks, the Bitwarden extension's login |
+| Brave | `nixos.browser` | `brave` | 1.99.55 | no | Package; managed policies in `/etc/brave/policies/managed/`: Rewards, Wallet, Brave VPN, Leo AI (`BraveAIChatEnabled`), P3A, the stats ping, Web Discovery and metrics reporting off; Bitwarden extension force-installed | Profile, sync, bookmarks, the Bitwarden extension's login |
 | Carlito, Caladea, Liberation | `nixos.fonts` | `carlito`, `caladea`, `liberation_ttf` | 20130920, 20130214, 2.1.5 | no | System fonts; fontconfig maps Calibri, Cambria, Arial, Times New Roman and Courier New to them | None |
-| LibreOffice | `homeManager.office` | `libreoffice-qt6-still` | 25.2.6.2 | no | Package | User profile and settings |
-| Scribus | `homeManager.office` | `scribus` | 1.7.0 | no | Package | Settings |
+| LibreOffice | `homeManager.office` | `libreoffice-qt6-still` | 25.8.5.2 | no | Package | User profile and settings |
+| Scribus | `homeManager.office` | `scribus` | 1.7.3 | no | Package | Settings |
 | Pympress | `homeManager.office` | `pympress` | 1.8.6 | no | Package | Settings |
-| English (US) dictionary | `homeManager.office` | `hunspellDicts.en_US` | 2018.04.16 | no | Hunspell dictionary for LibreOffice and KDE apps (see [Spell checking](#spell-checking)) | Personal word lists |
-| Thunderbird | `homeManager.mail` | `thunderbird` | 148.0.1 | no | Package; one default profile (`~/.thunderbird/default`) whose `user.js` sets `toolkit.telemetry.enabled`, `datareporting.healthreport.uploadEnabled`, `datareporting.policy.dataSubmissionEnabled` and `app.shield.optoutstudies.enabled` to false | Accounts, mail, calendars, address books |
-| Obsidian | `homeManager.notes` | `obsidian` | 1.10.3 | yes | Package | Vaults and their settings (vault setup is Phase 4), Obsidian Sync login |
-| Zotero | `homeManager.notes` | `zotero` | 7.0.27 | no | Package | Library, data directory, account and sync, connectors |
-| GIMP | `homeManager.graphics` | `gimp` | 3.0.4 | no | Package | Settings, plug-ins |
-| Inkscape | `homeManager.graphics` | `inkscape` | 1.4.2 | no | Package | Settings, extensions |
-| Blender | `homeManager.graphics` | `blender` | 5.0.1 | no | Package | Preferences, add-ons |
+| English (US) dictionary | `homeManager.office` | `hunspellDicts.en_US` | 2026.02.25 | no | Hunspell dictionary for LibreOffice and KDE apps (see [Spell checking](#spell-checking)) | Personal word lists |
+| Thunderbird | `homeManager.mail` | `thunderbird` | 159.0 | no | Package; one default profile (`~/.thunderbird/default`) whose `user.js` sets `toolkit.telemetry.enabled`, `datareporting.healthreport.uploadEnabled`, `datareporting.policy.dataSubmissionEnabled` and `app.shield.optoutstudies.enabled` to false | Accounts, mail, calendars, address books |
+| Obsidian | `homeManager.notes` | `obsidian` | 1.13.7 | yes | Package | Vaults and their settings (vault setup is Phase 4), Obsidian Sync login |
+| Zotero | `homeManager.notes` | `zotero` | 9.0.6 | no | Package | Library, data directory, account and sync, connectors |
+| GIMP | `homeManager.graphics` | `gimp` | 3.0.8 | no | Package | Settings, plug-ins |
+| Inkscape | `homeManager.graphics` | `inkscape` | 1.4.4 | no | Package | Settings, extensions |
+| Blender | `homeManager.graphics` | `blender` | 5.1.1 | no | Package | Preferences, add-ons |
 | ParaView | `homeManager.engineering` | `paraview` | 6.0.1 | no | Package | Settings, state files |
 | PrusaSlicer | `homeManager.engineering` | `prusa-slicer` | 2.9.4 | no | Package | Printer, filament and print profiles, Prusa account |
 | fstl | `homeManager.engineering` | `fstl` | 0.11.1 | no | Package; a menu entry (`fstl.desktop`, nixpkgs installs none) | None |
-| Discord | `homeManager.media` | `discord` | 0.0.127 | yes | Package | Login, servers; Discord downloads its own modules into `~/.config/discord` |
-| Spotify | `homeManager.media` | `spotify` | 1.2.74.477 | yes | Package | Login, cache |
-| Bitwarden | `homeManager.passwords` | `bitwarden-desktop` | 2026.2.1 | no | Package | Login, vault, unlock settings |
-| Bitwarden CLI | `homeManager.passwords` | `bitwarden-cli` | 2025.11.0 | no | Package (`bw`) | Login, session |
-| Vim | `homeManager.cli` | `vim-full` (Home Manager's `programs.vim` default) | 9.1.2148 | no | `programs.vim` with `defaultEditor`, so `EDITOR=vim` | None |
-| btop | `homeManager.cli` | `btop` | 1.4.5 | no | `programs.btop` | None |
-| tree | `homeManager.cli` | `tree` | 2.2.1 | no | Package | None |
+| Discord | `homeManager.media` | `discord` | 1.0.159 | yes | Package | Login, servers; Discord downloads its own modules into `~/.config/discord` |
+| Spotify | `homeManager.media` | `spotify` | 1.2.90.451 | yes | Package | Login, cache |
+| Bitwarden | `homeManager.passwords` | `bitwarden-desktop` | 2026.8.0 | no | Package | Login, vault, unlock settings |
+| Bitwarden CLI | `homeManager.passwords` | `bitwarden-cli` | 2026.4.2 | no | Package (`bw`) | Login, session |
+| Vim | `homeManager.cli` | `vim-full` (Home Manager's `programs.vim` default) | 9.2.1252 | no | `programs.vim` with `defaultEditor`, so `EDITOR=vim` | None |
+| btop | `homeManager.cli` | `btop` | 1.4.8 | no | `programs.btop` | None |
+| tree | `homeManager.cli` | `tree` | 2.3.2 | no | Package | None |
 
 VSCodium (`homeManager.vscode`, `vscodium`) is described in [MIMIR-VM.md](MIMIR-VM.md#vscodium); Okular comes with Plasma.
 
