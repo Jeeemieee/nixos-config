@@ -16,6 +16,7 @@
           thunderbird = user.programs.thunderbird.profiles.default;
           wifiProfiles = vm.networking.networkmanager.ensureProfiles.profiles;
           eduroam = wifiProfiles.eduroam."802-1x";
+          userDirs = user.xdg.userDirs;
           # Must match the allowlist in modules/flake/nixpkgs.nix
           unfreeAllowed = [ "obsidian" "discord" "spotify" "zoom" ];
           unfreePackages = builtins.filter (package: package.meta.unfree or false) (vm.environment.systemPackages ++ user.home.packages);
@@ -94,6 +95,10 @@
         assert vm.networking.networkmanager.ensureProfiles.environmentFiles == [ vm.sops.secrets.wifi_env.path ];
         assert builtins.elem "sops-install-secrets.service" vm.systemd.services.NetworkManager-ensure-profiles.requires;
         assert builtins.elem "sops-install-secrets.service" vm.systemd.services.NetworkManager-ensure-profiles.after;
+        # XDG user directories keep their usual names, in lowercase, and are created
+        assert userDirs.enable && userDirs.createDirectories;
+        assert builtins.all (dir: dir == "${user.home.homeDirectory}/${lib.toLower (baseNameOf dir)}" && dir == lib.toLower dir) (map (name: userDirs.${name}) [ "desktop" "documents" "download" "music" "pictures" "projects" "publicShare" "templates" "videos" ]);
+        assert user.xdg.configFile."user-dirs.dirs".text != "";
         # Defence in depth: even if the nixpkgs predicate is widened, only allowlisted unfree packages may be installed
         assert builtins.all (package: builtins.elem (lib.getName package) unfreeAllowed) unfreePackages;
         pkgs.runCommand "mimir-vm-config-check" { } ''

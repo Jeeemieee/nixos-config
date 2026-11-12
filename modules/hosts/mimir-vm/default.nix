@@ -66,6 +66,7 @@
           topLevel.config.flake.modules.homeManager.meetings
           topLevel.config.flake.modules.homeManager.tex
           topLevel.config.flake.modules.homeManager.rpi
+          topLevel.config.flake.modules.homeManager.user-dirs
         ];
         home.stateVersion = "25.11";
 
