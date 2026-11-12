@@ -56,10 +56,11 @@ System services come from NixOS modules in `modules/services/`, imported by the 
 
 | Service | Module | Version | Declared | Manual state |
 | --- | --- | --- | --- | --- |
-| Tailscale | `nixos.vpn` | 1.104.5 | `services.tailscale` | Login (`sudo tailscale up`), device keys in `/var/lib/tailscale` |
+| Tailscale | `nixos.vpn` | 1.104.5 | `services.tailscale`, joining with the host's `tailscale_authkey` from nixos-secrets (see [SECRETS.md](SECRETS.md)) | Device keys in `/var/lib/tailscale` |
 | Mullvad VPN | `nixos.vpn` | 2026.3 | `services.mullvad-vpn` with the desktop app (`mullvad-vpn`) | Account login, settings |
 | eduVPN | `nixos.vpn` | 4.6.0 | Package, plus NetworkManager's OpenVPN plugin | Institution login, the NetworkManager connections it creates |
 | Docker (rootless) | `nixos.docker` | 29.9.2 | `virtualisation.docker.rootless` with `DOCKER_HOST` set; no root daemon and no `docker` group | Images, containers, volumes in `~/.local/share/docker` |
+| Wi-Fi, eduroam | `nixos.wifi` | — | NetworkManager profiles from `wifi_env` in nixos-secrets; eduroam per the University of Twente's CAT profile (see [SECRETS.md](SECRETS.md#eduroam)) | Other networks joined by hand |
 | libvirt, virt-manager | `nixos.libvirt` | 12.2.0, 5.1.0 | `virtualisation.libvirtd`, `programs.virt-manager`; users need the `libvirtd` group, set by the host | VMs, networks, storage pools |
 
 Docker is rootless because membership of a `docker` group is equivalent to root: any process of that user could start a container that mounts the whole disk. Rootless containers only have the user's own permissions. `mimir-vm-config` rejects a root daemon or `docker` group members. The `libvirtd` group is similarly powerful and must stay out of sandboxes.

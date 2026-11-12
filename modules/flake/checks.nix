@@ -14,6 +14,8 @@
           bravePolicies = builtins.fromJSON vm.environment.etc."brave/policies/managed/extra.json".text;
           braveDefaults = builtins.fromJSON vm.environment.etc."brave/policies/managed/default.json".text;
           thunderbird = user.programs.thunderbird.profiles.default;
+          wifiProfiles = vm.networking.networkmanager.ensureProfiles.profiles;
+          eduroam = wifiProfiles.eduroam."802-1x";
           # Must match the allowlist in modules/flake/nixpkgs.nix
           unfreeAllowed = [ "obsidian" "discord" "spotify" "zoom" ];
           unfreePackages = builtins.filter (package: package.meta.unfree or false) (vm.environment.systemPackages ++ user.home.packages);
@@ -75,6 +77,23 @@
         assert builtins.all (account: !(builtins.elem "docker" account.extraGroups)) (builtins.attrValues normalUsers);
         assert vm.services.tailscale.enable && vm.services.mullvad-vpn.enable;
         assert vm.virtualisation.libvirtd.enable;
+        # Tailscale joins with the host's key, and only after the secrets are installed
+        assert vm.services.tailscale.authKeyFile == vm.sops.secrets.tailscale_authkey.path;
+        assert builtins.elem "sops-install-secrets.service" vm.systemd.services.tailscaled-autoconnect.requires;
+        assert builtins.elem "sops-install-secrets.service" vm.systemd.services.tailscaled-autoconnect.after;
+        # eduroam follows the University of Twente's CAT profile: TTLS/MSCHAPv2, anonymous outer identity, pinned CA and server name
+        assert wifiProfiles.eduroam.wifi.ssid == "eduroam" && wifiProfiles.eduroam.wifi-security.key-mgmt == "wpa-eap";
+        assert eduroam.eap == "ttls" && eduroam.phase2-auth == "mschapv2";
+        assert eduroam.anonymous-identity == "anonymous@utwente.nl";
+        assert eduroam.domain-suffix-match == "radius.utwente.nl";
+        assert lib.hasSuffix "utwente-eduroam-ca.pem" eduroam.ca-cert;
+        assert eduroam.identity == "$EDUROAM_IDENTITY" && eduroam.password == "$EDUROAM_PASSWORD";
+        # Network names and passphrases are placeholders filled from the decrypted environment file, never literal values
+        assert builtins.attrNames wifiProfiles == [ "eduroam" "gebbeken" "home" "hotspot" ];
+        assert builtins.all (name: lib.hasPrefix "$" wifiProfiles.${name}.wifi.ssid && lib.hasPrefix "$" wifiProfiles.${name}.wifi-security.psk) [ "gebbeken" "home" "hotspot" ];
+        assert vm.networking.networkmanager.ensureProfiles.environmentFiles == [ vm.sops.secrets.wifi_env.path ];
+        assert builtins.elem "sops-install-secrets.service" vm.systemd.services.NetworkManager-ensure-profiles.requires;
+        assert builtins.elem "sops-install-secrets.service" vm.systemd.services.NetworkManager-ensure-profiles.after;
         # Defence in depth: even if the nixpkgs predicate is widened, only allowlisted unfree packages may be installed
         assert builtins.all (package: builtins.elem (lib.getName package) unfreeAllowed) unfreePackages;
         pkgs.runCommand "mimir-vm-config-check" { } ''
@@ -139,6 +158,23 @@
             touch "$out"
           '';
 
+      # The eduroam CA bundle must be exactly the root and intermediate from the University of Twente's CAT profile (cat.eduroam.org, profile 770)
+      checks.mimir-vm-eduroam-ca =
+        pkgs.runCommand "mimir-vm-eduroam-ca-check" { nativeBuildInputs = [ pkgs.openssl ]; } ''
+          bundle=${config.flake.nixosConfigurations.mimir-vm.config.networking.networkmanager.ensureProfiles.profiles.eduroam."802-1x".ca-cert}
+          # One file per certificate; comment lines between them are skipped
+          awk '/-----BEGIN CERTIFICATE-----/ { n++; file = "cert-" n } file { print > file } /-----END CERTIFICATE-----/ { file = "" }' "$bundle"
+          for cert in cert-*; do
+            openssl x509 -in "$cert" -noout -fingerprint -sha256 | cut -d= -f2
+          done | sort > actual
+          printf '%s\n' \
+            5B:67:8D:C4:40:95:A5:28:95:B6:3B:31:F2:72:27:F4:B3:6C:3E:34:74:91:BF:2B:FA:69:18:37:A5:FB:8C:79 \
+            D9:5D:0E:8E:DA:79:52:5B:F9:BE:B1:1B:14:D2:10:0D:32:94:98:5F:0C:62:D9:FA:BD:9C:D9:99:EC:CB:7B:1D \
+            | sort > expected
+          diff expected actual
+          touch "$out"
+        '';
+
       # Build the system closure; `nix flake check` otherwise only evaluates the configuration
       checks.mimir-vm-system = config.flake.nixosConfigurations.mimir-vm.config.system.build.toplevel;
 
@@ -150,8 +186,14 @@
             modules = [ { hostSpec.hasSecrets = lib.mkForce false; } ];
           }).config;
           secret = vm.sops.secrets.bootstrap-test;
+          # sops-nix expresses root either by name or, by default, as owner/group null with uid/gid 0
+          rootOnly = s: (s.owner == "root" || (s.owner == null && s.uid == 0)) && (s.group == "root" || (s.group == null && s.gid == 0)) && s.mode == "0400";
         in
-        assert builtins.attrNames vm.sops.secrets == [ "bootstrap-test" ];
+        assert builtins.attrNames vm.sops.secrets == [ "bootstrap-test" "tailscale_authkey" "wifi_env" ];
+        # Per-host secrets come from secrets/<hostname>.yaml, shared ones from secrets/shared.yaml
+        assert lib.hasSuffix "/secrets/mimir-vm.yaml" vm.sops.secrets.tailscale_authkey.sopsFile && vm.sops.secrets.tailscale_authkey.key == "tailscale_authkey";
+        assert lib.hasSuffix "/secrets/shared.yaml" vm.sops.secrets.wifi_env.sopsFile && vm.sops.secrets.wifi_env.key == "wifi_env";
+        assert rootOnly vm.sops.secrets.tailscale_authkey && rootOnly vm.sops.secrets.wifi_env;
         assert secret.key == "message";
         assert secret.owner == "root" && secret.group == "root";
         assert secret.mode == "0400";
@@ -159,6 +201,9 @@
         assert vm.systemd.services.sops-age-key.requiredBy == [ "sops-install-secrets.service" ];
         assert builtins.elem "sops-install-secrets.service" vm.systemd.services.sops-age-key.before;
         assert bootstrap.sops.secrets == { };
+        # Without secrets, Tailscale falls back to its documented manual login and nixos.wifi refuses explicitly
+        assert bootstrap.services.tailscale.authKeyFile == null;
+        assert builtins.any (a: !a.assertion && lib.hasPrefix "nixos.wifi needs hostSpec.hasSecrets" a.message) bootstrap.assertions;
         assert !(bootstrap.systemd.services ? sops-install-secrets);
         assert bootstrap.systemd.services.sops-age-key.requiredBy == [ ];
         vm.system.build.sops-nix-manifest;

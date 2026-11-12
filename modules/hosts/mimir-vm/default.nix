@@ -11,6 +11,7 @@
         topLevel.config.flake.modules.nixos.browser
         topLevel.config.flake.modules.nixos.fonts
         topLevel.config.flake.modules.nixos.vpn
+        topLevel.config.flake.modules.nixos.wifi
         topLevel.config.flake.modules.nixos.docker
         topLevel.config.flake.modules.nixos.libvirt
       ];

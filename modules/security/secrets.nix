@@ -3,6 +3,9 @@
   flake.modules.nixos.secrets =
     { config, lib, pkgs, ... }:
     {
+      # Several modules import this one; a fixed key makes the module system apply it once instead of concatenating its definitions
+      key = "nixos-config#nixos.secrets";
+
       imports = [ inputs.sops-nix.nixosModules.sops ];
 
       sops = {
