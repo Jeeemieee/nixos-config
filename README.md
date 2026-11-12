@@ -5,6 +5,7 @@ NixOS configuration for `jeeemieee`. Two hosts share one workstation profile: `m
 - **[Mimir, the laptop](docs/MIMIR.md)**: what the laptop host is made of, its hardware, and what is tested where
 - **[Mimir VM](docs/MIMIR-VM.md)**: build, launch, change and validate the VM
 - **[Applications](docs/APPS.md)**: installed programs and how to add more
+- **[Development environments](docs/DEV-ENVIRONMENTS.md)**: per-project Python, C/C++/Fortran, PETSc and CUDA from building blocks
 - **[Disk layout and snapshots](docs/DISK.md)**: the encrypted ZFS disk for physical machines, and how to restore files
 - **[Secure Boot](docs/SECURE-BOOT.md)**: own signing keys with lanzaboote, and how to inspect and recover
 - **[Secrets](docs/SECRETS.md)**: the private [nixos-secrets](https://github.com/Jeeemieee/nixos-secrets) repository and its sops-nix integration
@@ -25,6 +26,7 @@ Every file under `modules/` is a [flake-parts](https://flake.parts) module, disc
 | `modules/services/` | VPN clients, Wi-Fi, rootless Docker, libvirt |
 | `modules/security/` | Machine age identity and sops-nix secrets |
 | `modules/host-specification/` | Per-host settings (`hostSpec`) read by shared modules |
+| `dev-env/` | Building blocks for project development environments, their tests and the project template (plain Nix, not modules) |
 | `modules/flake/` | Flake wiring: hosts, package set and unfree allowlist, checks, dev shell, formatter |
 
 The dev shell (`nix develop`, or automatically through `.envrc` with direnv) provides `sops`, `age` and `ssh-to-age`.

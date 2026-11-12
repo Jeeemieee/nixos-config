@@ -125,7 +125,7 @@ echo 'use flake' > .envrc && direnv allow
 
 Leaving the directory unloads the environment. nix-direnv caches the evaluated shell in `.direnv/` (add it to the project's `.gitignore`; on these machines it is also ignored globally by `homeManager.git`) and keeps it from garbage collection, so re-entering is fast. Every change to `.envrc` must be approved again with `direnv allow`. In VSCodium, `mkhl.direnv` applies the same environment to language servers, debuggers, and Jupyter kernels.
 
-Project flakes must name nixpkgs explicitly, for example `inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";`, and commit their `flake.lock`. A bare `nixpkgs` input is locked through the global registry, which points to nixpkgs-unstable, not the system's pinned nixpkgs.
+Projects normally get their tools from the building blocks in [DEV-ENVIRONMENTS.md](DEV-ENVIRONMENTS.md). Other project flakes must name nixpkgs explicitly, for example `inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";`, and commit their `flake.lock`. A bare `nixpkgs` input is locked through the global registry, which points to nixpkgs-unstable, not the system's pinned nixpkgs.
 
 ## Shut down and restart
 

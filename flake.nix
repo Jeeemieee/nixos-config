@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
-    # Only for packages that 26.05 ships too old (pi); everything else comes from nixpkgs
+    # For pi, which 26.05 ships too old, and the development-environment blocks in dev-env/ (PETSc 3.25); the hosts use nixpkgs
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     home-manager = {

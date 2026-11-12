@@ -1,0 +1,10 @@
+[project]
+name = "project"
+version = "0.1.0"
+requires-python = "==3.13.*"
+dependencies = []
+
+[tool.uv]
+# Provided by the numerics block of the Nix shell: uv must not install its own copies
+# Remove this list when the shell has no numerics block
+exclude-dependencies = ["numpy", "scipy", "mpi4py", "petsc4py", "slepc4py"]
