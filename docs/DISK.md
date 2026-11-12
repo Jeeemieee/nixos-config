@@ -1,6 +1,6 @@
 # Disk layout and snapshots
 
-`modules/storage/disk.nix` defines `nixos.disk`: the encrypted ZFS system disk for physical machines, with its snapshot policy. `modules/boot/uefi.nix` defines `nixos.boot`: UEFI boot with systemd-boot. No host uses them yet; the laptop host `mimir` will. The fast test VM `mimir-vm` keeps its own simple disk.
+`modules/storage/disk.nix` defines `nixos.disk`: the encrypted ZFS system disk for physical machines, with its snapshot policy. `modules/boot/uefi.nix` defines `nixos.boot`: UEFI boot with systemd-boot. The laptop host `mimir` uses them; the test VM `mimir-vm` keeps its own simple disk.
 
 ## Layout
 

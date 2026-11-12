@@ -1,7 +1,8 @@
 # Mimir: personal NixOS configuration
 
-NixOS configuration for `jeeemieee`. The only host is `mimir-vm`, a KDE Plasma trial in a local QEMU VM that will become the configuration for the laptop `mimir`.
+NixOS configuration for `jeeemieee`. Two hosts share one workstation profile: `mimir`, the laptop (not installed yet), and `mimir-vm`, a test VM that is removed once the laptop has migrated.
 
+- **[Mimir, the laptop](docs/MIMIR.md)**: what the laptop host is made of, its hardware, and what is tested where
 - **[Mimir VM](docs/MIMIR-VM.md)**: build, launch, change and validate the VM
 - **[Applications](docs/APPS.md)**: installed programs and how to add more
 - **[Disk layout and snapshots](docs/DISK.md)**: the encrypted ZFS disk for physical machines, and how to restore files
@@ -14,7 +15,9 @@ Every file under `modules/` is a [flake-parts](https://flake.parts) module, disc
 
 | Path | Contents |
 | --- | --- |
-| `modules/hosts/mimir-vm/` | The VM host: account, locale, virtual hardware, selected modules |
+| `modules/hosts/` | `mimir` (laptop) and `mimir-vm` (test VM): names, hardware and state versions |
+| `modules/profiles/` | `workstation`: the account, desktop, applications and services of every personal machine |
+| `modules/hardware/`, `modules/users/` | Laptop services, NVIDIA, DisplayLink; the login password from secrets |
 | `modules/apps/` | Desktop applications, fonts and default applications |
 | `modules/desktop/` | KDE Plasma and PipeWire audio |
 | `modules/dev/` | VSCodium, direnv and the Git identity |

@@ -1,6 +1,6 @@
 # Secure Boot
 
-`modules/boot/secure-boot.nix` defines `nixos.secure-boot`, using [lanzaboote](https://github.com/nix-community/lanzaboote) 1.2.0. A host imports it next to `nixos.boot`. No host uses it yet; the laptop host `mimir` will.
+`modules/boot/secure-boot.nix` defines `nixos.secure-boot`, using [lanzaboote](https://github.com/nix-community/lanzaboote) 1.2.0. A host imports it next to `nixos.boot`; the laptop host `mimir` does.
 
 ## How it works
 

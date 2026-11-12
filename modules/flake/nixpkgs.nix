@@ -15,6 +15,10 @@
               "discord"
               "spotify"
               "zoom"
+              # Laptop hardware: the NVIDIA user-space driver with its settings program, and the DisplayLink dock driver
+              "nvidia-x11"
+              "nvidia-settings"
+              "displaylink"
             ];
         };
         overlays = [

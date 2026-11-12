@@ -1,6 +1,6 @@
 # Applications
 
-Desktop applications come from the pinned nixpkgs (`flake.lock`) through shared modules in `modules/apps/`. Each host or user selects modules by importing them; `mimir-vm` imports all of them (see [MIMIR-VM.md](MIMIR-VM.md)). Versions change only when `flake.lock` does. Nothing here updates itself, and nothing here holds an account or credential: logins, accounts and libraries stay manual state inside the VM.
+Desktop applications come from the pinned nixpkgs (`flake.lock`) through shared modules in `modules/apps/`. Each host or user selects modules by importing them; the workstation profile (`modules/profiles/workstation.nix`) imports all of them for both hosts. Versions change only when `flake.lock` does. Nothing here updates itself, and nothing here holds an account or credential: logins, accounts and libraries stay manual state inside the VM.
 
 ## Programs
 

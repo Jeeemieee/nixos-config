@@ -5,70 +5,20 @@
     {
       imports = [
         "${inputs.nixpkgs}/nixos/modules/virtualisation/qemu-vm.nix"
-        topLevel.config.flake.modules.nixos.desktop-kde
-        topLevel.config.flake.modules.nixos.direnv
+        topLevel.config.flake.modules.nixos.workstation
         topLevel.config.flake.modules.nixos.secrets-test
-        topLevel.config.flake.modules.nixos.browser
-        topLevel.config.flake.modules.nixos.fonts
-        topLevel.config.flake.modules.nixos.vpn
-        topLevel.config.flake.modules.nixos.wifi
-        topLevel.config.flake.modules.nixos.docker
-        topLevel.config.flake.modules.nixos.libvirt
       ];
 
-      # This is a disposable VM target, not the physical laptop configuration
-      # The existing VM disk's public recipient is in the pinned test ciphertext
+      # A test VM, removed once the laptop has migrated; everything shared with the laptop is in nixos.workstation
+      # The existing VM disk's public recipient is in the pinned ciphertext
       hostSpec.hasSecrets = true;
-
-      networking = {
-        hostName = "mimir-vm";
-        networkmanager.enable = true;
-        useDHCP = false;
-        firewall.enable = true;
-      };
-      services.openssh.enable = false;
-
-      time.timeZone = "Europe/Amsterdam";
-      i18n.defaultLocale = "en_US.UTF-8";
-      services.xserver.xkb.layout = "us";
-
-      environment.systemPackages = with pkgs; [ git ];
+      networking.hostName = "mimir-vm";
 
       # Public trial password only: change it with passwd after the first login
       users.mutableUsers = true;
-      users.users.jeeemieee = {
-        isNormalUser = true;
-        uid = 1000;
-        description = "jeeemieee";
-        # libvirtd manages system VMs and is close to root; docker is rootless and needs no group
-        extraGroups = [ "wheel" "networkmanager" "libvirtd" ];
-        initialPassword = "mimir";
-      };
-      users.users.root.hashedPassword = "!";
-      security.sudo = {
-        enable = true;
-        wheelNeedsPassword = true;
-      };
+      users.users.jeeemieee.initialPassword = "mimir";
 
       home-manager.users.jeeemieee = {
-        imports = [
-          topLevel.config.flake.modules.homeManager.vscode
-          topLevel.config.flake.modules.homeManager.git
-          topLevel.config.flake.modules.homeManager.office
-          topLevel.config.flake.modules.homeManager.mail
-          topLevel.config.flake.modules.homeManager.notes
-          topLevel.config.flake.modules.homeManager.graphics
-          topLevel.config.flake.modules.homeManager.engineering
-          topLevel.config.flake.modules.homeManager.media
-          topLevel.config.flake.modules.homeManager.passwords
-          topLevel.config.flake.modules.homeManager.cli
-          topLevel.config.flake.modules.homeManager.default-apps
-          topLevel.config.flake.modules.homeManager.meetings
-          topLevel.config.flake.modules.homeManager.tex
-          topLevel.config.flake.modules.homeManager.rpi
-          topLevel.config.flake.modules.homeManager.user-dirs
-          topLevel.config.flake.modules.homeManager.pi
-        ];
         home.stateVersion = "25.11";
 
         # Apply the declared VM mode after Plasma has restored any saved display state
@@ -87,7 +37,6 @@
           Install.WantedBy = [ "plasma-workspace.target" ];
         };
       };
-      nix.settings.experimental-features = [ "nix-command" "flakes" ];
       system.stateVersion = "25.11";
 
       virtualisation = {

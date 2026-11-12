@@ -7,11 +7,13 @@ Encrypted data lives in the private [nixos-secrets](https://github.com/Jeeemieee
 | Secret | File | Readable by | Used by |
 | --- | --- | --- | --- |
 | `wifi_env` | `secrets/shared.yaml` | admin, recovery, personal machines | `nixos.wifi`: NetworkManager profiles for eduroam, `home`, `gebbeken` and `hotspot` |
-| `user_password_hash` | `secrets/shared.yaml` | admin, recovery, personal machines | Not used yet; the laptop's login password (laptop step) |
+| `user_password_hash` | `secrets/shared.yaml` | admin, recovery, personal machines | `nixos.login-password` (on `mimir`): the account's password, with immutable accounts |
 | `tailscale_authkey` | `secrets/<hostname>.yaml` | admin, recovery, that machine | `nixos.vpn`: `services.tailscale.authKeyFile` |
 | `message` | `secrets/test.yaml` | development, mimir-vm, recovery | `nixos.secrets-test`: harmless bootstrap test |
 
-Per-machine secrets are read from `secrets/${networking.hostName}.yaml`. Every secret is decrypted at boot into `/run/secrets/<name>`, root-owned with mode `0400`. Services that need them (`tailscaled-autoconnect`, `NetworkManager-ensure-profiles`) require and start after `sops-install-secrets.service`, so a failed decryption shows as a failed unit instead of a silent login without a key or empty Wi-Fi profiles.
+Per-machine secrets are read from `secrets/${networking.hostName}.yaml`. Every secret is decrypted at boot into `/run/secrets/<name>`, root-owned with mode `0400`. The login password is the exception: it is decrypted into `/run/secrets-for-users` while the accounts are created, before any service runs. The machine's key must then already be on disk and enrolled, so a new machine's key is generated and enrolled during its installation, not at its first boot; without it the account has no password.
+
+`secrets/mimir.yaml` exists before the laptop does: it is encrypted for the admin and recovery keys only, and the laptop's recipient is added when it is installed. Services that need them (`tailscaled-autoconnect`, `NetworkManager-ensure-profiles`) require and start after `sops-install-secrets.service`, so a failed decryption shows as a failed unit instead of a silent login without a key or empty Wi-Fi profiles.
 
 The public repository only holds placeholders: network names, identities and passphrases are substituted into the NetworkManager profiles from the decrypted `wifi_env` at boot. A host that imports `nixos.wifi` without `hostSpec.hasSecrets = true` fails evaluation with an explicit message; `nixos.vpn` falls back to Tailscale's manual login (`sudo tailscale up`).
 
