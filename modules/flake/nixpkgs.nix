@@ -17,6 +17,12 @@
               "zoom"
             ];
         };
+        overlays = [
+          # pi from nixos-unstable: 26.05 ships 0.75.4, while the user works with the current 1.x
+          (_final: _prev: {
+            inherit (inputs.nixpkgs-unstable.legacyPackages.${system}) pi-coding-agent;
+          })
+        ];
       };
     };
 }

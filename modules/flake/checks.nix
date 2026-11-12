@@ -99,6 +99,9 @@
         assert userDirs.enable && userDirs.createDirectories;
         assert builtins.all (dir: dir == "${user.home.homeDirectory}/${lib.toLower (baseNameOf dir)}" && dir == lib.toLower dir) (map (name: userDirs.${name}) [ "desktop" "documents" "download" "music" "pictures" "projects" "publicShare" "templates" "videos" ]);
         assert user.xdg.configFile."user-dirs.dirs".text != "";
+        # pi is only installed as its sandboxed launcher, never as the bare package
+        assert builtins.any (package: (package.name or "") == "pi") user.home.packages;
+        assert !(builtins.elem pkgs.pi-coding-agent (vm.environment.systemPackages ++ user.home.packages));
         # Defence in depth: even if the nixpkgs predicate is widened, only allowlisted unfree packages may be installed
         assert builtins.all (package: builtins.elem (lib.getName package) unfreeAllowed) unfreePackages;
         pkgs.runCommand "mimir-vm-config-check" { } ''

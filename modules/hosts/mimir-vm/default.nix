@@ -67,6 +67,7 @@
           topLevel.config.flake.modules.homeManager.tex
           topLevel.config.flake.modules.homeManager.rpi
           topLevel.config.flake.modules.homeManager.user-dirs
+          topLevel.config.flake.modules.homeManager.pi
         ];
         home.stateVersion = "25.11";
 

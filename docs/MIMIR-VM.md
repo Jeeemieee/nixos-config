@@ -96,6 +96,25 @@ Not covered: compilers, Python interpreters/kernels, and CMake tooling come from
 
 VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk that previously ran VS Code, the old `~/.config/Code` folder is harmless leftover state.
 
+## pi
+
+`modules/dev/pi.nix` defines `homeManager.pi`: the `pi` command always starts the coding agent inside a bubblewrap sandbox. pi itself (1.5.2) comes from the `nixpkgs-unstable` input, because 26.05 ships 0.75.4; nothing else uses that input.
+
+| Inside the sandbox | Hidden |
+| --- | --- |
+| The project: the git repository around the current folder, or the folder itself (read and write) | The rest of the home folder: `~/.ssh`, `~/.config` (sops keys, restic), Bitwarden, browser profiles, other projects |
+| `~/.pi` (pi's settings, login and sessions; read and write), `~/.config/git` (read-only) | Session sockets: Docker, D-Bus, the SSH agent, keyrings, the desktop |
+| The Nix store and daemon, `/etc`, the system's programs, the project's direnv environment | Other processes |
+| The network | |
+
+- Started in the home folder, a parent of it, or a hidden folder in it, pi refuses with a message. Only folders in the home folder, `/tmp`, `/mnt`, `/media`, `/srv` and `/run/media/<user>` can be shared
+- Extra folders only on request, before pi's own options: `pi --allow ~/documents/zotero` (read and write) or `pi --allow-ro <folder>` (read-only)
+- Opening a browser from inside fails quietly (the system's `kde-open` would crash without a desktop session): pi shows login links itself, so Ctrl+click the link in the terminal, which opens it in the normal browser
+- The project's `.git/hooks` and `.git/config` are read-only inside, since git would run their commands outside the sandbox later
+- Not covered: the network stays open (pi needs it for the model), so project contents can still leave the machine; pi can change `~/.pi`, including its extensions; files in the project that you later run outside the sandbox (scripts, `flake.nix` via direnv) need the same review as any code an agent wrote. No Docker and no GPU inside yet
+
+The `pi-sandbox` check runs a probe in the same sandbox and compares what it can reach with the expected answers, including the refusals.
+
 ## direnv
 
 `modules/dev/direnv.nix` defines `nixos.direnv`, which enables direnv with nix-direnv for every shell; the VM imports it. It is hooked in only there, not through Home Manager. To load a flake's devShell whenever you enter a project directory:
@@ -133,6 +152,7 @@ Relevant files:
 - `modules/flake/checks.nix`: configuration safety and encrypted-manifest checks
 - `modules/dev/editors/vscode.nix`: reusable declarative VSCodium
 - `modules/dev/direnv.nix`: system-wide direnv with nix-direnv
+- `modules/dev/pi.nix`: pi in its bubblewrap sandbox, and the `pi-sandbox` check
 - `modules/dev/git/identity.nix`: reusable declared Git identity
 - `modules/security/secrets.nix`: shared key provisioning and opt-in test-secret modules
 - `modules/apps/`: reusable application modules and default applications; see [APPS.md](APPS.md)
@@ -156,7 +176,7 @@ One SSH key per machine, generated on that machine; only public keys are declare
 nix --extra-experimental-features 'nix-command flakes' flake check --no-write-lock-file 'path:'"$PWD"
 ```
 
-Five checks cover this VM. `mimir-vm-config` asserts the policies that matter: the expected host list, no auto-login, a single normal account, locked root, password-authenticated sudo, disabled SSH, an enabled firewall, no port forwards, restricted directory sharing, declarative Home Manager packages, a read-only VSCodium configuration with free extensions only, basedpyright as the only Python language server, a Jupyter override matching the nixpkgs version, telemetry, AI features and update checks off, direnv enabled only at system level, a GitHub noreply Git email, the secrets key's location and permissions, `NIXOS_OZONE_WL=1`, Home Manager session variables in login shells, every Brave telemetry and AI policy in the generated policy file with Bitwarden force-installed, the four Thunderbird telemetry preferences set to false, a forced `mimeapps.list`, rootless Docker without a root daemon or `docker` group, the VPN and libvirt services, Tailscale's key and the Wi-Fi and eduroam profiles (see [SECRETS.md](SECRETS.md#validation)), and that every unfree package in the system and the user's packages is on the allowlist. `mimir-vm-editor-binaries` checks the built extensions: every ELF file is x86-64, Jupyter's x86-64 ZeroMQ library is present, every Node add-on resolves its libraries, and Node can load the ZeroMQ binding. `mimir-vm-secrets` validates the encrypted secrets and the mode without secrets, without a decryption key. `mimir-vm-eduroam-ca` compares the eduroam CA bundle with the university's official fingerprints. `mimir-vm-system` builds the whole system closure. They complement, rather than replace, a real boot and desktop test.
+Six checks cover this VM; `pi-sandbox` is described [above](#pi). `mimir-vm-config` asserts the policies that matter: the expected host list, no auto-login, a single normal account, locked root, password-authenticated sudo, disabled SSH, an enabled firewall, no port forwards, restricted directory sharing, declarative Home Manager packages, a read-only VSCodium configuration with free extensions only, basedpyright as the only Python language server, a Jupyter override matching the nixpkgs version, telemetry, AI features and update checks off, direnv enabled only at system level, a GitHub noreply Git email, the secrets key's location and permissions, `NIXOS_OZONE_WL=1`, Home Manager session variables in login shells, every Brave telemetry and AI policy in the generated policy file with Bitwarden force-installed, the four Thunderbird telemetry preferences set to false, a forced `mimeapps.list`, rootless Docker without a root daemon or `docker` group, the VPN and libvirt services, Tailscale's key and the Wi-Fi and eduroam profiles (see [SECRETS.md](SECRETS.md#validation)), and that every unfree package in the system and the user's packages is on the allowlist. `mimir-vm-editor-binaries` checks the built extensions: every ELF file is x86-64, Jupyter's x86-64 ZeroMQ library is present, every Node add-on resolves its libraries, and Node can load the ZeroMQ binding. `mimir-vm-secrets` validates the encrypted secrets and the mode without secrets, without a decryption key. `mimir-vm-eduroam-ca` compares the eduroam CA bundle with the university's official fingerprints. `mimir-vm-system` builds the whole system closure. They complement, rather than replace, a real boot and desktop test.
 
 After booting, check that login, Konsole, networking, sudo, shutdown, and restart work, and that a test file in your home survives restart. Check that `systemctl status home-manager-jeeemieee` is `active (exited)`: a failed Home Manager activation is otherwise invisible and leaves the previous user configuration in place. It fails when a file it manages already exists as a normal file, for example one written before Home Manager managed it or copied from another system; the journal (`journalctl -b -u home-manager-jeeemieee`) names the file. Check display scaling, keyboard behavior, and basic desktop responsiveness. Virtual graphics do not validate the laptop's NVIDIA hybrid graphics, suspend, docking, or Secure Boot.
 
