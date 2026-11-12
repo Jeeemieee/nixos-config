@@ -4,6 +4,7 @@ NixOS configuration for `jeeemieee`. The only host is `mimir-vm`, a KDE Plasma t
 
 - **[Mimir VM](docs/MIMIR-VM.md)**: build, launch, change and validate the VM
 - **[Applications](docs/APPS.md)**: installed programs and how to add more
+- **[Disk layout and snapshots](docs/DISK.md)**: the encrypted ZFS disk for physical machines, and how to restore files
 - **[Secrets](docs/SECRETS.md)**: the private [nixos-secrets](https://github.com/Jeeemieee/nixos-secrets) repository and its sops-nix integration
 
 ## Layout
@@ -16,6 +17,8 @@ Every file under `modules/` is a [flake-parts](https://flake.parts) module, disc
 | `modules/apps/` | Desktop applications, fonts and default applications |
 | `modules/desktop/` | KDE Plasma and PipeWire audio |
 | `modules/dev/` | VSCodium, direnv and the Git identity |
+| `modules/storage/`, `modules/boot/` | Encrypted ZFS disk with snapshots, UEFI boot |
+| `modules/services/` | VPN clients, Wi-Fi, rootless Docker, libvirt |
 | `modules/security/` | Machine age identity and sops-nix secrets |
 | `modules/host-specification/` | Per-host settings (`hostSpec`) read by shared modules |
 | `modules/flake/` | Flake wiring: hosts, package set and unfree allowlist, checks, dev shell, formatter |
