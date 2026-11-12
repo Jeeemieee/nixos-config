@@ -14,7 +14,7 @@
 | `nixos.nvidia-offload` | The NVIDIA driver with the open kernel modules, used on demand | Machines with a second GPU |
 | `nixos.displaylink` | The Dell D3100 dock (DisplayLink) | Machines using such a dock |
 
-The host itself only adds its name, its ZFS host ID, the GPU bus addresses, Intel microcode and its state versions. `hostSpec.disk.device` is deliberately unset: the disk is named, by model and serial number, when the laptop is installed, and the formatting script cannot be built before that.
+The host itself only adds its name, its ZFS host ID, the GPU bus addresses, Intel microcode and its state versions. `hostSpec.disk.device` is deliberately unset: the disk is chosen, and confirmed by its serial number, when the laptop is installed (see [INSTALL.md](INSTALL.md)); the installed system finds its partitions by label.
 
 ## Graphics
 
@@ -36,7 +36,7 @@ The NVIDIA user-space driver (`nvidia-x11`, `nvidia-settings`) and `displaylink`
 
 ## Secrets at the first boot
 
-The login password is decrypted while the accounts are created, earlier than the other secrets. The laptop's age key must therefore be on its disk and enrolled in nixos-secrets before the first boot; otherwise the account has no password. The installation generates the key on the target disk and enrolls it before the system is installed; see [SECRETS.md](SECRETS.md).
+The login password is decrypted while the accounts are created, earlier than the other secrets. The laptop's age key must therefore be on its disk and enrolled in nixos-secrets before the first boot; otherwise the account has no password. The installation generates the key on the target disk, and refuses to install a system whose secrets that key cannot decrypt; see [INSTALL.md](INSTALL.md).
 
 ## Validation
 

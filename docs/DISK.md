@@ -19,7 +19,7 @@
 
 All datasets use zstd compression and no access-time updates. ZFS's cache is capped at 8 GiB. The pool is scrubbed monthly (every block is read and its checksum verified) and trimmed weekly.
 
-The disk passphrase is typed at every boot. It is not in nixos-secrets, which live on the encrypted disk. A host sets `hostSpec.disk.device` to the disk's `/dev/disk/by-id` path; there is no default, and the formatting script cannot be built without it.
+The disk passphrase is typed at every boot. It is not in nixos-secrets, which live on the encrypted disk. `hostSpec.disk.device` has no default and the formatting script cannot be built without it; the installer sets it to the one disk it can see (see [INSTALL.md](INSTALL.md)). The installed system finds its partitions by label, not by device name.
 
 ## Snapshots are not backups
 

@@ -23,7 +23,7 @@ in
     # Required by ZFS, which refuses to import a pool last used by another host ID
     networking.hostId = "30d630f0";
 
-    # hostSpec.disk.device is set when the laptop is installed: the disk is named by model and serial number, never guessed
+    # hostSpec.disk.device is set by the installer (modules/install), for the disk that was confirmed by its serial number
     hostSpec.disk.scratchUser = "jeeemieee";
 
     hardware.cpu.intel.updateMicrocode = true;

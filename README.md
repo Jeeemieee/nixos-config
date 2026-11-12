@@ -7,6 +7,7 @@ NixOS configuration for `jeeemieee`. Two hosts share one workstation profile: `m
 - **[Applications](docs/APPS.md)**: installed programs and how to add more
 - **[Development environments](docs/DEV-ENVIRONMENTS.md)**: per-project Python, C/C++/Fortran, PETSc and CUDA from building blocks
 - **[Disk layout and snapshots](docs/DISK.md)**: the encrypted ZFS disk for physical machines, and how to restore files
+- **[Installation](docs/INSTALL.md)**: installing a host from another Linux system through a virtual machine that only sees the target disk
 - **[Secure Boot](docs/SECURE-BOOT.md)**: own signing keys with lanzaboote, and how to inspect and recover
 - **[Secrets](docs/SECRETS.md)**: the private [nixos-secrets](https://github.com/Jeeemieee/nixos-secrets) repository and its sops-nix integration
 
@@ -26,6 +27,7 @@ Every file under `modules/` is a [flake-parts](https://flake.parts) module, disc
 | `modules/services/` | VPN clients, Wi-Fi, rootless Docker, libvirt |
 | `modules/security/` | Machine age identity and sops-nix secrets |
 | `modules/host-specification/` | Per-host settings (`hostSpec`) read by shared modules |
+| `modules/install/`, `install/` | The installer and the `install` tool; the disk validation and its test cases |
 | `dev-env/` | Building blocks for project development environments, their tests and the project template (plain Nix, not modules) |
 | `modules/flake/` | Flake wiring: hosts, package set and unfree allowlist, checks, dev shell, formatter |
 

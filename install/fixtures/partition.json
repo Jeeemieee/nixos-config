@@ -1,0 +1,17 @@
+{
+  "blockdevices": [
+    {
+      "name": "sdx1",
+      "path": "/dev/sdx1",
+      "type": "part",
+      "size": 2000397795328,
+      "ro": false,
+      "model": null,
+      "serial": null,
+      "mountpoints": [
+        null
+      ],
+      "fstype": "ext4"
+    }
+  ]
+}

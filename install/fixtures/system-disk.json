@@ -1,0 +1,46 @@
+{
+  "blockdevices": [
+    {
+      "name": "nvme0n1",
+      "path": "/dev/nvme0n1",
+      "type": "disk",
+      "size": 1024209543168,
+      "ro": false,
+      "model": "Example NVMe 1TB",
+      "serial": "EXAMPLE000000",
+      "mountpoints": [
+        null
+      ],
+      "fstype": null,
+      "children": [
+        {
+          "name": "nvme0n1p1",
+          "path": "/dev/nvme0n1p1",
+          "type": "part",
+          "size": 536870912,
+          "ro": false,
+          "model": null,
+          "serial": null,
+          "mountpoints": [
+            "/boot/efi"
+          ],
+          "fstype": "vfat"
+        },
+        {
+          "name": "nvme0n1p2",
+          "path": "/dev/nvme0n1p2",
+          "type": "part",
+          "size": 1023671271424,
+          "ro": false,
+          "model": null,
+          "serial": null,
+          "mountpoints": [
+            "/var/snap/firefox/common/host-hunspell",
+            "/"
+          ],
+          "fstype": "ext4"
+        }
+      ]
+    }
+  ]
+}

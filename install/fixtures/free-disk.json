@@ -1,0 +1,32 @@
+{
+  "blockdevices": [
+    {
+      "name": "sdx",
+      "path": "/dev/sdx",
+      "type": "disk",
+      "size": 2000398934016,
+      "ro": false,
+      "model": "Example SSD 2TB",
+      "serial": "EXAMPLE123456",
+      "mountpoints": [
+        null
+      ],
+      "fstype": null,
+      "children": [
+        {
+          "name": "sdx1",
+          "path": "/dev/sdx1",
+          "type": "part",
+          "size": 2000397795328,
+          "ro": false,
+          "model": null,
+          "serial": null,
+          "mountpoints": [
+            null
+          ],
+          "fstype": "ext4"
+        }
+      ]
+    }
+  ]
+}
