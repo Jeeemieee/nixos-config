@@ -10,6 +10,9 @@
     # pi, which 26.05 ships too old; its own pin, because pi is released far more often than the blocks should move
     nixpkgs-pi.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    # SearXNG, which stops getting results when the search engines change their pages; its own pin, so that it can follow them without moving anything else
+    nixpkgs-search.url = "github:NixOS/nixpkgs/nixos-unstable";
+
     home-manager = {
       url = "github:nix-community/home-manager/release-26.05";
       inputs.nixpkgs.follows = "nixpkgs";

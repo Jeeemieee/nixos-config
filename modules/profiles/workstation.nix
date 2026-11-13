@@ -12,6 +12,7 @@ in
         modules.nixos.desktop-kde
         modules.nixos.direnv
         modules.nixos.browser
+        modules.nixos.search
         modules.nixos.fonts
         modules.nixos.vpn
         modules.nixos.wifi

@@ -8,7 +8,7 @@ Versions are those of the current `flake.lock` (nixos-26.05).
 
 | Program | Module | nixpkgs attribute | Version | Unfree | Declared | Manual state |
 | --- | --- | --- | --- | --- | --- | --- |
-| Brave | `nixos.browser` | `brave` | 1.99.55 | no | Package; managed policies in `/etc/brave/policies/managed/`: Rewards, Wallet, Brave VPN, Leo AI (`BraveAIChatEnabled`), P3A, the stats ping, Web Discovery and metrics reporting off; Bitwarden, Zotero Connector and Plasma Integration extensions force-installed and the built-in password manager off; the last session's windows and tabs reopen at every start (`RestoreOnStartup`); Memory Saver unloads tabs that have not been used for a while; Startpage as the search engine; spell checking in British English and Dutch; Safe Browsing at standard protection; bookmark bar and home button shown. A policy fixes its setting: the switch in Brave's settings is greyed out | Profile, sync, bookmarks, the extensions' logins, window names |
+| Brave | `nixos.browser` | `brave` | 1.99.55 | no | Package; managed policies in `/etc/brave/policies/managed/`: Rewards, Wallet, Brave VPN, Leo AI (`BraveAIChatEnabled`), P3A, the stats ping, Web Discovery and metrics reporting off; Bitwarden, Zotero Connector and Plasma Integration extensions force-installed and the built-in password manager off; the last session's windows and tabs reopen at every start (`RestoreOnStartup`); Memory Saver unloads tabs that have not been used for a while; the machine's own SearXNG as the search engine where `nixos.search` runs, Brave Search elsewhere (see [Search](#search)); spell checking in British English and Dutch; Safe Browsing at standard protection; bookmark bar and home button shown. A policy fixes its setting: the switch in Brave's settings is greyed out | Profile, sync, bookmarks, the extensions' logins, window names |
 | Carlito, Caladea, Liberation | `nixos.fonts` | `carlito`, `caladea`, `liberation_ttf` | 20130920, 20130214, 2.1.5 | no | System fonts; fontconfig maps Calibri, Cambria, Arial, Times New Roman and Courier New to them | None |
 | LibreOffice | `homeManager.office` | `libreoffice-qt6-still` | 25.8.5.2 | no | Package | User profile and settings |
 | Scribus | `homeManager.office` | `scribus` | 1.7.3 | no | Package | Settings |
@@ -64,9 +64,45 @@ System services come from NixOS modules in `modules/services/`, imported by the 
 | eduVPN | `nixos.vpn` | 4.6.0 | Package, plus NetworkManager's OpenVPN plugin | Institution login, the NetworkManager connections it creates |
 | Docker (rootless) | `nixos.docker` | 29.9.2 | `virtualisation.docker.rootless` with `DOCKER_HOST` set; no root daemon and no `docker` group | Images, containers, volumes in `~/.local/share/docker` |
 | Wi-Fi, eduroam | `nixos.wifi` | — | NetworkManager profiles from `wifi_env` in nixos-secrets; eduroam per the University of Twente's CAT profile (see [SECRETS.md](SECRETS.md#eduroam)) | Other networks joined by hand |
+| SearXNG | `nixos.search` | 2026-10-25 | `services.searx` on `127.0.0.1:8877`, from the `nixpkgs-search` pin (see [Search](#search)) | A generated key in `/var/lib/searx-secret` |
 | libvirt, virt-manager | `nixos.libvirt` | 12.2.0, 5.1.0 | `virtualisation.libvirtd`, `programs.virt-manager`; users need the `libvirtd` group, set by the host | VMs, networks, storage pools |
 
 Docker is rootless because membership of a `docker` group is equivalent to root: any process of that user could start a container that mounts the whole disk. Rootless containers only have the user's own permissions. `mimir-vm-config` rejects a root daemon or `docker` group members. The `libvirtd` group is similarly powerful and must stay out of sandboxes.
+
+## Search
+
+`nixos.search` (`modules/services/search.nix`) runs [SearXNG](https://docs.searxng.org), a meta-search: it asks several search engines and shows their results together, without ads; each result names the engines it came from. Every machine runs its own; it listens on `127.0.0.1:8877` only, so no other machine can use it. Its internal key is generated on the machine at the first start; there is no secret to enter.
+
+Brave's address bar searches through it (`modules/apps/browser.nix` decides: SearXNG where the service runs, Brave Search elsewhere). No suggestions are requested while typing.
+
+**Keywords.** In the address bar, a keyword, a space and the query search one site directly, without SearXNG:
+
+| Keyword | Searches |
+| --- | --- |
+| `brave` | Brave Search; also the way to search while SearXNG is down or returns little |
+| `google` | Google |
+| `maps` | Google Maps (SearXNG's Map tab searches OpenStreetMap; it has no Google Maps engine) |
+| `reddit` | Reddit |
+| `github` | GitHub |
+| `scholar` | Google Scholar |
+| `arxiv` | arXiv |
+| `doi` | Opens the paper that a DOI belongs to |
+| `wiki` | Wikipedia (English) |
+| `youtube` | YouTube |
+| `nixpkgs`, `nixopt` | NixOS packages and options |
+| `pypi` | Python packages |
+| `scihub` | Sci-Hub, with a DOI or a paper's address; its own address changes now and then and is then updated in the list |
+
+The list is in `modules/apps/browser.nix` (`SiteSearchSettings`). Backspace right after the space leaves the keyword mode and searches the word normally. The price of plain words: a normal search that starts with one of them and a space, such as "github actions cache", goes to that site instead of SearXNG.
+
+Wikidata, which only fills the information box beside the results, is switched off: the page waits for its slowest engine, and in a measurement of six queries Wikidata took 0.9 s (median) where Google and Brave took 0.3 to 0.5 s.
+
+**When it returns few or no results.** Search engines change their pages and block automated queries from time to time; the result page then lists per engine what went wrong ("CAPTCHA", "too many requests"). Two remedies:
+
+- For one search, use the `brave` or `google` keyword. They also work while the service is down.
+- If it stays that way, update SearXNG, which follows the engines' changes: `nix flake update nixpkgs-search`, run the checks and rebuild. SearXNG has its own pin for this reason; with the version of NixOS 26.05 only one of the default engines still answered.
+
+Validation: the check `search` starts the service in a virtual machine without internet (it answers locally, another machine cannot reach it although the firewall is off, the key is private and not in the Nix store, and survives a restart). Results from the real engines need the internet; tested by hand in a VM on 2026-11-13: Google and Brave answered, DuckDuckGo intermittently.
 
 ## Language, formats and desktop
 

@@ -26,6 +26,10 @@
           (_final: _prev: {
             inherit (inputs.nixpkgs-pi.legacyPackages.${system}) pi-coding-agent;
           })
+          # SearXNG from its own nixos-unstable pin: with the version of 26.05 only one of the default search engines still answered
+          (_final: _prev: {
+            inherit (inputs.nixpkgs-search.legacyPackages.${system}) searxng;
+          })
         ];
       };
     };

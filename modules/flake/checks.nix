@@ -71,7 +71,14 @@
         assert builtins.elem "nngceckbapebfimnlniiiahkandclblb" (braveDefaults.ExtensionInstallForcelist or [ ]);
         # Bitwarden is the only password manager, phishing protection is on, and the search engine does not track
         assert (bravePolicies.PasswordManagerEnabled or null) == false && (bravePolicies.SafeBrowsingProtectionLevel or null) == 1;
-        assert lib.hasPrefix "https://www.startpage.com/" (braveDefaults.DefaultSearchProviderSearchURL or "");
+        # The address bar searches through this machine's own SearXNG, which no other machine can reach; Brave Search stays available as the keyword "brave"
+        assert cfg.services.searx.enable && cfg.services.searx.settings.server.bind_address == "127.0.0.1";
+        assert lib.hasPrefix "http://127.0.0.1:${toString cfg.services.searx.settings.server.port}/search?" (braveDefaults.DefaultSearchProviderSearchURL or "");
+        assert lib.all (keyword: builtins.elem keyword (map (s: s.shortcut) (bravePolicies.SiteSearchSettings or [ ]))) [ "arxiv" "brave" "doi" "github" "google" "maps" "nixopt" "nixpkgs" "pypi" "reddit" "scholar" "scihub" "wiki" "youtube" ];
+        # Every keyword is a search address
+        assert lib.all (s: lib.hasPrefix "https://" s.url && lib.hasInfix "{searchTerms}" s.url) bravePolicies.SiteSearchSettings;
+        # The key is generated on the machine: the settings in the Nix store hold only its placeholder
+        assert cfg.services.searx.settings.server.secret_key == "$SEARX_SECRET_KEY";
         assert (bravePolicies.SpellcheckLanguage or [ ]) == [ "en-GB" "nl" ];
         assert user.programs.plasma.configFile.plasma-localerc.Formats.LANG.value == "en_GB.UTF-8";
         # British English with Dutch formats; the desktop is dark and locks with the screen

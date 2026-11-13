@@ -1,8 +1,19 @@
 # Brave with managed policies; hosts opt in by importing nixos.browser
 {
   flake.modules.nixos.browser =
-    { pkgs, ... }:
+    {
+      config,
+      lib,
+      pkgs,
+      ...
+    }:
     let
+      # The address bar searches through this machine's SearXNG where nixos.search runs it, and through Brave Search elsewhere
+      # Brave Search: its own index, no tracking; the user prefers it to Startpage
+      braveSearch = "https://search.brave.com/search?q={searchTerms}";
+      searx = config.services.searx;
+      localSearch = "http://${searx.settings.server.bind_address}:${toString searx.settings.server.port}/search?q={searchTerms}";
+
       # Starts Brave at login, unless it already runs
       # After a crash or a power loss Brave only offers "Restore pages?" in one empty window, whatever RestoreOnStartup says
       # Marking the last exit as normal makes it open the saved windows and tabs unasked; Brave is not running, so nothing else writes the file
@@ -54,12 +65,82 @@
           "cimiefiiaegbelhefglklhhakcgmhkai" # Plasma Integration
         ];
 
-        # Startpage: Google's results through a service that does not track; no search suggestions are requested while typing
+        # No search suggestions are requested while typing
         defaultSearchProviderEnabled = true;
-        defaultSearchProviderSearchURL = "https://www.startpage.com/sp/search?query={searchTerms}";
+        defaultSearchProviderSearchURL = if searx.enable then localSearch else braveSearch;
 
         extraOpts = {
-          DefaultSearchProviderName = "Startpage";
+          DefaultSearchProviderName = if searx.enable then "SearXNG" else "Brave Search";
+          # Keywords in the address bar: the keyword, a space, then the query; each searches that site directly, without SearXNG
+          # A search that starts with one of these words and a space goes to that site as well
+          SiteSearchSettings =
+            lib.mapAttrsToList
+              (shortcut: site: {
+                inherit shortcut;
+                inherit (site) name url;
+              })
+              {
+                # Also the way to search while SearXNG is down or returns little
+                brave = {
+                  name = "Brave Search";
+                  url = braveSearch;
+                };
+                google = {
+                  name = "Google";
+                  url = "https://www.google.com/search?q={searchTerms}";
+                };
+                # SearXNG's Map tab searches OpenStreetMap; Google Maps cannot be included there
+                maps = {
+                  name = "Google Maps";
+                  url = "https://www.google.com/maps/search/{searchTerms}";
+                };
+                reddit = {
+                  name = "Reddit";
+                  url = "https://www.reddit.com/search/?q={searchTerms}";
+                };
+                github = {
+                  name = "GitHub";
+                  url = "https://github.com/search?q={searchTerms}";
+                };
+                scholar = {
+                  name = "Google Scholar";
+                  url = "https://scholar.google.com/scholar?q={searchTerms}";
+                };
+                arxiv = {
+                  name = "arXiv";
+                  url = "https://arxiv.org/search/?searchtype=all&query={searchTerms}";
+                };
+                # Opens the paper that a DOI belongs to
+                doi = {
+                  name = "DOI";
+                  url = "https://doi.org/{searchTerms}";
+                };
+                wiki = {
+                  name = "Wikipedia";
+                  url = "https://en.wikipedia.org/wiki/Special:Search?search={searchTerms}";
+                };
+                youtube = {
+                  name = "YouTube";
+                  url = "https://www.youtube.com/results?search_query={searchTerms}";
+                };
+                nixpkgs = {
+                  name = "NixOS packages";
+                  url = "https://search.nixos.org/packages?query={searchTerms}";
+                };
+                nixopt = {
+                  name = "NixOS options";
+                  url = "https://search.nixos.org/options?query={searchTerms}";
+                };
+                pypi = {
+                  name = "PyPI";
+                  url = "https://pypi.org/search/?q={searchTerms}";
+                };
+                # Takes a DOI or a paper's address; Sci-Hub changes its address now and then, so update it here when the keyword stops working
+                scihub = {
+                  name = "Sci-Hub";
+                  url = "https://sci-hub.ru/{searchTerms}";
+                };
+              };
           # Spell checking in British English and Dutch
           SpellcheckEnabled = true;
           SpellcheckLanguage = [
