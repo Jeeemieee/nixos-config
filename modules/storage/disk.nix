@@ -13,6 +13,9 @@ in
       scratchOwner = config.users.users.${cfg.scratchUser};
       # Not read from the account: the list of accounts depends on the file systems, which depend on this path
       scratchPath = "/home/${cfg.scratchUser}/scratch";
+      # The copies and the raw output of agent workers; both top folders belong to root, so that nothing running as the user can rename or replace what is mounted below them
+      workersPath = "/home/${cfg.scratchUser}/workers";
+      workersScratchPath = "${scratchPath}/workers";
 
       # Every dataset is mounted through fileSystems (legacy mountpoint), so NixOS orders the mounts
       dataset = mountpoint: options: {
@@ -45,12 +48,28 @@ in
         };
         scratchUser = lib.mkOption {
           type = lib.types.str;
-          description = "The user whose ~/scratch is the scratch dataset.";
+          description = "The user whose ~/scratch is the scratch dataset and whose ~/workers is the workers dataset.";
         };
+        # The sizes have no defaults: they depend on the disk, so every host states them
         scratchQuota = lib.mkOption {
           type = lib.types.str;
-          default = "1T";
-          description = "Upper limit of the scratch dataset, so that simulation output cannot fill the pool.";
+          example = "800G";
+          description = "Upper limit of the scratch dataset, the workers' areas in it included, so that simulation output cannot fill the pool.";
+        };
+        workersQuota = lib.mkOption {
+          type = lib.types.str;
+          example = "200G";
+          description = "Upper limit of the workers dataset: the agent workers' copies of projects, their reports and sessions.";
+        };
+        nixQuota = lib.mkOption {
+          type = lib.types.str;
+          example = "300G";
+          description = "Upper limit of the Nix store. A full store stops builds until a garbage collection and takes no space from the home.";
+        };
+        homeReservation = lib.mkOption {
+          type = lib.types.str;
+          example = "300G";
+          description = "Space that is kept for /home whatever the other datasets fill. It must fit on the disk: the layout cannot be applied otherwise.";
         };
       };
 
@@ -122,9 +141,11 @@ in
             };
             datasets = {
               root = dataset "/" { };
-              nix = dataset "/nix" { };
-              home = dataset "/home" { };
+              nix = dataset "/nix" { quota = cfg.nixQuota; };
+              home = dataset "/home" { reservation = cfg.homeReservation; };
               scratch = dataset scratchPath { quota = cfg.scratchQuota; };
+              "scratch/workers" = dataset workersScratchPath { };
+              workers = dataset workersPath { quota = cfg.workersQuota; };
             };
           };
         };
@@ -132,14 +153,16 @@ in
         # /home is mounted before users are created, so home folders are created in it and not underneath it
         fileSystems."/home".neededForBoot = true;
 
-        # The mount point of a dataset belongs to root; the scratch folder belongs to its user
+        # The mount point of a dataset belongs to root; the scratch folder belongs to its user, the two workers folders stay root's
         systemd.tmpfiles.rules = [
           "d ${scratchPath} 0755 ${scratchOwner.name} ${scratchOwner.group} -"
+          "d ${workersPath} 0755 root root -"
+          "d ${workersScratchPath} 0755 root root -"
         ];
 
         boot.zfs.forceImportRoot = false;
-        # ZFS's cache gives memory back slowly; capped at 8 GiB so that simulations keep the RAM
-        boot.kernelParams = [ "zfs.zfs_arc_max=${toString (8 * 1024 * 1024 * 1024)}" ];
+        # ZFS's cache gives memory back slowly; capped at 4 GiB so that simulations and agent workers keep the RAM
+        boot.kernelParams = [ "zfs.zfs_arc_max=${toString (4 * 1024 * 1024 * 1024)}" ];
 
         services.zfs = {
           # Reads every block and verifies its checksum
@@ -150,7 +173,7 @@ in
           trim.enable = true;
         };
 
-        # Snapshots: only for data that cannot be recreated; none for /nix and scratch
+        # Snapshots: only for data that cannot be recreated; none for /nix and scratch, the workers' areas in scratch included
         services.sanoid = {
           enable = true;
           templates = {
@@ -158,6 +181,15 @@ in
               hourly = 48;
               daily = 30;
               monthly = 6;
+              yearly = 0;
+              autosnap = true;
+              autoprune = true;
+            };
+            # Shorter than /home's: workers' copies change fast, and a snapshot keeps every deleted file against the dataset's limit
+            workers = {
+              hourly = 24;
+              daily = 14;
+              monthly = 0;
               yearly = 0;
               autosnap = true;
               autoprune = true;
@@ -174,6 +206,11 @@ in
           datasets = {
             "rpool/home".useTemplate = [ "home" ];
             "rpool/root".useTemplate = [ "system" ];
+            # Recursive: the dataset of every worker, created later below this one, is covered without a rule of its own
+            "rpool/workers" = {
+              useTemplate = [ "workers" ];
+              recursive = true;
+            };
           };
         };
       };
@@ -204,6 +241,11 @@ in
               # Only for formatting; at boot the passphrase is typed on the console below
               passwordFile = "/tmp/secret.key";
               scratchUser = "tester";
+              # Small enough for the test disks; the reservation must fit, the limits need not
+              scratchQuota = "1G";
+              workersQuota = "512M";
+              nixQuota = "3G";
+              homeReservation = "256M";
             };
 
             disko.tests = {
@@ -217,8 +259,8 @@ in
                 machine.succeed("cryptsetup isLuks /dev/disk/by-partlabel/disk-main-luks")
                 machine.succeed("zpool status -LP rpool | grep -q \"$(readlink -f /dev/mapper/crypt)\"")
 
-                # 2. The four datasets are mounted, compressed, without access-time updates
-                for path, name in [("/", "rpool/root"), ("/nix", "rpool/nix"), ("/home", "rpool/home"), ("/home/tester/scratch", "rpool/scratch")]:
+                # 2. The six datasets are mounted, compressed, without access-time updates
+                for path, name in [("/", "rpool/root"), ("/nix", "rpool/nix"), ("/home", "rpool/home"), ("/home/tester/scratch", "rpool/scratch"), ("/home/tester/scratch/workers", "rpool/scratch/workers"), ("/home/tester/workers", "rpool/workers")]:
                     machine.succeed(f"test \"$(findmnt -n -o SOURCE {path})\" = {name}")
                     machine.succeed(f"test \"$(zfs get -H -o value compression {name})\" = zstd")
                     machine.succeed(f"test \"$(zfs get -H -o value atime {name})\" = off")
@@ -242,14 +284,33 @@ in
                 snapshot = machine.succeed("zfs list -H -t snapshot -o name rpool/home | grep _hourly | head -1 | cut -d@ -f2").strip()
                 machine.succeed(f"test \"$(cat /home/.zfs/snapshot/{snapshot}/tester/file)\" = precious")
 
-                # 5. Scratch and /nix have no snapshots; scratch is limited and belongs to its user
-                machine.fail("zfs list -H -t snapshot -o name | grep -qE '^rpool/(scratch|nix)@'")
-                machine.succeed("test \"$(zfs get -H -o value quota rpool/scratch)\" = 1T")
+                # 5. Scratch and /nix have no snapshots; the limits and the reservation are set; scratch belongs to its user
+                machine.fail("zfs list -H -t snapshot -o name | grep -qE '^rpool/(scratch|scratch/workers|nix)@'")
+                for name, prop, value in [("rpool/scratch", "quota", "1G"), ("rpool/workers", "quota", "512M"), ("rpool/nix", "quota", "3G"), ("rpool/home", "reservation", "256M")]:
+                    machine.succeed(f"test \"$(zfs get -H -o value {prop} {name})\" = {value}")
                 machine.succeed("su tester -c 'echo data > /home/tester/scratch/output'")
 
-                # 6. The cache is capped at 8 GiB; scrub and TRIM are scheduled
-                machine.succeed("test \"$(cat /sys/module/zfs/parameters/zfs_arc_max)\" = 8589934592")
+                # 6. The cache is capped at 4 GiB; scrub and TRIM are scheduled
+                machine.succeed("test \"$(cat /sys/module/zfs/parameters/zfs_arc_max)\" = 4294967296")
                 machine.succeed("systemctl is-enabled zfs-scrub.timer zpool-trim.timer")
+
+                # 7. The two workers folders belong to root: the user can neither create something in them nor rename them
+                # Control: the same user can write in ~/scratch (step 5) and rename an ordinary folder of his own
+                for path in ["/home/tester/workers", "/home/tester/scratch/workers"]:
+                    machine.succeed(f"test \"$(stat -c '%U %a' {path})\" = 'root 755'")
+                    machine.fail(f"su tester -c 'mkdir {path}/project'")
+                    machine.fail(f"su tester -c 'mv {path} {path}-moved'")
+                    machine.succeed(f"test -d {path} && ! test -e {path}-moved")
+                machine.succeed("su tester -c 'mkdir /home/tester/plain && mv /home/tester/plain /home/tester/plain-moved'")
+
+                # 8. A dataset created later below the workers dataset gets snapshots without a rule of its own; one below scratch does not
+                machine.succeed("zfs create -o canmount=off -o mountpoint=none rpool/workers/project && zfs create -o canmount=off -o mountpoint=none rpool/scratch/workers/project")
+                # sanoid remembers its list of datasets for 20 minutes, less than the hour between its runs; the test forgets it instead of waiting
+                machine.succeed("rm /var/cache/private/sanoid/datasets.txt")
+                machine.succeed("systemctl start --wait sanoid.service")
+                machine.succeed("zfs list -H -t snapshot -o name | grep -qE '^rpool/workers@autosnap_.*_hourly$'")
+                machine.succeed("zfs list -H -t snapshot -o name | grep -qE '^rpool/workers/project@autosnap_.*_hourly$'")
+                machine.fail("zfs list -H -t snapshot -o name | grep -qE '^rpool/scratch'")
               '';
             };
           }

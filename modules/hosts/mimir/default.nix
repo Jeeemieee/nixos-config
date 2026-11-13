@@ -25,7 +25,16 @@ in
     networking.hostId = "30d630f0";
 
     # hostSpec.disk.device is set by the installer (modules/install), for the disk that was confirmed by its serial number
-    hostSpec.disk.scratchUser = "jeeemieee";
+    hostSpec.disk = {
+      scratchUser = "jeeemieee";
+      # For the 2 TB disk: 1863 GiB, of which about 1770 GiB is usable after the boot partition, swap and ZFS's own reserve
+      # If every limit were reached while /home is at its reservation, about 120 GiB would be left
+      # Each can be changed on the running system with `sudo zfs set <property>=<size> rpool/<dataset>`
+      homeReservation = "600G";
+      nixQuota = "250G";
+      scratchQuota = "600G";
+      workersQuota = "200G";
+    };
 
     hardware.cpu.intel.updateMicrocode = true;
     # Intel's thermal daemon, as on the Ubuntu install

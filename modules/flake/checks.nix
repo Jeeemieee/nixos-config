@@ -191,7 +191,9 @@
         assert mimir.systemd.services.restic-backups-home.onFailure == [ "restic-backups-home-failed.service" ];
         # Everything but the EFI partition is encrypted: ZFS inside LUKS, swap with a random key
         assert builtins.attrNames mimir.boot.initrd.luks.devices == [ "crypt" ];
-        assert builtins.attrNames mimir.fileSystems == [ "/" "/boot" "/home" "/home/jeeemieee/scratch" "/nix" ];
+        assert builtins.attrNames mimir.fileSystems == [ "/" "/boot" "/home" "/home/jeeemieee/scratch" "/home/jeeemieee/scratch/workers" "/home/jeeemieee/workers" "/nix" ];
+        # The sizes the user chose for the 2 TB disk
+        assert mimir.hostSpec.disk.homeReservation == "600G" && mimir.hostSpec.disk.nixQuota == "250G" && mimir.hostSpec.disk.scratchQuota == "600G" && mimir.hostSpec.disk.workersQuota == "200G";
         assert builtins.all (path: mimir.fileSystems.${path}.fsType == "zfs") [ "/" "/nix" "/home" "/home/jeeemieee/scratch" ];
         assert mimir.swapDevices != [ ] && builtins.all (swap: swap.randomEncryption.enable) mimir.swapDevices;
         assert !mimir.boot.zfs.forceImportRoot;

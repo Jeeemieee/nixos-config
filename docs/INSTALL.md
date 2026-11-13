@@ -12,7 +12,7 @@ alias install-nixos="nix --extra-experimental-features 'nix-command flakes' run 
 
 1. **Start the installer.**
    - Real disk: `install-nixos start mimir --disk /dev/disk/by-id/<disk>`. The tool shows the disk's size, partitions, model and serial number, and starts only after the serial number is typed. It refuses anything that is not a whole, writable disk of at least 96 GiB with a serial number, and any disk with a mounted partition or active swap, which includes the disk the running system is on. Without write access to the device it prints the `setfacl` command that grants it for the session
-   - Rehearsal: `install-nixos start mimir --image ~/.local/state/nixos-install/mimir-rehearsal.raw`. The file is created as a sparse 128 GiB image; an existing image with data is only overwritten after typing `erase`
+   - Rehearsal: `install-nixos start mimir --image ~/.local/state/nixos-install/mimir-rehearsal.raw`. The file is created as a sparse 2000 GiB image, the size of the laptop's disk, so that the layout's reservation for `/home` fits; it only takes the space that is written; an existing image with data is only overwritten after typing `erase`
 
    The installer's console is the terminal. It logs in as root and lists its commands.
 2. **Format, in the installer:** `install-format`. It erases the target, asks for the disk passphrase twice, creates the layout of [DISK.md](DISK.md), mounts it at `/mnt`, generates the machine's age key at `/var/lib/sops-nix/key.txt` on the target, and prints the public key. The key never leaves the target disk. The formatting tool prints every command it runs; messages such as `cannot import 'rpool': no such pool available` are its probes for an existing pool.

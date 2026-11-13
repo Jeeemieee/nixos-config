@@ -300,8 +300,9 @@ in
                     fi
                   fi
                   # A sparse file: it only takes the space that is written
+                  # As large as the laptop's 2 TB disk, so that the layout's reservation for /home fits as it must on the real disk
                   rm -f "$target"
-                  truncate -s 128G "$target"
+                  truncate -s 2000G "$target"
                   device=$(realpath "$target")
                 fi
 
