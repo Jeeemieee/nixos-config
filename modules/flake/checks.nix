@@ -103,6 +103,8 @@
         assert builtins.all (account: !(builtins.elem "docker" account.extraGroups)) (builtins.attrValues normalUsers);
         assert cfg.services.tailscale.enable && cfg.services.mullvad-vpn.enable;
         assert cfg.virtualisation.libvirtd.enable;
+        # Only the laptop imports nixos.backup: a host of this profile without it never writes into the real backup
+        assert host.config.networking.hostName == "mimir" || cfg.services.restic.backups == { };
         # Tailscale joins with the host's key, and only after the secrets are installed
         assert cfg.services.tailscale.authKeyFile == cfg.sops.secrets.tailscale_authkey.path;
         assert builtins.elem "sops-install-secrets.service" cfg.systemd.services.tailscaled-autoconnect.requires;
@@ -166,8 +168,13 @@
         assert account.hashedPasswordFile == mimir.sops.secrets.user_password_hash.path;
         assert mimir.sops.secrets.user_password_hash.neededForUsers;
         assert account.initialPassword == null && account.password == null && account.hashedPassword == null;
-        assert builtins.attrNames mimir.sops.secrets == [ "tailscale_authkey" "user_password_hash" "wifi_env" ];
+        assert builtins.attrNames mimir.sops.secrets == [ "restic_env" "restic_password" "tailscale_authkey" "user_password_hash" "wifi_env" ];
         assert lib.hasSuffix "/secrets/mimir.yaml" mimir.sops.secrets.tailscale_authkey.sopsFile;
+        # The laptop backs up the whole of /home hourly, never prunes from its side, and reports a failure on the desktop
+        assert mimir.services.restic.backups.home.paths == [ "/home" ] && mimir.services.restic.backups.home.pruneOpts == [ ];
+        assert mimir.services.restic.backups.home.passwordFile == mimir.sops.secrets.restic_password.path;
+        assert builtins.elem "/home/*/scratch" mimir.services.restic.backups.home.exclude;
+        assert mimir.systemd.services.restic-backups-home.onFailure == [ "restic-backups-home-failed.service" ];
         # Everything but the EFI partition is encrypted: ZFS inside LUKS, swap with a random key
         assert builtins.attrNames mimir.boot.initrd.luks.devices == [ "crypt" ];
         assert builtins.attrNames mimir.fileSystems == [ "/" "/boot" "/home" "/home/jeeemieee/scratch" "/nix" ];

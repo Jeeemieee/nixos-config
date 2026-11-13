@@ -7,6 +7,7 @@ NixOS configuration for `jeeemieee`. Two hosts share one workstation profile: `m
 - **[Applications](docs/APPS.md)**: installed programs and how to add more
 - **[Development environments](docs/DEV-ENVIRONMENTS.md)**: per-project Python, C/C++/Fortran, PETSc and CUDA from building blocks
 - **[Disk layout and snapshots](docs/DISK.md)**: the encrypted ZFS disk for physical machines, and how to restore files
+- **[Backup](docs/BACKUP.md)**: the hourly restic backup of `/home` to the home server, and how to restore
 - **[Installation](docs/INSTALL.md)**: installing a host from another Linux system through a virtual machine that only sees the target disk
 - **[Secure Boot](docs/SECURE-BOOT.md)**: own signing keys with lanzaboote, and how to inspect and recover
 - **[Secrets](docs/SECRETS.md)**: the private [nixos-secrets](https://github.com/Jeeemieee/nixos-secrets) repository and its sops-nix integration

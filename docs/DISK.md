@@ -23,7 +23,7 @@ The disk passphrase is typed at every boot. It is not in nixos-secrets, which li
 
 ## Snapshots are not backups
 
-Snapshots live on the same disk: they undo deletions and overwrites, and are lost with the disk. Backups are a separate step (restic).
+Snapshots live on the same disk: they undo deletions and overwrites, and are lost with the disk. The backup is a separate copy on the home server: see [BACKUP.md](BACKUP.md).
 
 Restore a file from a snapshot of `/home`:
 

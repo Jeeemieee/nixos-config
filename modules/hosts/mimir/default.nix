@@ -14,6 +14,7 @@ in
       modules.nixos.laptop
       modules.nixos.nvidia-offload
       modules.nixos.displaylink
+      modules.nixos.backup
     ];
 
     # The laptop's own age recipient is enrolled in nixos-secrets when it is installed

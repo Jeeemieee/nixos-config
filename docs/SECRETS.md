@@ -9,6 +9,8 @@ Encrypted data lives in the private [nixos-secrets](https://github.com/Jeeemieee
 | `wifi_env` | `secrets/shared.yaml` | admin, recovery, personal machines | `nixos.wifi`: NetworkManager profiles for eduroam, `home`, `gebbeken` and `hotspot` |
 | `user_password_hash` | `secrets/shared.yaml` | admin, recovery, personal machines | `nixos.login-password` (on `mimir`): the account's password, with immutable accounts |
 | `tailscale_authkey` | `secrets/<hostname>.yaml` | admin, recovery, that machine | `nixos.vpn`: `services.tailscale.authKeyFile` |
+| `restic_env` | `secrets/<hostname>.yaml` | admin, recovery, that machine | `nixos.backup` (on `mimir`): the backup server's address and login, as an environment file (`RESTIC_REPOSITORY`, `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`) |
+| `restic_password` | `secrets/<hostname>.yaml` | admin, recovery, that machine | `nixos.backup` (on `mimir`): this machine's own key to the backup repository; see [BACKUP.md](BACKUP.md) |
 | `message` | `secrets/test.yaml` | development, mimir-vm, recovery | `nixos.secrets-test`: harmless bootstrap test |
 
 `pi/AGENTS.md` in the same repository is a plain file, private but not secret: the instructions for the pi coding agent, linked read-only to `~/.pi/agent/AGENTS.md` (see [MIMIR-VM.md](MIMIR-VM.md#declared-configuration)). It ends up in the world-readable Nix store, which is fine for something that is not a secret.
