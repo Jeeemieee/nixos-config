@@ -88,8 +88,9 @@
         assert user.programs.plasma.kwin.virtualDesktops.names != [ ] && builtins.length user.programs.plasma.window-rules == builtins.length user.programs.plasma.kwin.virtualDesktops.names;
         # A named Brave window is kept on its desktop, so that naming an existing window moves it
         assert lib.all (rule: rule.apply.desktops.apply == "force") user.programs.plasma.window-rules;
-        # Brave restores its windows: the policy, the start at login, and its exit before Plasma closes the windows
-        assert (bravePolicies.RestoreOnStartup or null) == 1 && cfg.environment.etc ? "xdg/autostart/brave-session.desktop";
+        # Brave restores its windows when the user opens it, not at login: the policy, its launchers, and its exit before Plasma closes the windows
+        assert (bravePolicies.RestoreOnStartup or null) == 1 && !(cfg.environment.etc ? "xdg/autostart/brave-session.desktop");
+        assert lib.any (package: (package.name or "") == "brave-launchers") cfg.environment.systemPackages;
         assert lib.hasInfix "plasma-shutdown-after-brave" user.xdg.dataFile."dbus-1/services/org.kde.Shutdown.service".text;
         assert user.programs.plasma.session.sessionRestore.restoreOpenApplicationsOnLogin == "emptySession";
         # Zotero Connector and Plasma Integration are installed next to Bitwarden
@@ -109,6 +110,12 @@
         assert (cfg.users.groups.docker.members or [ ]) == [ ];
         assert builtins.all (account: !(builtins.elem "docker" account.extraGroups)) (builtins.attrValues normalUsers);
         assert cfg.services.tailscale.enable && cfg.services.mullvad-vpn.enable;
+        # GitHub: the user's repositories go over SSH with the key in Bitwarden, the host keys are pinned, and no token is stored in a file
+        assert user.programs.git.settings.url."git@github.com:Jeeemieee/".insteadOf == "https://github.com/Jeeemieee/";
+        assert !(user.programs.git.settings ? credential);
+        assert lib.hasInfix "IdentityAgent ~/.bitwarden-ssh-agent.sock" user.home.file.".ssh/config".text && lib.hasInfix "StrictHostKeyChecking yes" user.home.file.".ssh/config".text;
+        # Bitwarden writes an autostart file of the same name itself; without force that file stops every later activation
+        assert user.xdg.configFile."autostart/bitwarden.desktop".force && lib.hasInfix "--autostart" user.xdg.configFile."autostart/bitwarden.desktop".text;
         assert cfg.virtualisation.libvirtd.enable;
         # Only the laptop imports nixos.backup: a host of this profile without it never writes into the real backup
         assert host.config.networking.hostName == "mimir" || cfg.services.restic.backups == { };

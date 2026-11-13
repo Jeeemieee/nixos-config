@@ -14,9 +14,9 @@
       searx = config.services.searx;
       localSearch = "http://${searx.settings.server.bind_address}:${toString searx.settings.server.port}/search?q={searchTerms}";
 
-      # Starts Brave at login, unless it already runs
+      # Starts Brave; the application menu, the task bar and links from other programs all go through it (braveLaunchers below)
       # After a crash or a power loss Brave only offers "Restore pages?" in one empty window, whatever RestoreOnStartup says
-      # Marking the last exit as normal makes it open the saved windows and tabs unasked; Brave is not running, so nothing else writes the file
+      # Marking the last exit as normal makes it open the saved windows and tabs unasked; that is done only while Brave is not running, so nothing else writes the file
       braveSession = pkgs.writeShellApplication {
         name = "brave-session";
         runtimeInputs = [
@@ -26,7 +26,7 @@
         ];
         text = ''
           if pgrep -u "$(id -u)" -x brave > /dev/null; then
-            exit 0
+            exec brave "$@"
           fi
 
           for preferences in "''${XDG_CONFIG_HOME:-$HOME/.config}"/BraveSoftware/Brave-Browser/*/Preferences; do
@@ -39,18 +39,28 @@
           exec brave "$@"
         '';
       };
+
+      # Brave's own launchers, with brave-session in place of the browser's program; they take precedence over the package's
+      # Brave is not started at login: the windows and tabs of the last session come back when the user opens it
+      braveLaunchers = lib.hiPrio (
+        pkgs.runCommand "brave-launchers" { } ''
+          mkdir -p "$out/share/applications"
+          for launcher in ${pkgs.brave}/share/applications/*.desktop; do
+            sed 's|^Exec=${pkgs.brave}/bin/brave|Exec=${braveSession}/bin/brave-session|' "$launcher" > "$out/share/applications/$(basename "$launcher")"
+            # Fails the build when a launcher starts the browser in another way than this replacement expects
+            if grep -q '^Exec=' "$out/share/applications/$(basename "$launcher")" && grep '^Exec=' "$out/share/applications/$(basename "$launcher")" | grep -qv '^Exec=${braveSession}/bin/brave-session'; then
+              echo "brave-launchers: $(basename "$launcher") has an Exec line that was not replaced" >&2
+              exit 1
+            fi
+          done
+        ''
+      );
     in
     {
-      environment.systemPackages = [ pkgs.brave ];
-
-      # XDG autostart: every desktop session starts Brave through brave-session, which brings back the last windows and tabs
-      environment.etc."xdg/autostart/brave-session.desktop".text = ''
-        [Desktop Entry]
-        Type=Application
-        Name=Brave (restore the last session)
-        Exec=${braveSession}/bin/brave-session
-        Icon=brave-browser
-      '';
+      environment.systemPackages = [
+        pkgs.brave
+        braveLaunchers
+      ];
 
       # programs.chromium writes the same managed policies for Chromium, Chrome and Brave (/etc/brave/policies/managed/)
       # Names follow Brave's policy templates: brave-core components/policy/resources/templates/policy_definitions

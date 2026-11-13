@@ -1,4 +1,4 @@
-# Keyboard-driven Plasma: one named virtual desktop per project, shortcuts to reach them, maximised windows and web searches from KRunner
+# Keyboard-driven Plasma: one named virtual desktop per project, shortcuts to reach them and web searches from KRunner
 # Part of homeManager.desktop-kde, next to settings.nix
 { inputs, ... }:
 {
@@ -77,8 +77,9 @@
           };
         }) desktops;
 
-        # New windows open maximised; Meta+PgUp toggles that, Meta+Left and Meta+Right tile to a half (Plasma defaults)
-        configFile.kwinrc.Windows.Placement = "Maximizing";
+        # New windows open centred in their own size, which is Plasma's default; declared so that a machine that had "maximised" returns to it
+        # Meta+PgUp maximises, Meta+Left and Meta+Right tile to a half (Plasma defaults)
+        configFile.kwinrc.Windows.Placement = "Centered";
 
         # KRunner (Alt+Space): "<keyword>:<text>" opens a web search in the browser
         # Plasma ships dd (DuckDuckGo), wp, gh, doi, pypi, nixpkgs and some 150 more; the ones below are added

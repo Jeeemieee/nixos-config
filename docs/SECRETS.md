@@ -36,7 +36,7 @@ Real credentials are allowed in the VM: logging in by hand would store equivalen
 - Machine identity: `/var/lib/sops-nix/key.txt` (root-owned, mode `0600`, directory `0700`), generated on the machine by `sops-age-key.service`; never reuse it for another machine. Replacing the VM disk creates a new identity that needs enrolling; rebuilding with the same disk preserves it
 - Old development key: `~/.config/sops/age/nixos-secrets-dev.agekey` on Ubuntu; only for the test secret, to be retired. It lived on a machine where agents ran unsandboxed, so it is not trusted for real secrets
 - Keep private keys and plaintext outside both Git repositories and the Nix store, including ignored files
-- Git on Ubuntu uses the plaintext `store` credential helper; use a secure helper on NixOS
+- Git on Ubuntu uses the plaintext `store` credential helper. On NixOS there is no token: GitHub is reached over SSH with a key that lives in Bitwarden (see [APPS.md](APPS.md#github-access)). Revoke the Ubuntu token on GitHub after the migration
 
 Removing a recipient does not revoke old ciphertext or already-decrypted values; rotate affected credentials when access is revoked.
 

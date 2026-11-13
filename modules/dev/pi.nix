@@ -285,6 +285,7 @@ in
       probe = pkgs.writeShellScript "pi-sandbox-probe" ''
         report() { echo "$1=$2"; }
         if [ -e "$HOME/.ssh/id_test" ]; then report ssh visible; else report ssh hidden; fi
+        if [ -e "$HOME/.bitwarden-ssh-agent.sock" ]; then report bitwarden-agent visible; else report bitwarden-agent hidden; fi
         if [ -e "$HOME/.config/restic/password" ]; then report restic visible; else report restic hidden; fi
         if [ -e "$HOME/other-project/file" ]; then report other visible; else report other hidden; fi
         if echo ok > "$PWD/written-inside"; then report project writable; else report project readonly; fi
@@ -339,6 +340,8 @@ in
             export HOME=$TMPDIR/home USER=tester SSH_AUTH_SOCK=/run/user/1000/ssh-agent
             mkdir -p "$HOME/.ssh" "$HOME/.config/restic" "$HOME/.pi" "$HOME/other-project" "$HOME/project" "$HOME/data"
             touch "$HOME/.ssh/id_test" "$HOME/.config/restic/password" "$HOME/other-project/file" "$HOME/data/allowed"
+            # Stands in for the socket of Bitwarden's SSH agent, which holds the key for GitHub
+            touch "$HOME/.bitwarden-ssh-agent.sock"
             # Declared files are links into the store, as Home Manager creates them
             mkdir -p "$HOME/.pi/agent"
             ln -s ${pkgs.writeText "pi-sandbox-rules" "rules"} "$HOME/.pi/agent/AGENTS.md"
@@ -356,6 +359,7 @@ in
             (cd "$HOME/project/sub" && PROJECT=$HOME/project ${sandboxedProbe}/bin/pi --allow-ro "$HOME/data") > actual
             cat > expected <<EOF
             ssh=hidden
+            bitwarden-agent=hidden
             restic=hidden
             other=hidden
             project=writable

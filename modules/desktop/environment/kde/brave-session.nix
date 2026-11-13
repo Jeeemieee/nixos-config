@@ -31,8 +31,8 @@
       };
     in
     {
-      # Brave is started by brave-session; Plasma's own session restore would start it a second time, with an extra window
-      # The price: no other application reopens at login unless it is declared to start
+      # No application reopens at login by itself; the user opens what he needs, and Brave then brings back its own windows
+      # Plasma's own session restore would start Brave at login, with an extra window next to the ones Brave restores
       programs.plasma.session.sessionRestore.restoreOpenApplicationsOnLogin = "startWithEmptySession";
 
       # Plasma ends a session by asking every window to close. Brave takes that as the user closing its windows one by one:

@@ -35,7 +35,7 @@ Versions are those of the current `flake.lock` (nixos-26.05).
 | Teams | `homeManager.meetings` | `teams-for-linux` | 2.29.0 | no | Package; unofficial client around Teams for the web | Work account login |
 | Zoom | `homeManager.meetings` | `zoom-us` | 7.1.5.4332 | yes | Package | Login |
 | RustDesk | `homeManager.meetings` | `rustdesk-flutter` | 1.4.5 | no | Package; the Flutter client, since `rustdesk` depends on the unfree `libsciter` | ID, password, trusted devices |
-| Bitwarden | `homeManager.passwords` | `bitwarden-desktop` | 2026.8.0 | no | Package | Login, vault, unlock settings |
+| Bitwarden | `homeManager.passwords` | `bitwarden-desktop` | 2026.8.0 | no | Package; starts with the desktop session, because its SSH agent serves the key for GitHub (see [GitHub access](#github-access)) | Login, vault, unlock settings, the "Enable SSH agent" switch, the SSH key item |
 | Bitwarden CLI | `homeManager.passwords` | `bitwarden-cli` | 2026.4.2 | no | Package (`bw`) | Login, session |
 | Vim | `homeManager.cli` | `vim-full` (Home Manager's `programs.vim` default) | 9.2.1252 | no | `programs.vim` with `defaultEditor`, so `EDITOR=vim` | None |
 | btop | `homeManager.cli` | `btop` | 1.4.8 | no | `programs.btop` | None |
@@ -68,6 +68,24 @@ System services come from NixOS modules in `modules/services/`, imported by the 
 | libvirt, virt-manager | `nixos.libvirt` | 12.2.0, 5.1.0 | `virtualisation.libvirtd`, `programs.virt-manager`; users need the `libvirtd` group, set by the host | VMs, networks, storage pools |
 
 Docker is rootless because membership of a `docker` group is equivalent to root: any process of that user could start a container that mounts the whole disk. Rootless containers only have the user's own permissions. `mimir-vm-config` rejects a root daemon or `docker` group members. The `libvirtd` group is similarly powerful and must stay out of sandboxes.
+
+## GitHub access
+
+`homeManager.git` (`modules/dev/git/github.nix`) reaches GitHub over SSH with a key that lives in the Bitwarden vault. There is no key file and no token on the disk.
+
+- The Bitwarden desktop app runs an SSH agent (socket `~/.bitwarden-ssh-agent.sock`) and answers while the vault is unlocked. `ssh` is told to use it for `github.com` only.
+- GitHub's host keys are pinned (from `https://api.github.com/meta`): a server with another key is refused without a question. The check `github-host-key` tests that against a stand-in server, with a control.
+- The user's own repositories go over SSH whatever address they were cloned with (`https://github.com/Jeeemieee/…` is rewritten), the private `nixos-secrets` input included. Other GitHub repositories keep HTTPS, so public ones can be fetched without a key.
+- The pi sandbox sees neither the socket nor `~/.ssh` (`pi-sandbox` checks both), so an agent cannot push or fetch private repositories.
+
+Once per Bitwarden account, by hand:
+
+1. In the Bitwarden app: Settings, switch on "Enable SSH agent".
+2. New item, type "SSH key"; Bitwarden generates the key. Copy its public key.
+3. On GitHub: Settings, "SSH and GPG keys", "New SSH key", paste it.
+4. Test: `ssh -T git@github.com` greets with the account name.
+
+After every login the vault has to be unlocked once before git can reach GitHub. Not verified yet on NixOS: the agent itself, and whether `nix flake update nixos-secrets` honours the rewrite.
 
 ## Search
 
@@ -119,18 +137,18 @@ The same module (`modules/desktop/environment/kde/keyboard.nix`) declares the vi
 | `Meta+1` … `Meta+<n>` | Switch to that desktop (replaces Plasma's default for these keys, the n-th task-bar entry) |
 | `Meta+Shift+1` … `Meta+Shift+<n>` | Move the active window to that desktop; stored as `Meta+!`, `Meta+@`, …, so it depends on the US keyboard layout |
 | `Meta+Ctrl+Left` / `Right` | Previous and next desktop (Plasma default) |
-| `Meta+PgUp` | Maximise or restore; new windows open maximised |
+| `Meta+PgUp` | Maximise or restore; new windows open centred in their own size |
 | `Alt+Space` | KRunner: applications, windows, and `<keyword>:<text>` for a web search. Added keywords: `scholar:` or `gs:` (Google Scholar), `arxiv:`, `nixopt:` (NixOS options); Plasma ships `dd:`, `wp:`, `gh:`, `doi:`, `pypi:`, `nixpkgs:` and many more |
 
 **Brave windows on their desktop.** On Wayland a program cannot put its own windows back on a desktop, and every Brave window has the same class, so KWin places them by name. Name a window once (right-click the tab strip, "Name window…") as `<desktop>: <topic>`. It moves to that desktop at once and returns there whenever Brave creates it. The rule is forced: a named window cannot be moved to another desktop until it is renamed. Unnamed windows open on whichever desktop is current. The name replaces the page title in the task bar and in `Alt+Tab`.
 
 **Brave brings its windows back.** Three parts, tested together in a VM (shutdown, logout, power loss):
 
-- `brave-session` (`nixos.browser`) starts Brave at every login. After a crash or a power loss Brave would only offer "Restore pages?"; the script first marks the last exit as normal in Brave's `Preferences`, so the windows return unasked.
+- Brave is not started at login. Its launchers (application menu, task bar, links from other programs) start it through `brave-session` (`nixos.browser`), and the windows and tabs of the last session come back then. After a crash or a power loss Brave would only offer "Restore pages?"; the script first marks the last exit as normal in Brave's `Preferences`, so the windows return unasked. Started from a terminal as `brave`, that step is skipped.
 - Before Plasma ends a session, Brave is asked to exit as a whole (`modules/desktop/environment/kde/brave-session.nix`). Otherwise Plasma closes its windows one by one, Brave forgets some of them, and the shutdown waits two minutes. This replaces how Plasma starts its `plasma-shutdown` program for this user and relies on Plasma internals: **test a logout from the menu after every Plasma update**; deleting `~/.local/share/dbus-1/services/org.kde.Shutdown.service` restores the default.
-- Plasma starts with an empty session, because its own restore would start Brave a second time. No other application reopens at login unless it is declared to start.
+- Plasma starts with an empty session: no application reopens at login unless it is declared to start (Bitwarden is). Plasma's own restore would start Brave at login, with an extra window.
 
-After a login the view is on the desktop of the window Brave restored last, not always on the first one.
+When Brave is opened, the view moves to the desktop of the window it restored last.
 
 ## Default applications
 
