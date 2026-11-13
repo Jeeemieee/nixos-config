@@ -103,7 +103,7 @@ VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk 
 | Inside the sandbox | Hidden |
 | --- | --- |
 | The project: the git repository around the current folder, or the folder itself (read and write) | The rest of the home folder: `~/.ssh`, `~/.config` (sops keys, restic), Bitwarden, browser profiles, other projects |
-| `~/.pi` (pi's login and sessions; read and write, except the declared files below), `~/.config/git` (read-only) | Session sockets: Docker, D-Bus, the SSH agent, keyrings, the desktop |
+| Of `~/.pi/agent`: the declared files (read-only, fixed in place), the login and the sessions (read and write); `~/.config/git` (read-only) | Session sockets: Docker, D-Bus, the SSH agent, keyrings, the desktop |
 | The Nix store and daemon, `/etc`, the system's programs, the project's direnv environment | Other processes |
 | The network | |
 
@@ -111,7 +111,7 @@ VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk 
 - Extra folders only on request, before pi's own options: `pi --allow ~/documents/zotero` (read and write) or `pi --allow-ro <folder>` (read-only)
 - Opening a browser from inside fails quietly (the system's `kde-open` would crash without a desktop session): pi shows login links itself, so Ctrl+click the link in the terminal, which opens it in the normal browser
 - The project's `.git/hooks` and `.git/config` are read-only inside, since git would run their commands outside the sandbox later
-- Not covered: the network stays open (pi needs it for the model), so project contents can still leave the machine; pi can still add files to `~/.pi`, such as an extension in `~/.pi/agent/extensions`, but cannot change the declared instructions, settings and extensions; files in the project that you later run outside the sandbox (scripts, `flake.nix` via direnv) need the same review as any code an agent wrote. No Docker and no GPU inside yet
+- Not covered: the network stays open (pi needs it for the model), so project contents can still leave the machine; whatever runs in the sandbox can read and change the login file and the sessions, as pi itself must; files in the project that you later run outside the sandbox (scripts, `flake.nix` via direnv) need the same review as any code an agent wrote. No Docker and no GPU inside yet
 
 ### Declared configuration
 
@@ -125,9 +125,15 @@ VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk 
 
 The extensions are fixed versions in one store folder: `rpiv-todo` and `rpiv-ask-user-question` 2.15.0 (with their dependency `rpiv-config`), `pi-simplify` 0.2.0, `pi-anthropic-auth` 3.4.4, and `pi-chatgpt-limit` 0.3.1 from GitHub. pi names an extension after the folder of its entry file, which is `src` for `pi-anthropic-auth`; the store copy therefore gets an entry file in the package folder that re-exports the original. Nothing is downloaded when pi starts. To update one, change its version and hash in `mkExtensions`; `npm view <name>@<version> dist.integrity` prints the hash of an npm package.
 
-Because the files are read-only, `/settings`, `pi install` and editing `AGENTS.md` in place do not persist: change `pi.nix` or `pi/AGENTS.md` in nixos-secrets and rebuild. Logins (`auth.json`, which refreshes itself) and sessions are state, not configuration: log in once per machine with `/login`.
+Inside the sandbox, `~/.pi/agent` is a folder in memory, built at every start:
 
-The `pi-sandbox` check runs a probe in the same sandbox and compares what it can reach with the expected answers, including the refusals and that a declared file cannot be written. The `pi-config` check verifies the extensions' versions, entry files and dependency, the settings, and that pi, offline and with only the read-only settings in its folder, lists the five extensions and writes nothing, and that it loads them without a login and offers their commands. A nixos-secrets pin without `pi/AGENTS.md` fails evaluation with a message instead of leaving a dangling link.
+- the declared files are mounted read-only at their paths, so they cannot be changed, deleted or replaced there; if one of them is no longer a link into the Nix store when pi starts, the launcher refuses and names the command that restores it
+- `sessions/` and `login/` are the real folders and persist. `auth.json` is a link to `login/auth.json`; pi locks the login file at its real location, so several pi sessions share that lock. A login file from pi running without the sandbox is moved to `login/` at the first start
+- everything else written there is discarded when pi exits: an extension or skill, `SYSTEM.md`, `mcp.json`, extra model endpoints in `models.json`, saved project-trust decisions, and the model cache `models-store.json`, which holds the addresses requests are sent to and is fetched again at every start. Files that exist in the real `~/.pi/agent` but are neither declared nor one of the two folders are not visible in the sandbox
+
+Because the files are read-only, `/settings`, `pi install`, `/chatgpt-limit` and editing `AGENTS.md` in place do not persist: change `pi.nix` or `pi/AGENTS.md` in nixos-secrets and rebuild. Logins (`auth.json`, which refreshes itself) and sessions are state, not configuration: log in once per machine with `/login`.
+
+The `pi-sandbox` check runs a probe in the same sandbox and compares what it can reach with the expected answers, including the refusals; that a declared file cannot be written, deleted or replaced; that the sessions and the login persist and a login file in the old place is moved; that nothing else written to pi's folder is left behind; and that a declared file replaced outside the sandbox makes the launcher refuse. The `pi-config` check verifies the extensions' versions, entry files and dependency, the settings, and that pi, offline and with only the read-only settings in its folder, lists the five extensions and writes nothing, and that it loads them without a login and offers their commands. A nixos-secrets pin without `pi/AGENTS.md` fails evaluation with a message instead of leaving a dangling link.
 
 ## direnv
 

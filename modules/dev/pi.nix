@@ -1,6 +1,7 @@
 # The pi coding agent, always run inside a bubblewrap sandbox; users opt in by importing homeManager.pi
-# The sandbox sees the project (the git repository around the current folder, or the folder itself), ~/.pi, the Nix store and the network,
+# The sandbox sees the project (the git repository around the current folder, or the folder itself), the Nix store and the network,
 # and nothing else of the home folder, no session sockets (Docker, D-Bus, SSH agent, keyrings) and no other processes
+# Of ~/.pi/agent it sees the declared files, fixed and read-only, and keeps the login and the sessions; whatever else is written there is discarded at exit
 # Its instructions, settings and extensions are declared here and read-only, also for pi itself
 { inputs, ... }:
 let
@@ -84,6 +85,8 @@ let
       name,
       command,
       environment ? { },
+      # Files below the home folder that Home Manager declares, as links into the Nix store
+      declared ? [ ],
     }:
     let
       # The sandbox has no desktop session, so the system's xdg-open (kde-open) crashes there; this one fails quietly instead
@@ -152,7 +155,33 @@ let
           if [ -e "$path" ]; then protect+=(--ro-bind "$path" "$path"); fi
         done
 
-        mkdir -p "$HOME/.pi"
+        # ~/.pi/agent inside the sandbox is a folder in memory. It holds the declared files as read-only mounts, which cannot be
+        # deleted or replaced, and two things that persist: the sessions, and the login in its own folder. pi locks the login
+        # file next to its real location, so several sandboxes share that lock through the login folder
+        # Anything else written there (an extension, a system prompt, model endpoints, the model cache) is gone at exit
+        agent=$HOME/.pi/agent
+        mkdir -p "$agent/sessions" "$agent/login"
+        chmod 700 "$agent/login"
+        # A login file from pi running without this sandbox moves to its new place once
+        if [ -f "$agent/auth.json" ] && [ ! -L "$agent/auth.json" ] && [ ! -e "$agent/login/auth.json" ]; then
+          mv "$agent/auth.json" "$agent/login/auth.json"
+        fi
+        # What pi itself writes when the file is missing
+        if [ ! -e "$agent/login/auth.json" ]; then
+          (umask 077 && printf '{}' > "$agent/login/auth.json")
+        fi
+
+        declared=(${toString (map pkgs.lib.escapeShellArg declared)})
+        declaredBinds=()
+        for path in "''${declared[@]}"; do
+          target=$(realpath -e -- "$HOME/$path" 2> /dev/null) || target=
+          case "$target" in
+            /nix/store/*) ;;
+            *) deny "$HOME/$path is not the declared file (a link into the Nix store); restore it with: systemctl restart home-manager-$USER.service" ;;
+          esac
+          [ -L "$HOME/$path" ] || deny "$HOME/$path is not the declared file (a link into the Nix store); restore it with: systemctl restart home-manager-$USER.service"
+          declaredBinds+=(--ro-bind "$target" "$HOME/$path")
+        done
 
         exec bwrap \
           --unshare-all --share-net --die-with-parent \
@@ -168,7 +197,11 @@ let
           --ro-bind-try /run/current-system /run/current-system \
           --ro-bind-try /run/opengl-driver /run/opengl-driver \
           --tmpfs "$HOME" \
-          --bind "$HOME/.pi" "$HOME/.pi" \
+          --dir "$agent" \
+          "''${declaredBinds[@]}" \
+          --bind "$agent/login" "$agent/login" \
+          --symlink login/auth.json "$agent/auth.json" \
+          --bind "$agent/sessions" "$agent/sessions" \
           --ro-bind-try "$HOME/.config/git" "$HOME/.config/git" \
           --bind "$project" "$project" \
           "''${protect[@]}" \
@@ -188,7 +221,7 @@ let
 in
 {
   flake.modules.homeManager.pi =
-    { pkgs, ... }:
+    { config, pkgs, ... }:
     let
       # Nix owns pi's version; `pi update` explains that instead of installing over the store
       noSelfUpdate = pkgs.writeShellScript "pi-no-self-update" ''
@@ -205,6 +238,8 @@ in
             PI_SKIP_VERSION_CHECK = "1";
             PI_SELF_UPDATE_COMMAND = "${noSelfUpdate}";
           };
+          # Every file this configuration puts into pi's folder
+          declared = builtins.filter (pkgs.lib.hasPrefix ".pi/agent/") (builtins.attrNames config.home.file);
         })
       ];
 
@@ -216,7 +251,7 @@ in
         }
       ];
 
-      # Links into the Nix store: read-only for everyone, also inside the sandbox, where ~/.pi itself is writable
+      # Links into the Nix store: read-only for everyone. The sandbox mounts them in place, so they cannot be removed or replaced there either
       # They replace files of the same name, which pi or a copied ~/.pi leaves behind; Home Manager would otherwise abort
       home.file = {
         # The user's instructions for every agent; private, so from nixos-secrets (plain, not encrypted)
@@ -251,7 +286,7 @@ in
         if echo ok > "$PWD/written-inside"; then report project writable; else report project readonly; fi
         echo leak > "$HOME/leaked" 2>/dev/null || true
         if echo hook >> "$PROJECT/.git/hooks/post-checkout" 2>/dev/null; then report hooks writable; else report hooks readonly; fi
-        if [ -e "$HOME/.pi/marker" ]; then report pi-config visible; else report pi-config hidden; fi
+        if [ -e "$HOME/.pi/agent/undeclared.md" ]; then report undeclared-pi-file visible; else report undeclared-pi-file hidden; fi
         if [ -e "$HOME/data/allowed" ]; then report allowed visible; else report allowed hidden; fi
         if [ -n "''${SSH_AUTH_SOCK:-}" ]; then report ssh-agent set; else report ssh-agent unset; fi
         report pid1 "$(cat /proc/1/comm)"
@@ -259,6 +294,17 @@ in
         if [ "$(cat "$HOME/.pi/agent/AGENTS.md" 2>/dev/null)" != rules ]; then report instructions unreadable
         elif echo more >> "$HOME/.pi/agent/AGENTS.md" 2>/dev/null; then report instructions writable
         else report instructions readonly; fi
+        # Deleting the declared file and writing another one in its place
+        rm -f "$HOME/.pi/agent/AGENTS.md" 2>/dev/null
+        echo evil > "$HOME/.pi/agent/AGENTS.md" 2>/dev/null
+        mv "$HOME/.pi/agent/sessions" "$HOME/.pi/agent/moved" 2>/dev/null
+        if [ "$(cat "$HOME/.pi/agent/AGENTS.md" 2>/dev/null)" = rules ]; then report instructions-replaced no; else report instructions-replaced yes; fi
+        # What pi keeps between runs, and what an agent might try to leave behind
+        echo session > "$HOME/.pi/agent/sessions/probe-session" && report sessions writable
+        report login "$(readlink "$HOME/.pi/agent/auth.json")=$(cat "$HOME/.pi/agent/auth.json")"
+        echo '{"probe":true}' > "$HOME/.pi/agent/auth.json"
+        mkdir -p "$HOME/.pi/agent/extensions" && echo evil > "$HOME/.pi/agent/extensions/evil.ts" && echo evil > "$HOME/.pi/agent/SYSTEM.md" \
+          && echo evil > "$HOME/.pi/agent/models-store.json" && report undeclared-write accepted
         case "$(command -v xdg-open)" in
           *-pi-sandbox-no-browser/bin/xdg-open) if xdg-open https://example.org; then report opener opened; else report opener quiet-failure; fi ;;
           *) report opener system ;;
@@ -268,6 +314,7 @@ in
         name = "pi";
         command = "${probe}";
         environment.PI_SKIP_VERSION_CHECK = "1";
+        declared = [ ".pi/agent/AGENTS.md" ];
       };
       extensions = mkExtensions pkgs;
       settingsFile = pkgs.writeText "pi-settings.json" (builtins.toJSON (settingsFor extensions));
@@ -285,10 +332,13 @@ in
           ''
             export HOME=$TMPDIR/home USER=tester SSH_AUTH_SOCK=/run/user/1000/ssh-agent
             mkdir -p "$HOME/.ssh" "$HOME/.config/restic" "$HOME/.pi" "$HOME/other-project" "$HOME/project" "$HOME/data"
-            touch "$HOME/.ssh/id_test" "$HOME/.config/restic/password" "$HOME/.pi/marker" "$HOME/other-project/file" "$HOME/data/allowed"
+            touch "$HOME/.ssh/id_test" "$HOME/.config/restic/password" "$HOME/other-project/file" "$HOME/data/allowed"
             # Declared files are links into the store, as Home Manager creates them
             mkdir -p "$HOME/.pi/agent"
             ln -s ${pkgs.writeText "pi-sandbox-rules" "rules"} "$HOME/.pi/agent/AGENTS.md"
+            # A file in pi's folder that is not declared, and a login file from pi running without the sandbox
+            echo undeclared > "$HOME/.pi/agent/undeclared.md"
+            printf '{"old":true}' > "$HOME/.pi/agent/auth.json"
             git -C "$HOME/project" init -q
             touch "$HOME/project/.git/hooks/post-checkout"
             mkdir -p "$HOME/project/sub"
@@ -301,12 +351,16 @@ in
             other=hidden
             project=writable
             hooks=readonly
-            pi-config=visible
+            undeclared-pi-file=hidden
             allowed=visible
             ssh-agent=unset
             pid1=bwrap
             version-check=1
             instructions=readonly
+            instructions-replaced=no
+            sessions=writable
+            login=login/auth.json={"old":true}
+            undeclared-write=accepted
             opener=quiet-failure
             EOF
             sed -i 's/^ *//' expected
@@ -314,6 +368,15 @@ in
             [ -e "$HOME/project/sub/written-inside" ] || { echo "FAIL: project write did not reach the host"; exit 1; }
             [ ! -e "$HOME/leaked" ] || { echo "FAIL: a write to the sandbox home reached the real home"; exit 1; }
             [ ! -s "$HOME/project/.git/hooks/post-checkout" ] || { echo "FAIL: the sandbox changed a git hook"; exit 1; }
+
+            # After the run, on the host: the declared file is untouched, the sessions and the login persist, nothing else was left behind
+            agent=$HOME/.pi/agent
+            [ -L "$agent/AGENTS.md" ] && [ "$(cat "$agent/AGENTS.md")" = rules ] || { echo "FAIL: the declared file changed on the host"; exit 1; }
+            [ "$(cat "$agent/sessions/probe-session")" = session ] || { echo "FAIL: the session did not persist"; exit 1; }
+            [ ! -e "$agent/auth.json" ] && [ "$(cat "$agent/login/auth.json")" = '{"probe":true}' ] || { echo "FAIL: the login did not move or persist"; exit 1; }
+            [ "$(stat -c %a "$agent/login")" = 700 ] || { echo "FAIL: the login folder is not private"; exit 1; }
+            ls -A "$agent" | sort | tr '\n' ' ' > left
+            [ "$(cat left)" = "AGENTS.md login sessions undeclared.md " ] || { echo "FAIL: left behind in pi's folder: $(cat left)"; exit 1; }
 
             # Refusals: the home folder, hidden folders and system paths are never shared
             refuse() {
@@ -327,6 +390,12 @@ in
             refuse allow-home bash -c 'cd "$HOME/project" && ${sandboxedProbe}/bin/pi --allow "$HOME"'
             refuse allow-system bash -c 'cd "$HOME/project" && ${sandboxedProbe}/bin/pi --allow /etc'
             refuse allow-ssh bash -c 'cd "$HOME/project" && ${sandboxedProbe}/bin/pi --allow-ro "$HOME/.ssh"'
+
+            # A declared file that was replaced by a normal file outside the sandbox: refuse instead of starting without it
+            rm "$agent/AGENTS.md" && echo replaced > "$agent/AGENTS.md"
+            if (cd "$HOME/project" && ${sandboxedProbe}/bin/pi) > out 2>&1; then echo "FAIL (replaced declared file): not refused"; exit 1; fi
+            grep -q "is not the declared file" out || { echo "FAIL (replaced declared file): no descriptive refusal"; cat out; exit 1; }
+            echo "refused (replaced declared file): $(cat out)"
             touch "$out"
           '';
 
