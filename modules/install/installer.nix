@@ -329,7 +329,13 @@ in
 
               boot)
                 [ "$kind" = image ] && [ -f "$target" ] || fail "boot needs --image <file> of an installed system"
-                # The disk is an NVMe device, as on the laptop: a physical host's first boot stage has no drivers for virtual disks
+                # The disk is attached as on a physical machine, whose first boot stage has no drivers for virtual disks:
+                # through USB by default, or as an NVMe device with INSTALL_DISK_BUS=nvme
+                case "''${INSTALL_DISK_BUS:-usb}" in
+                  usb) disk="-device usb-storage,drive=disk,bus=xhci.0" ;;
+                  nvme) disk="-device nvme,drive=disk,serial=rehearsal" ;;
+                  *) fail "INSTALL_DISK_BUS must be usb or nvme" ;;
+                esac
                 # The firmware's variables persist between boots, like on a real machine; they start without keys (setup mode)
                 variables=$state/rehearsal-efi-vars.fd
                 if [ ! -e "$variables" ]; then
@@ -346,8 +352,8 @@ in
                   -drive if=pflash,format=raw,unit=0,readonly=on,file=${ovmf.firmware} \
                   -drive if=pflash,format=raw,unit=1,file="$variables" \
                   -drive file="$target",format=raw,if=none,id=disk,discard=unmap \
-                  -device nvme,drive=disk,serial=rehearsal \
-                  -device virtio-vga -display gtk -device qemu-xhci -device usb-tablet -device virtio-rng-pci \
+                  -device qemu-xhci,id=xhci $disk \
+                  -device virtio-vga -display gtk -device usb-tablet -device virtio-rng-pci \
                   $network ''${INSTALL_QEMU_OPTS:-}
                 ;;
 

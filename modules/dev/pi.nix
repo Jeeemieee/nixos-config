@@ -34,7 +34,17 @@ let
         # Not an extension: the dependency of the two rpiv extensions
         (npm "@juicesharp/rpiv-config" "2.15.0" "sha512-S2BAGX4dJjQ2AyNYOEjC6ha04p9f6CdEfmtxpdxzSKrfDMwqIvOjjO9HiHc1IPY7jDY1q2Q8cGCtpIZWV6Y8NQ==")
         (npm "@geminixiang/pi-simplify" "0.2.0" "sha512-pASkAwxqwU7vB8phjir1h50jSaSwaziro/R3FbKC+GMtNdFNDVybTe1VQ0gcKQ5l6fVoxm5NhyZ30XUdKqM68g==")
-        (npm "@gotgenes/pi-anthropic-auth" "3.4.4" "sha512-oWCkPFSa7AkvSju3OrlYu0GTo8Jdqz2OvszJtHj0hzXLw8tErtmPPMYPqK2it3zaXu+Wl2oH8nfpeIUVsqW2Vw==")
+        (
+          npm "@gotgenes/pi-anthropic-auth" "3.4.4" "sha512-oWCkPFSa7AkvSju3OrlYu0GTo8Jdqz2OvszJtHj0hzXLw8tErtmPPMYPqK2it3zaXu+Wl2oH8nfpeIUVsqW2Vw=="
+          // {
+            # pi names an extension after the folder of its entry file, here "src": an entry in the package folder gives it its own name
+            fix = ''
+              echo 'export { default } from "./src/index.ts";' > index.ts
+              jq '.pi.extensions = [ "./index.ts" ]' package.json > package.json.new
+              mv package.json.new package.json
+            '';
+          }
+        )
         {
           # Version 0.3.1, not published on npm
           name = "pi-chatgpt-limit";
@@ -49,10 +59,12 @@ let
         }
       ];
     in
-    pkgs.runCommand "pi-extensions" { } (
+    pkgs.runCommand "pi-extensions" { nativeBuildInputs = [ pkgs.jq ]; } (
       pkgs.lib.concatMapStrings (package: ''
         mkdir -p "$out/node_modules/${package.name}"
         ${package.unpack} "$out/node_modules/${package.name}"
+        chmod -R u+w "$out/node_modules/${package.name}"
+        (cd "$out/node_modules/${package.name}" && ${package.fix or ":"})
       '') packages
     );
 
@@ -194,6 +206,14 @@ in
             PI_SELF_UPDATE_COMMAND = "${noSelfUpdate}";
           };
         })
+      ];
+
+      # Without this, a nixos-secrets pin from before the file existed gives a dangling link, and pi starts without instructions
+      assertions = [
+        {
+          assertion = builtins.pathExists "${inputs.nixos-secrets}/pi/AGENTS.md";
+          message = "homeManager.pi needs pi/AGENTS.md in the nixos-secrets input: update its pin with 'nix flake update nixos-secrets'";
+        }
       ];
 
       # Links into the Nix store: read-only for everyone, also inside the sandbox, where ~/.pi itself is writable
@@ -382,6 +402,13 @@ in
             jq -r '.packages[]' ${settingsFile} | sort > declared
             diff declared listed
             [ "$(ls -A "$PI_CODING_AGENT_DIR")" = settings.json ] || { echo "FAIL: pi changed its folder:"; ls -la "$PI_CODING_AGENT_DIR"; exit 1; }
+
+            # 6. pi loads the extensions without a login: it exits with an error when one fails to load, and lists their commands
+            (cd "$HOME/work" && echo '{"id": "1", "type": "get_commands"}' | pi --mode rpc --no-session) > commands
+            for command in todos simplify code-smell chatgpt-limit anthropic-auth:status; do
+              jq -e --arg name "$command" 'select(.id == "1") | .data.commands | map(.name) | index($name) != null' commands > /dev/null \
+                || { echo "FAIL: no /$command command; an extension did not load"; cat commands; exit 1; }
+            done
             touch "$out"
           '';
     };

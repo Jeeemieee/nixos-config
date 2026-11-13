@@ -14,7 +14,7 @@
 | `nixos.nvidia-offload` | The NVIDIA driver with the open kernel modules, used on demand | Machines with a second GPU |
 | `nixos.displaylink` | The Dell D3100 dock (DisplayLink) | Machines using such a dock |
 
-The host itself only adds its name, its ZFS host ID, the GPU bus addresses, Intel microcode and its state versions. `hostSpec.disk.device` is deliberately unset: the disk is chosen, and confirmed by its serial number, when the laptop is installed (see [INSTALL.md](INSTALL.md)); the installed system finds its partitions by label.
+The host itself only adds its name, its ZFS host ID, the GPU bus addresses, Intel microcode, the USB storage drivers for the first boot stage (the system disk starts out in a USB enclosure) and its state versions. `hostSpec.disk.device` is deliberately unset: the disk is chosen, and confirmed by its serial number, when the laptop is installed (see [INSTALL.md](INSTALL.md)); the installed system finds its partitions by label.
 
 ## Graphics
 

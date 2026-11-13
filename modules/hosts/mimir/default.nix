@@ -27,6 +27,11 @@ in
     hostSpec.disk.scratchUser = "jeeemieee";
 
     hardware.cpu.intel.updateMicrocode = true;
+    # The system disk sits in a USB enclosure for now; without these the first boot stage does not find it there
+    boot.initrd.availableKernelModules = [
+      "usb_storage"
+      "uas"
+    ];
     boot.kernelModules = [ "kvm-intel" ];
 
     # From lspci: 00:02.0 Intel graphics, 01:00.0 NVIDIA

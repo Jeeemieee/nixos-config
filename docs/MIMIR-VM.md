@@ -123,11 +123,11 @@ VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk 
 | `~/.pi/agent/settings.json` | Dark theme, default provider, model and thinking level, and the five extensions as store paths | `modules/dev/pi.nix` |
 | `~/.pi/agent/chatgpt-limit.json` | Display settings of the usage footer | `modules/dev/pi.nix` |
 
-The extensions are fixed versions in one store folder: `rpiv-todo` and `rpiv-ask-user-question` 2.15.0 (with their dependency `rpiv-config`), `pi-simplify` 0.2.0, `pi-anthropic-auth` 3.4.4 (pi lists it as `src`), and `pi-chatgpt-limit` 0.3.1 from GitHub. Nothing is downloaded when pi starts. To update one, change its version and hash in `mkExtensions`; `npm view <name>@<version> dist.integrity` prints the hash of an npm package.
+The extensions are fixed versions in one store folder: `rpiv-todo` and `rpiv-ask-user-question` 2.15.0 (with their dependency `rpiv-config`), `pi-simplify` 0.2.0, `pi-anthropic-auth` 3.4.4, and `pi-chatgpt-limit` 0.3.1 from GitHub. pi names an extension after the folder of its entry file, which is `src` for `pi-anthropic-auth`; the store copy therefore gets an entry file in the package folder that re-exports the original. Nothing is downloaded when pi starts. To update one, change its version and hash in `mkExtensions`; `npm view <name>@<version> dist.integrity` prints the hash of an npm package.
 
 Because the files are read-only, `/settings`, `pi install` and editing `AGENTS.md` in place do not persist: change `pi.nix` or `pi/AGENTS.md` in nixos-secrets and rebuild. Logins (`auth.json`, which refreshes itself) and sessions are state, not configuration: log in once per machine with `/login`.
 
-The `pi-sandbox` check runs a probe in the same sandbox and compares what it can reach with the expected answers, including the refusals and that a declared file cannot be written. The `pi-config` check verifies the extensions' versions, entry files and dependency, the settings, and that pi, offline and with only the read-only settings in its folder, lists the five extensions and writes nothing.
+The `pi-sandbox` check runs a probe in the same sandbox and compares what it can reach with the expected answers, including the refusals and that a declared file cannot be written. The `pi-config` check verifies the extensions' versions, entry files and dependency, the settings, and that pi, offline and with only the read-only settings in its folder, lists the five extensions and writes nothing, and that it loads them without a login and offers their commands. A nixos-secrets pin without `pi/AGENTS.md` fails evaluation with a message instead of leaving a dangling link.
 
 ## direnv
 
