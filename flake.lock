@@ -134,11 +134,11 @@
     "nixos-secrets": {
       "flake": false,
       "locked": {
-        "lastModified": 1794566804,
-        "narHash": "sha256-HPZf4SK56Duahc5pcNFNwBhWtwcMaxgHUcInyNLwwp0=",
+        "lastModified": 1794583105,
+        "narHash": "sha256-OpT2+SszQK7kafIJ/KDeYZ8GTiIIgCJK/cjkqeiKzK0=",
         "ref": "main",
-        "rev": "843191f0cb785678af6dd7c6270ea8270a053f36",
-        "revCount": 8,
+        "rev": "10565c9fe31c7fabca6a388191330dc72307f14d",
+        "revCount": 9,
         "type": "git",
         "url": "https://github.com/Jeeemieee/nixos-secrets.git"
       },
@@ -212,6 +212,29 @@
         "type": "github"
       }
     },
+    "plasma-manager": {
+      "inputs": {
+        "home-manager": [
+          "home-manager"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1785762349,
+        "narHash": "sha256-jZhZkzAwc7f3exzcTDJWP2WCAchCv0iNC3UF/QsahdQ=",
+        "owner": "nix-community",
+        "repo": "plasma-manager",
+        "rev": "a19a2a029fa180911bd89c554dca1616e10f4c1d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "plasma-manager",
+        "type": "github"
+      }
+    },
     "pre-commit": {
       "inputs": {
         "flake-compat": "flake-compat",
@@ -245,6 +268,7 @@
         "nixpkgs": "nixpkgs",
         "nixpkgs-pi": "nixpkgs-pi",
         "nixpkgs-unstable": "nixpkgs-unstable",
+        "plasma-manager": "plasma-manager",
         "sops-nix": "sops-nix",
         "treefmt-nix": "treefmt-nix"
       }

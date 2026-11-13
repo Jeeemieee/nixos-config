@@ -7,6 +7,8 @@
       defaultApplications = {
         "x-scheme-handler/http" = "brave-browser.desktop";
         "x-scheme-handler/https" = "brave-browser.desktop";
+        "text/html" = "brave-browser.desktop";
+        "application/xhtml+xml" = "brave-browser.desktop";
         "application/pdf" = "okularApplication_pdf.desktop";
         "x-scheme-handler/mailto" = "thunderbird.desktop";
         "text/x-tex" = "codium.desktop";

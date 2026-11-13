@@ -10,7 +10,8 @@
 
         # Lands in /etc/profiles/per-user/<user>/share/hunspell: LibreOffice's wrapper adds each $NIX_PROFILES/share/hunspell to DICPATH,
         # and KDE's Sonnet searches hunspell/ under $XDG_DATA_DIRS
-        hunspellDicts.en_US
+        hunspellDicts.en_GB-ise
+        hunspellDicts.nl_NL
       ];
     };
 }

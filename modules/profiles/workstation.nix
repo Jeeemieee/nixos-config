@@ -6,7 +6,7 @@ let
 in
 {
   flake.modules.nixos.workstation =
-    { pkgs, ... }:
+    { lib, pkgs, ... }:
     {
       imports = [
         modules.nixos.desktop-kde
@@ -27,7 +27,19 @@ in
       services.openssh.enable = false;
 
       time.timeZone = "Europe/Amsterdam";
-      i18n.defaultLocale = "en_US.UTF-8";
+      # British English as the language; Dutch formats for numbers, dates, the clock, currency, paper size and units
+      i18n.defaultLocale = "en_GB.UTF-8";
+      i18n.extraLocaleSettings = lib.genAttrs [
+        "LC_NUMERIC"
+        "LC_TIME"
+        "LC_MONETARY"
+        "LC_PAPER"
+        "LC_NAME"
+        "LC_ADDRESS"
+        "LC_TELEPHONE"
+        "LC_MEASUREMENT"
+        "LC_IDENTIFICATION"
+      ] (_: "nl_NL.UTF-8");
       services.xserver.xkb.layout = "us";
 
       environment.systemPackages = with pkgs; [ git ];
@@ -46,6 +58,7 @@ in
       };
 
       home-manager.users.jeeemieee.imports = [
+        modules.homeManager.desktop-kde
         modules.homeManager.vscode
         modules.homeManager.git
         modules.homeManager.office

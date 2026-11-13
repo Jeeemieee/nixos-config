@@ -3,5 +3,7 @@
   flake.modules.nixos.libvirt = {
     virtualisation.libvirtd.enable = true;
     programs.virt-manager.enable = true;
+    # virsh and virt-manager use the system connection, where the VMs of this module live, not the empty per-user one
+    environment.sessionVariables.LIBVIRT_DEFAULT_URI = "qemu:///system";
   };
 }

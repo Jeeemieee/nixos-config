@@ -27,6 +27,10 @@ in
     hostSpec.disk.scratchUser = "jeeemieee";
 
     hardware.cpu.intel.updateMicrocode = true;
+    # Intel's thermal daemon, as on the Ubuntu install
+    services.thermald.enable = true;
+    # The 3Dconnexion SpaceMouse, through the free driver that Blender uses
+    hardware.spacenavd.enable = true;
     # The system disk sits in a USB enclosure for now; without these the first boot stage does not find it there
     boot.initrd.availableKernelModules = [
       "usb_storage"

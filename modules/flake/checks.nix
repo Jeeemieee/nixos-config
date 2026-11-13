@@ -69,6 +69,27 @@
         assert (bravePolicies.BraveP3AEnabled or null) == false && (bravePolicies.BraveStatsPingEnabled or null) == false;
         assert (bravePolicies.BraveWebDiscoveryEnabled or null) == false && (bravePolicies.MetricsReportingEnabled or null) == false;
         assert builtins.elem "nngceckbapebfimnlniiiahkandclblb" (braveDefaults.ExtensionInstallForcelist or [ ]);
+        # Bitwarden is the only password manager, phishing protection is on, and the search engine does not track
+        assert (bravePolicies.PasswordManagerEnabled or null) == false && (bravePolicies.SafeBrowsingProtectionLevel or null) == 1;
+        assert lib.hasPrefix "https://www.startpage.com/" (braveDefaults.DefaultSearchProviderSearchURL or "");
+        assert (bravePolicies.SpellcheckLanguage or [ ]) == [ "en-GB" "nl" ];
+        assert user.programs.plasma.configFile.plasma-localerc.Formats.LANG.value == "en_GB.UTF-8";
+        # British English with Dutch formats; the desktop is dark and locks with the screen
+        assert cfg.i18n.defaultLocale == "en_GB.UTF-8" && cfg.i18n.extraLocaleSettings.LC_TIME == "nl_NL.UTF-8" && cfg.i18n.extraLocaleSettings.LC_PAPER == "nl_NL.UTF-8";
+        assert user.programs.plasma.enable && user.programs.plasma.workspace.lookAndFeel == "org.kde.breezedark.desktop";
+        # Named desktops from nixos-secrets, reached with Meta+<digit>; every desktop has its rule for named Brave windows
+        assert user.programs.plasma.kwin.virtualDesktops.names != [ ] && builtins.length user.programs.plasma.window-rules == builtins.length user.programs.plasma.kwin.virtualDesktops.names;
+        # A named Brave window is kept on its desktop, so that naming an existing window moves it
+        assert lib.all (rule: rule.apply.desktops.apply == "force") user.programs.plasma.window-rules;
+        # Brave restores its windows: the policy, the start at login, and its exit before Plasma closes the windows
+        assert (bravePolicies.RestoreOnStartup or null) == 1 && cfg.environment.etc ? "xdg/autostart/brave-session.desktop";
+        assert lib.hasInfix "plasma-shutdown-after-brave" user.xdg.dataFile."dbus-1/services/org.kde.Shutdown.service".text;
+        assert user.programs.plasma.session.sessionRestore.restoreOpenApplicationsOnLogin == "emptySession";
+        # Zotero Connector and Plasma Integration are installed next to Bitwarden
+        assert lib.all (id: builtins.elem id (braveDefaults.ExtensionInstallForcelist or [ ])) [ "ekhagklcjbdpajgpjgmbionohlpdbjgc" "cimiefiiaegbelhefglklhhakcgmhkai" ];
+        assert user.programs.plasma.shortcuts.kwin."Switch to Desktop 1" == "Meta+1" && user.programs.plasma.shortcuts.kwin."Window to Desktop 1" == "Meta+!";
+        assert user.programs.tmux.enable;
+        assert user.programs.plasma.kscreenlocker.autoLock && user.programs.plasma.kscreenlocker.passwordRequiredDelay == 0;
         # Thunderbird telemetry and studies off
         assert thunderbird.isDefault;
         assert (thunderbird.settings."toolkit.telemetry.enabled" or null) == false;
@@ -177,6 +198,7 @@
         pkgs.runCommand "mimir-vm-editor-binaries-check"
           {
             nativeBuildInputs = [
+              pkgs.jq
               pkgs.file
               pkgs.nodejs
               pkgs.glibc.bin
@@ -218,6 +240,15 @@
             # 4. Node loads Jupyter's ZeroMQ binding
             if ! node -e 'require(process.argv[1])' "$jupyter/dist/node_modules/zeromq"; then
               echo "FAIL (require): node cannot load Jupyter's ZeroMQ binding"
+              failed=1
+            fi
+
+            # 5. The declared colour theme is one that this VSCodium ships
+            # VSCodium rewrites a renamed theme in the settings at every start, which fails with "Unable to write into user settings"
+            theme=${lib.escapeShellArg user.programs.vscodium.profiles.default.userSettings."workbench.colorTheme"}
+            themes=$(find ${user.programs.vscodium.package} -path '*/extensions/theme-defaults/package.json' | head -1)
+            if ! jq -e --arg theme "$theme" '.contributes.themes | map(.id) | index($theme) != null' "$themes" > /dev/null; then
+              echo "FAIL (theme): '$theme' is not a theme of this VSCodium; its themes are: $(jq -r '.contributes.themes | map(.id) | join(", ")' "$themes")"
               failed=1
             fi
 

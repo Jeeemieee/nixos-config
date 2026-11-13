@@ -57,13 +57,47 @@
             llvm-vs-code-extensions.vscode-clangd
             vadimcn.vscode-lldb
             mkhl.direnv
+            # Writing: LaTeX with latexmk from the TeX Live of homeManager.tex, and spell checking
+            # LaTeX Workshop brings its own PDF viewer and reports other PDF extensions as incompatible
+            james-yu.latex-workshop
+            streetsidesoftware.code-spell-checker
+            ms-vscode.cmake-tools
+            # Shows CadQuery models live from Python; the project needs the matching package: uv add ocp-vscode==4.2.0
+            (pkgs.vscode-utils.buildVscodeMarketplaceExtension {
+              mktplcRef = {
+                publisher = "bernhard-42";
+                name = "ocp-cad-viewer";
+                version = "4.2.0";
+                hash = "sha256-q3Pi4MApNEXNJ25+aQbtd3S8bFxT0UEwnXkM2W7lwIg=";
+              };
+              meta.license = pkgs.lib.licenses.asl20;
+            })
           ];
 
           # Read-only settings.json: changes made in the settings UI do not persist
           userSettings = {
             "telemetry.telemetryLevel" = "off";
             "chat.disableAIFeatures" = true;
-            "workbench.colorTheme" = "Default Dark Modern";
+            # The theme's current name: VSCodium rewrites the older "Default Dark Modern" at every start, which fails on read-only settings
+            "workbench.colorTheme" = "Dark Modern";
+
+            # Carried over from the VS Code setup on Ubuntu
+            "security.workspace.trust.untrustedFiles" = "open";
+            "git.openRepositoryInParentFolders" = "always";
+            "git.enableSmartCommit" = true;
+            "git.suggestSmartCommit" = false;
+            "explorer.compactFolders" = false;
+            "diffEditor.hideUnchangedRegions.enabled" = true;
+            "editor.largeFileOptimizations" = false;
+            "workbench.editor.tabSizing" = "fixed";
+            "workbench.editor.tabSizingFixedMaxWidth" = 180;
+            "window.menuBarVisibility" = "compact";
+            "notebook.lineNumbers" = "on";
+            "notebook.output.wordWrap" = true;
+            "jupyter.askForKernelRestart" = false;
+            "cSpell.language" = "en-GB";
+            # Any PDF opens in LaTeX Workshop's viewer
+            "workbench.editorAssociations"."*.pdf" = "latex-workshop-pdf-hook";
 
             # The Nix extension needs a language server, supplied by the Nix store
             "nix.enableLanguageServer" = true;

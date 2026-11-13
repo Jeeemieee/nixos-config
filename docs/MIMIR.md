@@ -10,11 +10,11 @@
 | `nixos.login-password` | The login password from nixos-secrets; accounts cannot be changed outside the configuration | Later the desktop |
 | `nixos.disk`, `nixos.boot` | Encrypted ZFS with snapshots, UEFI boot; see [DISK.md](DISK.md) | Physical machines |
 | `nixos.secure-boot` | Secure Boot with own keys; see [SECURE-BOOT.md](SECURE-BOOT.md) | Physical machines |
-| `nixos.laptop` | Firmware for Wi-Fi, Bluetooth, audio and graphics; Bluetooth; disk-health monitoring (smartd) with desktop warnings | Laptops |
+| `nixos.laptop` | Firmware for Wi-Fi, Bluetooth, audio and graphics; Bluetooth; Thunderbolt dock authorisation (bolt); disk-health monitoring (smartd) with desktop warnings | Laptops |
 | `nixos.nvidia-offload` | The NVIDIA driver with the open kernel modules, used on demand | Machines with a second GPU |
 | `nixos.displaylink` | The Dell D3100 dock (DisplayLink) | Machines using such a dock |
 
-The host itself only adds its name, its ZFS host ID, the GPU bus addresses, Intel microcode, the USB storage drivers for the first boot stage (the system disk starts out in a USB enclosure) and its state versions. `hostSpec.disk.device` is deliberately unset: the disk is chosen, and confirmed by its serial number, when the laptop is installed (see [INSTALL.md](INSTALL.md)); the installed system finds its partitions by label.
+The host itself only adds its name, its ZFS host ID, the GPU bus addresses, Intel microcode and thermal daemon, the 3Dconnexion SpaceMouse driver (`spacenavd`), the USB storage drivers for the first boot stage (the system disk starts out in a USB enclosure) and its state versions. `hostSpec.disk.device` is deliberately unset: the disk is chosen, and confirmed by its serial number, when the laptop is installed (see [INSTALL.md](INSTALL.md)); the installed system finds its partitions by label.
 
 ## Graphics
 
@@ -45,3 +45,5 @@ The login password is decrypted while the accounts are created, earlier than the
 - `disk-layout` and `secure-boot` test the disk layout and Secure Boot in virtual machines
 
 Not testable in a virtual machine, to be checked on the laptop after the installation: the NVIDIA GPU (`nvidia-smi`, `nvidia-offload`, CUDA), the dock and external screens, suspend and resume, Bluetooth, Wi-Fi and eduroam, the internal screen's scaling, the touchpad, audio, the webcam, and the firmware's Secure Boot setup mode.
+
+Also to be checked on the laptop, because Ubuntu catches these keys before the user's VM window sees them (they pass in the automated test VM): `Meta+<number>` and `Meta+Shift+<number>` for the desktops, and `Alt+Space` with a web keyword such as `nixopt:programs.tmux`; and whether the KDE wallet asks for a password before Brave starts at login.

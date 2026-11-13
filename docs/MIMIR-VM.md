@@ -82,8 +82,8 @@ The service should be `active (exited)` after a successful login. Its declared t
 
 Everything it manages is declared in that file and **read-only** at runtime:
 
-- `settings.json` is a symlink into the Nix store. Telemetry is off, the AI/Copilot UI is disabled, and the theme is Default Dark Modern. Changes made in the settings UI cannot be saved
-- Extensions come only from Nix and are fixed: Nix (`nix-ide`, with `nil` supplied as its language server), Python (`ms-python.python` and debugpy), basedpyright as the only Python language server (`python.languageServer` is `None`, type checking `standard`), Jupyter (with its four companion extensions), C/C++ through clangd (`vscode-clangd`), CodeLLDB (`vscode-lldb`) for debugging, and direnv (`mkhl.direnv`). The extensions directory is read-only, so installing from the Marketplace fails by design
+- `settings.json` is a symlink into the Nix store. Telemetry is off, the AI/Copilot UI is disabled, and the theme is Dark Modern. Changes made in the settings UI cannot be saved
+- Extensions come only from Nix and are fixed: Nix (`nix-ide`, with `nil` supplied as its language server), Python (`ms-python.python` and debugpy), basedpyright as the only Python language server (`python.languageServer` is `None`, type checking `standard`), Jupyter (with its four companion extensions), C/C++ through clangd (`vscode-clangd`), CodeLLDB (`vscode-lldb`) for debugging, CMake Tools, direnv (`mkhl.direnv`), LaTeX Workshop (builds with `latexmk` from the TeX Live of `homeManager.tex`; its viewer opens every PDF), Code Spell Checker set to British English, and OCP CAD Viewer 4.2.0 for CadQuery models (pinned from the Marketplace; a project needs `uv add ocp-vscode==4.2.0`). The extensions directory is read-only, so installing from the Marketplace fails by design
 - VSCodium and its extensions never update themselves; versions change only when `flake.lock` does
 
 To change anything, edit `vscode.nix`, rebuild, and relaunch the VM. The editor stack is free software; `mimir-vm-config` rejects unfree extensions. Other unfree software is limited to an explicit allowlist; see [APPS.md](APPS.md#add-an-unfree-program). Home Manager uses the system package set (`useGlobalPkgs`) and installs user packages through the system closure (`useUserPackages`), so `codium` comes from `/etc/profiles/per-user/jeeemieee` rather than a mutable user profile. Both are set for every host in `modules/flake/host-machines.nix`.
@@ -169,6 +169,7 @@ Relevant files:
 - `modules/hosts/mimir-vm/default.nix`: the VM's name, trial password, display service and virtual hardware
 - `modules/profiles/workstation.nix`: the account, locale, desktop, applications and services, shared with the laptop (see [MIMIR.md](MIMIR.md))
 - `modules/desktop/environment/kde/default.nix`: reusable stock KDE desktop module
+- `modules/desktop/environment/kde/settings.nix` and `keyboard.nix`: the user's Plasma settings, named desktops and shortcuts (see [APPS.md](APPS.md))
 - `modules/desktop/user-dirs.nix`: lowercase XDG user directories
 - `modules/flake/host-machines.nix`: turns every `host-<name>` module into a system, with shared Home Manager settings, including the session-variable `extraInit`
 - `modules/flake/nixpkgs.nix`: package set and unfree allowlist

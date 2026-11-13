@@ -8,15 +8,15 @@ Versions are those of the current `flake.lock` (nixos-26.05).
 
 | Program | Module | nixpkgs attribute | Version | Unfree | Declared | Manual state |
 | --- | --- | --- | --- | --- | --- | --- |
-| Brave | `nixos.browser` | `brave` | 1.99.55 | no | Package; managed policies in `/etc/brave/policies/managed/`: Rewards, Wallet, Brave VPN, Leo AI (`BraveAIChatEnabled`), P3A, the stats ping, Web Discovery and metrics reporting off; Bitwarden extension force-installed | Profile, sync, bookmarks, the Bitwarden extension's login |
+| Brave | `nixos.browser` | `brave` | 1.99.55 | no | Package; managed policies in `/etc/brave/policies/managed/`: Rewards, Wallet, Brave VPN, Leo AI (`BraveAIChatEnabled`), P3A, the stats ping, Web Discovery and metrics reporting off; Bitwarden, Zotero Connector and Plasma Integration extensions force-installed and the built-in password manager off; the last session's windows and tabs reopen at every start (`RestoreOnStartup`); Memory Saver unloads tabs that have not been used for a while; Startpage as the search engine; spell checking in British English and Dutch; Safe Browsing at standard protection; bookmark bar and home button shown. A policy fixes its setting: the switch in Brave's settings is greyed out | Profile, sync, bookmarks, the extensions' logins, window names |
 | Carlito, Caladea, Liberation | `nixos.fonts` | `carlito`, `caladea`, `liberation_ttf` | 20130920, 20130214, 2.1.5 | no | System fonts; fontconfig maps Calibri, Cambria, Arial, Times New Roman and Courier New to them | None |
 | LibreOffice | `homeManager.office` | `libreoffice-qt6-still` | 25.8.5.2 | no | Package | User profile and settings |
 | Scribus | `homeManager.office` | `scribus` | 1.7.3 | no | Package | Settings |
 | Pympress | `homeManager.office` | `pympress` | 1.8.6 | no | Package | Settings |
-| English (US) dictionary | `homeManager.office` | `hunspellDicts.en_US` | 2026.02.25 | no | Hunspell dictionary for LibreOffice and KDE apps (see [Spell checking](#spell-checking)) | Personal word lists |
+| British English and Dutch dictionaries | `homeManager.office` | `hunspellDicts.en_GB-ise`, `hunspellDicts.nl_NL` | 2026.02.25 (en_GB) | no | Hunspell dictionaries for LibreOffice and KDE apps (see [Spell checking](#spell-checking)) | Personal word lists |
 | Thunderbird | `homeManager.mail` | `thunderbird` | 159.0 | no | Package; one default profile (`~/.thunderbird/default`) whose `user.js` sets `toolkit.telemetry.enabled`, `datareporting.healthreport.uploadEnabled`, `datareporting.policy.dataSubmissionEnabled` and `app.shield.optoutstudies.enabled` to false | Accounts, mail, calendars, address books |
 | Obsidian | `homeManager.notes` | `obsidian` | 1.13.7 | yes | Package | Vaults and their settings (vault setup is Phase 4), Obsidian Sync login |
-| Zotero | `homeManager.notes` | `zotero` | 9.0.6 | no | Package | Library, data directory, account and sync, connectors |
+| Zotero | `homeManager.notes` | `zotero` | 9.0.6 | no | Package | Library, data directory, account and sync |
 | GIMP | `homeManager.graphics` | `gimp` | 3.0.8 | no | Package | Settings, plug-ins |
 | Inkscape | `homeManager.graphics` | `inkscape` | 1.4.4 | no | Package | Settings, extensions |
 | Blender | `homeManager.graphics` | `blender` | 5.1.1 | no | Package | Preferences, add-ons |
@@ -44,6 +44,8 @@ Versions are those of the current `flake.lock` (nixos-26.05).
 | TestDisk and PhotoRec | `homeManager.cli` | `testdisk` | 7.2 | no | Package; disk access needs `sudo` | None |
 | smartmontools | `homeManager.cli` | `smartmontools` | 7.5 | no | Package (`smartctl`, needs `sudo`) | None |
 | fastfetch | `homeManager.cli` | `fastfetch` | 2.63.1 | no | Package | None |
+| tmux | `homeManager.cli` | `tmux` | 3.7b | no | `programs.tmux`, with mouse support and 50 000 lines of history; keeps shells and long runs alive when a terminal closes (`Ctrl+b d` detaches, `tmux attach` returns) | None |
+| ncdu | `homeManager.cli` | `ncdu` | 2.9.2 | no | Package; shows what takes space in a folder such as `~/scratch` | None |
 | pi (coding agent) | `homeManager.pi` | `pi-coding-agent` from nixos-unstable | 1.5.2 | no | Only as the sandboxed launcher `pi`; version check off, `pi update` points to Nix; instructions, settings and five extensions declared read-only (see [MIMIR-VM.md](MIMIR-VM.md#pi)) | Logins, sessions |
 | Raspberry Pi Imager | `homeManager.rpi` | `rpi-imager` | 2.0.9 | no | Package | Settings |
 
@@ -66,13 +68,41 @@ System services come from NixOS modules in `modules/services/`, imported by the 
 
 Docker is rootless because membership of a `docker` group is equivalent to root: any process of that user could start a container that mounts the whole disk. Rootless containers only have the user's own permissions. `mimir-vm-config` rejects a root daemon or `docker` group members. The `libvirtd` group is similarly powerful and must stay out of sandboxes.
 
+## Language, formats and desktop
+
+`nixos.workstation` sets British English as the language (`en_GB.UTF-8`) and Dutch formats for numbers, dates, the clock, currency, paper size and units (`nl_NL.UTF-8`).
+
+`homeManager.desktop-kde` (`modules/desktop/environment/kde/settings.nix`) declares Plasma settings with [plasma-manager](https://github.com/nix-community/plasma-manager): the Breeze Dark theme, NumLock on at login, no overview at the top-left screen corner, the screen off and locked after ten minutes, no automatic suspend on mains power and after twenty minutes on battery, suspend when the lid closes. These are applied at every login; settings that are not declared keep what was chosen in System Settings. Panels, launchers, the touchpad and the mouse are not declared yet.
+
+### Desktops and shortcuts
+
+The same module (`modules/desktop/environment/kde/keyboard.nix`) declares the virtual desktops in one row. Their names are private and come from `desktop/desktops.json` in `nixos-secrets` (a plain list, in order, at most nine); the shortcuts and rules below are generated from it.
+
+| Keys | Effect |
+| --- | --- |
+| `Meta+1` … `Meta+<n>` | Switch to that desktop (replaces Plasma's default for these keys, the n-th task-bar entry) |
+| `Meta+Shift+1` … `Meta+Shift+<n>` | Move the active window to that desktop; stored as `Meta+!`, `Meta+@`, …, so it depends on the US keyboard layout |
+| `Meta+Ctrl+Left` / `Right` | Previous and next desktop (Plasma default) |
+| `Meta+PgUp` | Maximise or restore; new windows open maximised |
+| `Alt+Space` | KRunner: applications, windows, and `<keyword>:<text>` for a web search. Added keywords: `scholar:` or `gs:` (Google Scholar), `arxiv:`, `nixopt:` (NixOS options); Plasma ships `dd:`, `wp:`, `gh:`, `doi:`, `pypi:`, `nixpkgs:` and many more |
+
+**Brave windows on their desktop.** On Wayland a program cannot put its own windows back on a desktop, and every Brave window has the same class, so KWin places them by name. Name a window once (right-click the tab strip, "Name window…") as `<desktop>: <topic>`. It moves to that desktop at once and returns there whenever Brave creates it. The rule is forced: a named window cannot be moved to another desktop until it is renamed. Unnamed windows open on whichever desktop is current. The name replaces the page title in the task bar and in `Alt+Tab`.
+
+**Brave brings its windows back.** Three parts, tested together in a VM (shutdown, logout, power loss):
+
+- `brave-session` (`nixos.browser`) starts Brave at every login. After a crash or a power loss Brave would only offer "Restore pages?"; the script first marks the last exit as normal in Brave's `Preferences`, so the windows return unasked.
+- Before Plasma ends a session, Brave is asked to exit as a whole (`modules/desktop/environment/kde/brave-session.nix`). Otherwise Plasma closes its windows one by one, Brave forgets some of them, and the shutdown waits two minutes. This replaces how Plasma starts its `plasma-shutdown` program for this user and relies on Plasma internals: **test a logout from the menu after every Plasma update**; deleting `~/.local/share/dbus-1/services/org.kde.Shutdown.service` restores the default.
+- Plasma starts with an empty session, because its own restore would start Brave a second time. No other application reopens at login unless it is declared to start.
+
+After a login the view is on the desktop of the window Brave restored last, not always on the first one.
+
 ## Default applications
 
 `homeManager.default-apps` writes `~/.config/mimeapps.list`:
 
 | Type | Opens in | Desktop file |
 | --- | --- | --- |
-| `x-scheme-handler/http`, `x-scheme-handler/https` | Brave | `brave-browser.desktop` |
+| `x-scheme-handler/http`, `x-scheme-handler/https`, `text/html`, `application/xhtml+xml` | Brave | `brave-browser.desktop` |
 | `application/pdf` | Okular | `okularApplication_pdf.desktop` |
 | `x-scheme-handler/mailto` | Thunderbird | `thunderbird.desktop` |
 | `text/x-tex` | VSCodium | `codium.desktop` |
@@ -81,7 +111,7 @@ The declared defaults win at every activation: Home Manager replaces `mimeapps.l
 
 ## Spell checking
 
-`hunspellDicts.en_US` installs `en_US.aff` and `en_US.dic` into `/etc/profiles/per-user/<user>/share/hunspell` (NixOS links `share/hunspell` into profiles). LibreOffice's nixpkgs wrapper adds `share/hunspell` of every profile in `$NIX_PROFILES` to `DICPATH`. KDE apps use Sonnet, which searches `hunspell/` in every `$XDG_DATA_DIRS` entry, and the per-user profile's `share` is one of them. More languages: add further `hunspellDicts.*` packages next to it.
+`hunspellDicts.en_GB-ise` installs `en_GB.aff` and `en_GB.dic` into `/etc/profiles/per-user/<user>/share/hunspell` (NixOS links `share/hunspell` into profiles). LibreOffice's nixpkgs wrapper adds `share/hunspell` of every profile in `$NIX_PROFILES` to `DICPATH`. KDE apps use Sonnet, which searches `hunspell/` in every `$XDG_DATA_DIRS` entry, and the per-user profile's `share` is one of them. More languages: add further `hunspellDicts.*` packages next to it.
 
 ## Add a program
 
