@@ -98,7 +98,7 @@ VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk 
 
 ## pi
 
-`modules/dev/pi.nix` defines `homeManager.pi`: the `pi` command always starts the coding agent inside a bubblewrap sandbox. pi itself (1.5.2) comes from the `nixpkgs-unstable` input, because 26.05 ships 0.75.4; nothing else uses that input.
+`modules/dev/pi.nix` defines `homeManager.pi`: the `pi` command always starts the coding agent inside a bubblewrap sandbox. pi itself (1.5.2) comes from the `nixpkgs-pi` input, because 26.05 ships 0.75.4; nothing else uses that input, so `nix flake update nixpkgs-pi` updates pi alone.
 
 | Inside the sandbox | Hidden |
 | --- | --- |
@@ -109,6 +109,8 @@ VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk 
 
 - Started in the home folder, a parent of it, or a hidden folder in it, pi refuses with a message. Only folders in the home folder, `/tmp`, `/mnt`, `/media`, `/srv` and `/run/media/<user>` can be shared
 - Extra folders only on request, before pi's own options: `pi --allow ~/documents/zotero` (read and write) or `pi --allow-ro <folder>` (read-only)
+- Extensions, settings and prompts in a project's own `.pi` folder are not loaded and pi does not ask (`defaultProjectTrust` is `never`): an agent can write that folder, and a habitual yes would run its code in later sessions. `pi --approve` loads them for one run. A project's `AGENTS.md` is always read, like any file an agent wrote: review it
+- Processes inside cannot create further user namespaces (`--disable-userns`), which they could otherwise use to stack their own mounts over the declared files for themselves
 - Opening a browser from inside fails quietly (the system's `kde-open` would crash without a desktop session): pi shows login links itself, so Ctrl+click the link in the terminal, which opens it in the normal browser
 - The project's `.git/hooks` and `.git/config` are read-only inside, since git would run their commands outside the sandbox later
 - Not covered: the network stays open (pi needs it for the model), so project contents can still leave the machine; whatever runs in the sandbox can read and change the login file and the sessions, as pi itself must; files in the project that you later run outside the sandbox (scripts, `flake.nix` via direnv) need the same review as any code an agent wrote. No Docker and no GPU inside yet
@@ -120,7 +122,7 @@ VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk 
 | File | Contents | Source |
 | --- | --- | --- |
 | `~/.pi/agent/AGENTS.md` | The instructions for every agent | `pi/AGENTS.md` in the private nixos-secrets repository (plain, not encrypted) |
-| `~/.pi/agent/settings.json` | Dark theme, default provider, model and thinking level, and the five extensions as store paths | `modules/dev/pi.nix` |
+| `~/.pi/agent/settings.json` | Dark theme, default provider, model and thinking level, the five extensions as store paths, and `defaultProjectTrust` `never` | `modules/dev/pi.nix` |
 | `~/.pi/agent/chatgpt-limit.json` | Display settings of the usage footer | `modules/dev/pi.nix` |
 
 The extensions are fixed versions in one store folder: `rpiv-todo` and `rpiv-ask-user-question` 2.15.0 (with their dependency `rpiv-config`), `pi-simplify` 0.2.0, `pi-anthropic-auth` 3.4.4, and `pi-chatgpt-limit` 0.3.1 from GitHub. pi names an extension after the folder of its entry file, which is `src` for `pi-anthropic-auth`; the store copy therefore gets an entry file in the package folder that re-exports the original. Nothing is downloaded when pi starts. To update one, change its version and hash in `mkExtensions`; `npm view <name>@<version> dist.integrity` prints the hash of an npm package.

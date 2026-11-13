@@ -22,9 +22,9 @@
             ];
         };
         overlays = [
-          # pi from nixos-unstable: 26.05 ships 0.75.4, while the user works with the current 1.x
+          # pi from its own nixos-unstable pin: 26.05 ships 0.75.4, while the user works with the current 1.x
           (_final: _prev: {
-            inherit (inputs.nixpkgs-unstable.legacyPackages.${system}) pi-coding-agent;
+            inherit (inputs.nixpkgs-pi.legacyPackages.${system}) pi-coding-agent;
           })
         ];
       };

@@ -4,8 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
-    # For pi, which 26.05 ships too old, and the development-environment blocks in dev-env/ (PETSc 3.25); the hosts use nixpkgs
+    # The development-environment blocks in dev-env/ (PETSc 3.25, CUDA); the hosts use nixpkgs
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+    # pi, which 26.05 ships too old; its own pin, because pi is released far more often than the blocks should move
+    nixpkgs-pi.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     home-manager = {
       url = "github:nix-community/home-manager/release-26.05";

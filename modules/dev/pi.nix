@@ -75,6 +75,9 @@ let
     defaultProvider = "openai-codex";
     defaultModel = "gpt-5.6-sol";
     defaultThinkingLevel = "high";
+    # Extensions, settings and prompts that a project brings in its .pi folder are not loaded, and pi does not ask:
+    # an agent can write that folder, and a habitual "yes" would run its code in every later session; `pi --approve` loads them once
+    defaultProjectTrust = "never";
     packages = map (name: "${extensions}/node_modules/${name}") extensionNames;
   };
 
@@ -184,7 +187,8 @@ let
         done
 
         exec bwrap \
-          --unshare-all --share-net --die-with-parent \
+          --unshare-all --unshare-user --share-net --die-with-parent \
+          --disable-userns \
           --ro-bind /nix/store /nix/store \
           --bind-try /nix/var/nix/daemon-socket /nix/var/nix/daemon-socket \
           --ro-bind /etc /etc \
@@ -225,7 +229,7 @@ in
     let
       # Nix owns pi's version; `pi update` explains that instead of installing over the store
       noSelfUpdate = pkgs.writeShellScript "pi-no-self-update" ''
-        echo "pi is managed by Nix: update it with 'nix flake update nixpkgs-unstable' in ~/repos/nixos-config and rebuild" >&2
+        echo "pi is managed by Nix: update it with 'nix flake update nixpkgs-pi' in ~/repos/nixos-config and rebuild" >&2
         exit 1
       '';
     in
@@ -291,6 +295,8 @@ in
         if [ -n "''${SSH_AUTH_SOCK:-}" ]; then report ssh-agent set; else report ssh-agent unset; fi
         report pid1 "$(cat /proc/1/comm)"
         report version-check "''${PI_SKIP_VERSION_CHECK:-unset}"
+        # A nested user namespace would let a process stack its own mounts over the declared files, for itself and its children
+        if ${pkgs.util-linux}/bin/unshare --user --map-root-user --mount true 2>/dev/null; then report nested-namespaces allowed; else report nested-namespaces refused; fi
         if [ "$(cat "$HOME/.pi/agent/AGENTS.md" 2>/dev/null)" != rules ]; then report instructions unreadable
         elif echo more >> "$HOME/.pi/agent/AGENTS.md" 2>/dev/null; then report instructions writable
         else report instructions readonly; fi
@@ -343,6 +349,9 @@ in
             touch "$HOME/project/.git/hooks/post-checkout"
             mkdir -p "$HOME/project/sub"
 
+            # Control for nested-namespaces=refused below: outside the sandbox the same command succeeds
+            ${pkgs.util-linux}/bin/unshare --user --map-root-user --mount true || { echo "FAIL: user namespaces are unavailable here, so the sandbox's refusal proves nothing"; exit 1; }
+
             # Normal use from a subfolder of the project, with one extra folder allowed read-only
             (cd "$HOME/project/sub" && PROJECT=$HOME/project ${sandboxedProbe}/bin/pi --allow-ro "$HOME/data") > actual
             cat > expected <<EOF
@@ -356,6 +365,7 @@ in
             ssh-agent=unset
             pid1=bwrap
             version-check=1
+            nested-namespaces=refused
             instructions=readonly
             instructions-replaced=no
             sessions=writable
@@ -450,6 +460,7 @@ in
               "defaultProvider": "openai-codex",
               "defaultModel": "gpt-5.6-sol",
               "defaultThinkingLevel": "high",
+              "defaultProjectTrust": "never",
               "packages": [
                 "$modules/@juicesharp/rpiv-todo",
                 "$modules/@juicesharp/rpiv-ask-user-question",
