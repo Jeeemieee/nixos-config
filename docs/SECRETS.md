@@ -11,6 +11,8 @@ Encrypted data lives in the private [nixos-secrets](https://github.com/Jeeemieee
 | `tailscale_authkey` | `secrets/<hostname>.yaml` | admin, recovery, that machine | `nixos.vpn`: `services.tailscale.authKeyFile` |
 | `message` | `secrets/test.yaml` | development, mimir-vm, recovery | `nixos.secrets-test`: harmless bootstrap test |
 
+`pi/AGENTS.md` in the same repository is a plain file, private but not secret: the instructions for the pi coding agent, linked read-only to `~/.pi/agent/AGENTS.md` (see [MIMIR-VM.md](MIMIR-VM.md#declared-configuration)). It ends up in the world-readable Nix store, which is fine for something that is not a secret.
+
 Per-machine secrets are read from `secrets/${networking.hostName}.yaml`. Every secret is decrypted at boot into `/run/secrets/<name>`, root-owned with mode `0400`. The login password is the exception: it is decrypted into `/run/secrets-for-users` while the accounts are created, before any service runs. The machine's key must then already be on disk and enrolled, so a new machine's key is generated and enrolled during its installation, not at its first boot; without it the account has no password.
 
 `secrets/mimir.yaml` exists before the laptop does: it is encrypted for the admin and recovery keys only, and the laptop's recipient is added when it is installed. Services that need them (`tailscaled-autoconnect`, `NetworkManager-ensure-profiles`) require and start after `sops-install-secrets.service`, so a failed decryption shows as a failed unit instead of a silent login without a key or empty Wi-Fi profiles.

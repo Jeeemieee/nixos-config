@@ -1,7 +1,70 @@
 # The pi coding agent, always run inside a bubblewrap sandbox; users opt in by importing homeManager.pi
 # The sandbox sees the project (the git repository around the current folder, or the folder itself), ~/.pi, the Nix store and the network,
 # and nothing else of the home folder, no session sockets (Docker, D-Bus, SSH agent, keyrings) and no other processes
+# Its instructions, settings and extensions are declared here and read-only, also for pi itself
+{ inputs, ... }:
 let
+  # The extensions pi loads, by their folder in the tree below
+  extensionNames = [
+    "@juicesharp/rpiv-todo"
+    "@juicesharp/rpiv-ask-user-question"
+    "@geminixiang/pi-simplify"
+    "@gotgenes/pi-anthropic-auth"
+    "pi-chatgpt-limit"
+  ];
+
+  # The extensions at fixed versions in one node_modules tree, where the rpiv packages find rpiv-config as their sibling
+  # pi itself provides what they import from pi (pi-coding-agent, pi-tui, pi-ai, typebox)
+  # To update one: change its version and hash; `npm view <name>@<version> dist.integrity` prints the hash of an npm package
+  mkExtensions =
+    pkgs:
+    let
+      npm = name: version: hash: {
+        inherit name;
+        unpack = "tar -xzf ${
+          pkgs.fetchurl {
+            url = "https://registry.npmjs.org/${name}/-/${baseNameOf name}-${version}.tgz";
+            inherit hash;
+          }
+        } --strip-components=1 -C";
+      };
+      packages = [
+        (npm "@juicesharp/rpiv-todo" "2.15.0" "sha512-8WfYssdgQgSWzFNsRzdw5Z6ZJIjO2ecM/YqEzYpR/ore+Hh5aNmafGVy94uFbIofAv2wGGitx5e3J/ucRrViXQ==")
+        (npm "@juicesharp/rpiv-ask-user-question" "2.15.0" "sha512-Gm6de5IZF52BaSeh9dnDqJBn821Z5XfJkCmhkCmqTzvNv3SCpSv1mA4Gj5VBcfrSe+xTtWSVQzJwIqJFQHH3Lg==")
+        # Not an extension: the dependency of the two rpiv extensions
+        (npm "@juicesharp/rpiv-config" "2.15.0" "sha512-S2BAGX4dJjQ2AyNYOEjC6ha04p9f6CdEfmtxpdxzSKrfDMwqIvOjjO9HiHc1IPY7jDY1q2Q8cGCtpIZWV6Y8NQ==")
+        (npm "@geminixiang/pi-simplify" "0.2.0" "sha512-pASkAwxqwU7vB8phjir1h50jSaSwaziro/R3FbKC+GMtNdFNDVybTe1VQ0gcKQ5l6fVoxm5NhyZ30XUdKqM68g==")
+        (npm "@gotgenes/pi-anthropic-auth" "3.4.4" "sha512-oWCkPFSa7AkvSju3OrlYu0GTo8Jdqz2OvszJtHj0hzXLw8tErtmPPMYPqK2it3zaXu+Wl2oH8nfpeIUVsqW2Vw==")
+        {
+          # Version 0.3.1, not published on npm
+          name = "pi-chatgpt-limit";
+          unpack = "cp -r ${
+            pkgs.fetchFromGitHub {
+              owner = "patlux";
+              repo = "pi-chatgpt-limit";
+              rev = "cff2c8da7b37e154d9f2776527be1e4ceeadf8fc";
+              hash = "sha256-rsD5jOYatgxtACDIQTRa5+BJWIWnaI3uYo5DcZ112+s=";
+            }
+          }/. -t";
+        }
+      ];
+    in
+    pkgs.runCommand "pi-extensions" { } (
+      pkgs.lib.concatMapStrings (package: ''
+        mkdir -p "$out/node_modules/${package.name}"
+        ${package.unpack} "$out/node_modules/${package.name}"
+      '') packages
+    );
+
+  # ~/.pi/agent/settings.json; pi cannot change it, so /settings and `pi install` do not persist
+  settingsFor = extensions: {
+    theme = "dark";
+    defaultProvider = "openai-codex";
+    defaultModel = "gpt-5.6-sol";
+    defaultThinkingLevel = "high";
+    packages = map (name: "${extensions}/node_modules/${name}") extensionNames;
+  };
+
   # Build a sandboxed launcher; the checks reuse it with a probe instead of pi
   mkSandbox =
     pkgs:
@@ -132,6 +195,28 @@ in
           };
         })
       ];
+
+      # Links into the Nix store: read-only for everyone, also inside the sandbox, where ~/.pi itself is writable
+      # They replace files of the same name, which pi or a copied ~/.pi leaves behind; Home Manager would otherwise abort
+      home.file = {
+        # The user's instructions for every agent; private, so from nixos-secrets (plain, not encrypted)
+        ".pi/agent/AGENTS.md" = {
+          source = "${inputs.nixos-secrets}/pi/AGENTS.md";
+          force = true;
+        };
+        ".pi/agent/settings.json" = {
+          text = builtins.toJSON (settingsFor (mkExtensions pkgs));
+          force = true;
+        };
+        # Display settings of the pi-chatgpt-limit extension
+        ".pi/agent/chatgpt-limit.json" = {
+          text = builtins.toJSON {
+            quotaWindow = "both";
+            displayMode = "compact";
+          };
+          force = true;
+        };
+      };
     };
 
   perSystem =
@@ -151,6 +236,9 @@ in
         if [ -n "''${SSH_AUTH_SOCK:-}" ]; then report ssh-agent set; else report ssh-agent unset; fi
         report pid1 "$(cat /proc/1/comm)"
         report version-check "''${PI_SKIP_VERSION_CHECK:-unset}"
+        if [ "$(cat "$HOME/.pi/agent/AGENTS.md" 2>/dev/null)" != rules ]; then report instructions unreadable
+        elif echo more >> "$HOME/.pi/agent/AGENTS.md" 2>/dev/null; then report instructions writable
+        else report instructions readonly; fi
         case "$(command -v xdg-open)" in
           *-pi-sandbox-no-browser/bin/xdg-open) if xdg-open https://example.org; then report opener opened; else report opener quiet-failure; fi ;;
           *) report opener system ;;
@@ -161,6 +249,8 @@ in
         command = "${probe}";
         environment.PI_SKIP_VERSION_CHECK = "1";
       };
+      extensions = mkExtensions pkgs;
+      settingsFile = pkgs.writeText "pi-settings.json" (builtins.toJSON (settingsFor extensions));
     in
     {
       # The sandbox must expose the project and ~/.pi, and hide the rest of the home, session sockets and host processes
@@ -176,6 +266,9 @@ in
             export HOME=$TMPDIR/home USER=tester SSH_AUTH_SOCK=/run/user/1000/ssh-agent
             mkdir -p "$HOME/.ssh" "$HOME/.config/restic" "$HOME/.pi" "$HOME/other-project" "$HOME/project" "$HOME/data"
             touch "$HOME/.ssh/id_test" "$HOME/.config/restic/password" "$HOME/.pi/marker" "$HOME/other-project/file" "$HOME/data/allowed"
+            # Declared files are links into the store, as Home Manager creates them
+            mkdir -p "$HOME/.pi/agent"
+            ln -s ${pkgs.writeText "pi-sandbox-rules" "rules"} "$HOME/.pi/agent/AGENTS.md"
             git -C "$HOME/project" init -q
             touch "$HOME/project/.git/hooks/post-checkout"
             mkdir -p "$HOME/project/sub"
@@ -193,6 +286,7 @@ in
             ssh-agent=unset
             pid1=bwrap
             version-check=1
+            instructions=readonly
             opener=quiet-failure
             EOF
             sed -i 's/^ *//' expected
@@ -213,6 +307,81 @@ in
             refuse allow-home bash -c 'cd "$HOME/project" && ${sandboxedProbe}/bin/pi --allow "$HOME"'
             refuse allow-system bash -c 'cd "$HOME/project" && ${sandboxedProbe}/bin/pi --allow /etc'
             refuse allow-ssh bash -c 'cd "$HOME/project" && ${sandboxedProbe}/bin/pi --allow-ro "$HOME/.ssh"'
+            touch "$out"
+          '';
+
+      # The declared extensions and settings: fixed versions, complete, and accepted by pi without the network
+      checks.pi-config =
+        pkgs.runCommand "pi-config-check"
+          {
+            nativeBuildInputs = [
+              pkgs.jq
+              pkgs.nodejs
+              pkgs.pi-coding-agent
+            ];
+          }
+          ''
+            extensions=${extensions}
+            modules=$extensions/node_modules
+
+            # 1. Exactly these packages, at these versions
+            find "$modules" -name package.json -not -path '*/node_modules/*/node_modules/*' -maxdepth 3 \
+              -exec jq -r '"\(.name) \(.version)"' {} + | sort > actual
+            printf '%s\n' \
+              "@geminixiang/pi-simplify 0.2.0" \
+              "@gotgenes/pi-anthropic-auth 3.4.4" \
+              "@juicesharp/rpiv-ask-user-question 2.15.0" \
+              "@juicesharp/rpiv-config 2.15.0" \
+              "@juicesharp/rpiv-todo 2.15.0" \
+              "pi-chatgpt-limit 0.3.1" | sort > expected
+            diff expected actual
+
+            # 2. Every extension's entry files exist
+            for name in ${toString extensionNames}; do
+              for entry in $(jq -r '.pi.extensions[]' "$modules/$name/package.json"); do
+                [ -e "$modules/$name/$entry" ] || { echo "FAIL: $name has no $entry"; exit 1; }
+              done
+            done
+
+            # 3. The rpiv extensions find rpiv-config inside this tree
+            for name in rpiv-todo rpiv-ask-user-question; do
+              # Resolved as the extensions import it; the package does not export its package.json
+              resolved=$(cd "$modules/@juicesharp/$name" && node --input-type=module -e 'console.log(import.meta.resolve("@juicesharp/rpiv-config"))')
+              case "$resolved" in
+                "file://$modules/@juicesharp/rpiv-config/"*) echo "$name -> $resolved" ;;
+                *) echo "FAIL: $name resolves rpiv-config to $resolved"; exit 1 ;;
+              esac
+            done
+
+            # 4. The settings are exactly the declared ones
+            jq -S . ${settingsFile} > settings.actual
+            jq -S . > settings.expected <<EOF
+            {
+              "theme": "dark",
+              "defaultProvider": "openai-codex",
+              "defaultModel": "gpt-5.6-sol",
+              "defaultThinkingLevel": "high",
+              "packages": [
+                "$modules/@juicesharp/rpiv-todo",
+                "$modules/@juicesharp/rpiv-ask-user-question",
+                "$modules/@geminixiang/pi-simplify",
+                "$modules/@gotgenes/pi-anthropic-auth",
+                "$modules/pi-chatgpt-limit"
+              ]
+            }
+            EOF
+            diff settings.expected settings.actual
+
+            # 5. pi, offline, with only the read-only settings in its folder: lists the five extensions and writes nothing
+            export HOME=$TMPDIR/home PI_CODING_AGENT_DIR=$TMPDIR/home/.pi/agent PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
+            mkdir -p "$PI_CODING_AGENT_DIR" "$HOME/work"
+            ln -s ${settingsFile} "$PI_CODING_AGENT_DIR/settings.json"
+            (cd "$HOME/work" && pi list) > list
+            cat list
+            grep -E '^  /' list | sed 's/^ *//' | sort > listed
+            jq -r '.packages[]' ${settingsFile} | sort > declared
+            diff declared listed
+            [ "$(ls -A "$PI_CODING_AGENT_DIR")" = settings.json ] || { echo "FAIL: pi changed its folder:"; ls -la "$PI_CODING_AGENT_DIR"; exit 1; }
             touch "$out"
           '';
     };

@@ -103,7 +103,7 @@ VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk 
 | Inside the sandbox | Hidden |
 | --- | --- |
 | The project: the git repository around the current folder, or the folder itself (read and write) | The rest of the home folder: `~/.ssh`, `~/.config` (sops keys, restic), Bitwarden, browser profiles, other projects |
-| `~/.pi` (pi's settings, login and sessions; read and write), `~/.config/git` (read-only) | Session sockets: Docker, D-Bus, the SSH agent, keyrings, the desktop |
+| `~/.pi` (pi's login and sessions; read and write, except the declared files below), `~/.config/git` (read-only) | Session sockets: Docker, D-Bus, the SSH agent, keyrings, the desktop |
 | The Nix store and daemon, `/etc`, the system's programs, the project's direnv environment | Other processes |
 | The network | |
 
@@ -111,9 +111,23 @@ VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk 
 - Extra folders only on request, before pi's own options: `pi --allow ~/documents/zotero` (read and write) or `pi --allow-ro <folder>` (read-only)
 - Opening a browser from inside fails quietly (the system's `kde-open` would crash without a desktop session): pi shows login links itself, so Ctrl+click the link in the terminal, which opens it in the normal browser
 - The project's `.git/hooks` and `.git/config` are read-only inside, since git would run their commands outside the sandbox later
-- Not covered: the network stays open (pi needs it for the model), so project contents can still leave the machine; pi can change `~/.pi`, including its extensions; files in the project that you later run outside the sandbox (scripts, `flake.nix` via direnv) need the same review as any code an agent wrote. No Docker and no GPU inside yet
+- Not covered: the network stays open (pi needs it for the model), so project contents can still leave the machine; pi can still add files to `~/.pi`, such as an extension in `~/.pi/agent/extensions`, but cannot change the declared instructions, settings and extensions; files in the project that you later run outside the sandbox (scripts, `flake.nix` via direnv) need the same review as any code an agent wrote. No Docker and no GPU inside yet
 
-The `pi-sandbox` check runs a probe in the same sandbox and compares what it can reach with the expected answers, including the refusals.
+### Declared configuration
+
+`homeManager.pi` also declares pi's configuration, as read-only links into the Nix store that replace existing files of the same name:
+
+| File | Contents | Source |
+| --- | --- | --- |
+| `~/.pi/agent/AGENTS.md` | The instructions for every agent | `pi/AGENTS.md` in the private nixos-secrets repository (plain, not encrypted) |
+| `~/.pi/agent/settings.json` | Dark theme, default provider, model and thinking level, and the five extensions as store paths | `modules/dev/pi.nix` |
+| `~/.pi/agent/chatgpt-limit.json` | Display settings of the usage footer | `modules/dev/pi.nix` |
+
+The extensions are fixed versions in one store folder: `rpiv-todo` and `rpiv-ask-user-question` 2.15.0 (with their dependency `rpiv-config`), `pi-simplify` 0.2.0, `pi-anthropic-auth` 3.4.4 (pi lists it as `src`), and `pi-chatgpt-limit` 0.3.1 from GitHub. Nothing is downloaded when pi starts. To update one, change its version and hash in `mkExtensions`; `npm view <name>@<version> dist.integrity` prints the hash of an npm package.
+
+Because the files are read-only, `/settings`, `pi install` and editing `AGENTS.md` in place do not persist: change `pi.nix` or `pi/AGENTS.md` in nixos-secrets and rebuild. Logins (`auth.json`, which refreshes itself) and sessions are state, not configuration: log in once per machine with `/login`.
+
+The `pi-sandbox` check runs a probe in the same sandbox and compares what it can reach with the expected answers, including the refusals and that a declared file cannot be written. The `pi-config` check verifies the extensions' versions, entry files and dependency, the settings, and that pi, offline and with only the read-only settings in its folder, lists the five extensions and writes nothing.
 
 ## direnv
 

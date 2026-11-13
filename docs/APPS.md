@@ -44,7 +44,7 @@ Versions are those of the current `flake.lock` (nixos-26.05).
 | TestDisk and PhotoRec | `homeManager.cli` | `testdisk` | 7.2 | no | Package; disk access needs `sudo` | None |
 | smartmontools | `homeManager.cli` | `smartmontools` | 7.5 | no | Package (`smartctl`, needs `sudo`) | None |
 | fastfetch | `homeManager.cli` | `fastfetch` | 2.63.1 | no | Package | None |
-| pi (coding agent) | `homeManager.pi` | `pi-coding-agent` from nixos-unstable | 1.5.2 | no | Only as the sandboxed launcher `pi`; version check off, `pi update` points to Nix (see [MIMIR-VM.md](MIMIR-VM.md#pi)) | Login, `~/.pi` |
+| pi (coding agent) | `homeManager.pi` | `pi-coding-agent` from nixos-unstable | 1.5.2 | no | Only as the sandboxed launcher `pi`; version check off, `pi update` points to Nix; instructions, settings and five extensions declared read-only (see [MIMIR-VM.md](MIMIR-VM.md#pi)) | Logins, sessions |
 | Raspberry Pi Imager | `homeManager.rpi` | `rpi-imager` | 2.0.9 | no | Package | Settings |
 
 VSCodium (`homeManager.vscode`, `vscodium`) is described in [MIMIR-VM.md](MIMIR-VM.md#vscodium); Okular comes with Plasma.

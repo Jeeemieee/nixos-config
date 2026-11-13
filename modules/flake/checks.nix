@@ -1,4 +1,9 @@
-{ config, lib, ... }:
+{
+  inputs,
+  config,
+  lib,
+  ...
+}:
 {
   perSystem = { pkgs, system, ... }:
     let
@@ -22,6 +27,9 @@
           eduroam = wifiProfiles.eduroam."802-1x";
           userDirs = user.xdg.userDirs;
           unfreePackages = builtins.filter (package: package.meta.unfree or false) (cfg.environment.systemPackages ++ user.home.packages);
+          piFile = name: user.home.file.".pi/agent/${name}";
+          # The text refers to store paths, which fromJSON only accepts without their context
+          piSettings = builtins.fromJSON (builtins.unsafeDiscardStringContext (piFile "settings.json").text);
         in
         assert builtins.attrNames config.flake.nixosConfigurations == [ "mimir" "mimir-vm" ];
         assert !cfg.services.displayManager.autoLogin.enable;
@@ -98,6 +106,11 @@
         # pi is only installed as its sandboxed launcher, never as the bare package
         assert builtins.any (package: (package.name or "") == "pi") user.home.packages;
         assert !(builtins.elem pkgs.pi-coding-agent (cfg.environment.systemPackages ++ user.home.packages));
+        # pi's instructions, settings and extensions are declared: links into the store that replace existing files
+        assert builtins.all (name: (piFile name).force) [ "AGENTS.md" "settings.json" "chatgpt-limit.json" ];
+        assert toString (piFile "AGENTS.md").source == "${inputs.nixos-secrets}/pi/AGENTS.md";
+        assert builtins.length piSettings.packages == 5 && builtins.all (lib.hasPrefix "/nix/store/") piSettings.packages;
+        assert !(piSettings ? deviceId);
         # Defence in depth: even if the nixpkgs predicate is widened, only allowlisted unfree packages may be installed
         assert builtins.all (package: builtins.elem (lib.getName package) unfreeAllowed) unfreePackages;
         true;
