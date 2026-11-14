@@ -47,4 +47,6 @@ The login password is decrypted while the accounts are created, earlier than the
 
 Not testable in a virtual machine, to be checked on the laptop after the installation: the NVIDIA GPU (`nvidia-smi`, `nvidia-offload`, CUDA), the dock and external screens, suspend and resume, Bluetooth, Wi-Fi and eduroam, the internal screen's scaling, the touchpad, audio, the webcam, and the firmware's Secure Boot setup mode.
 
+Also on the laptop only: a container with the graphics card (`docker run --rm --device nvidia.com/gpu=all <image> nvidia-smi`; containers from Ubuntu have to be created again); the touchpad (natural scrolling, tap to click, off while typing, right click in the bottom-right corner) and the mouse on the 3Dconnexion receiver (no acceleration), which Plasma sets per device; and the panel on every screen with the dock connected.
+
 Also to be checked on the laptop, because Ubuntu catches these keys before the user's VM window sees them (they pass in the automated test VM): `Meta+<number>` and `Meta+Shift+<number>` for the desktops, and `Alt+Space` with a web keyword such as `nixopt:programs.tmux`; and whether the KDE wallet asks for a password when Brave is opened. Also whether pipewire and KDE's crash reporter crash at logout, as they did in a virtual machine without a sound card.

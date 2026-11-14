@@ -18,10 +18,11 @@
         configFile.plasma-localerc = {
           Formats = {
             LANG = "en_GB.UTF-8";
+            # Named explicitly, so that a machine that had Dutch dates returns to English ones
+            LC_TIME = "en_GB.UTF-8";
           }
           // lib.genAttrs [
             "LC_NUMERIC"
-            "LC_TIME"
             "LC_MONETARY"
             "LC_PAPER"
             "LC_NAME"

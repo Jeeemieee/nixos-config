@@ -24,5 +24,10 @@
         finegrained = true;
       };
     };
+
+    # Containers can use the GPU: the toolkit describes it as a device, and rootless Docker is told to accept such descriptions
+    # A container asks for it with `--device nvidia.com/gpu=all`
+    hardware.nvidia-container-toolkit.enable = true;
+    virtualisation.docker.rootless.daemon.settings.features.cdi = true;
   };
 }

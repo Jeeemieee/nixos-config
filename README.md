@@ -36,4 +36,4 @@ The dev shell (`nix develop`, or automatically through `.envrc` with direnv) pro
 
 ## Acknowledgements
 
-Started from [thmsdelange/nix-futura](https://github.com/thmsdelange/nix-futura).
+Started from [thmsdelange/futura-nix](https://github.com/thmsdelange/futura-nix).

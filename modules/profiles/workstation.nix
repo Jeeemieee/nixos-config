@@ -28,11 +28,14 @@ in
       services.openssh.enable = false;
 
       time.timeZone = "Europe/Amsterdam";
-      # British English as the language; Dutch formats for numbers, dates, the clock, currency, paper size and units
+      # British English as the language; Dutch formats for numbers, currency, paper size and units
+      # Dates and the clock are British too, so that the names of days and months are English: 14/11/2026, 24-hour clock, weeks start on Monday
       i18n.defaultLocale = "en_GB.UTF-8";
-      i18n.extraLocaleSettings = lib.genAttrs [
+      i18n.extraLocaleSettings = {
+        LC_TIME = "en_GB.UTF-8";
+      }
+      // lib.genAttrs [
         "LC_NUMERIC"
-        "LC_TIME"
         "LC_MONETARY"
         "LC_PAPER"
         "LC_NAME"
@@ -50,7 +53,11 @@ in
         uid = 1000;
         description = "jeeemieee";
         # libvirtd manages system VMs and is close to root; docker is rootless and needs no group
-        extraGroups = [ "wheel" "networkmanager" "libvirtd" ];
+        extraGroups = [
+          "wheel"
+          "networkmanager"
+          "libvirtd"
+        ];
       };
       users.users.root.hashedPassword = "!";
       security.sudo = {
@@ -79,6 +86,9 @@ in
         modules.homeManager.pi
       ];
 
-      nix.settings.experimental-features = [ "nix-command" "flakes" ];
+      nix.settings.experimental-features = [
+        "nix-command"
+        "flakes"
+      ];
     };
 }

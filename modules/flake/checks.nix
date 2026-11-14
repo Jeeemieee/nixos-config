@@ -82,7 +82,8 @@
         assert (bravePolicies.SpellcheckLanguage or [ ]) == [ "en-GB" "nl" ];
         assert user.programs.plasma.configFile.plasma-localerc.Formats.LANG.value == "en_GB.UTF-8";
         # British English with Dutch formats; the desktop is dark and locks with the screen
-        assert cfg.i18n.defaultLocale == "en_GB.UTF-8" && cfg.i18n.extraLocaleSettings.LC_TIME == "nl_NL.UTF-8" && cfg.i18n.extraLocaleSettings.LC_PAPER == "nl_NL.UTF-8";
+        assert cfg.i18n.defaultLocale == "en_GB.UTF-8" && cfg.i18n.extraLocaleSettings.LC_TIME == "en_GB.UTF-8" && cfg.i18n.extraLocaleSettings.LC_PAPER == "nl_NL.UTF-8";
+        assert user.programs.plasma.configFile.plasma-localerc.Formats.LC_TIME.value == "en_GB.UTF-8" && user.programs.plasma.configFile.plasma-localerc.Formats.LC_NUMERIC.value == "nl_NL.UTF-8";
         assert user.programs.plasma.enable && user.programs.plasma.workspace.lookAndFeel == "org.kde.breezedark.desktop";
         # Named desktops from nixos-secrets, reached with Meta+<digit>; every desktop has its rule for named Brave windows
         assert user.programs.plasma.kwin.virtualDesktops.names != [ ] && builtins.length user.programs.plasma.window-rules == builtins.length user.programs.plasma.kwin.virtualDesktops.names;
@@ -97,6 +98,10 @@
         assert lib.all (id: builtins.elem id (braveDefaults.ExtensionInstallForcelist or [ ])) [ "ekhagklcjbdpajgpjgmbionohlpdbjgc" "cimiefiiaegbelhefglklhhakcgmhkai" ];
         assert user.programs.plasma.shortcuts.kwin."Switch to Desktop 1" == "Meta+1" && user.programs.plasma.shortcuts.kwin."Window to Desktop 1" == "Meta+!";
         assert user.programs.tmux.enable;
+        # One panel on every screen with the pinned programs; the laptop's touchpad and the mouse are declared per device
+        assert builtins.length user.programs.plasma.panels == 1 && (builtins.head user.programs.plasma.panels).screen == "all";
+        assert builtins.length user.programs.plasma.input.touchpads == 1 && (builtins.head user.programs.plasma.input.touchpads).naturalScroll;
+        assert (builtins.head user.programs.plasma.input.mice).accelerationProfile != null;
         assert user.programs.plasma.kscreenlocker.autoLock && user.programs.plasma.kscreenlocker.passwordRequiredDelay == 0;
         # Thunderbird telemetry and studies off
         assert thunderbird.isDefault;
@@ -192,6 +197,8 @@
         # Everything but the EFI partition is encrypted: ZFS inside LUKS, swap with a random key
         assert builtins.attrNames mimir.boot.initrd.luks.devices == [ "crypt" ];
         assert builtins.attrNames mimir.fileSystems == [ "/" "/boot" "/home" "/home/jeeemieee/scratch" "/home/jeeemieee/scratch/workers" "/home/jeeemieee/workers" "/nix" ];
+        # Containers can be given the graphics card
+        assert mimir.hardware.nvidia-container-toolkit.enable && mimir.virtualisation.docker.rootless.daemon.settings.features.cdi;
         # The sizes the user chose for the 2 TB disk
         assert mimir.hostSpec.disk.homeReservation == "600G" && mimir.hostSpec.disk.nixQuota == "250G" && mimir.hostSpec.disk.scratchQuota == "600G" && mimir.hostSpec.disk.workersQuota == "200G";
         assert builtins.all (path: mimir.fileSystems.${path}.fsType == "zfs") [ "/" "/nix" "/home" "/home/jeeemieee/scratch" ];
