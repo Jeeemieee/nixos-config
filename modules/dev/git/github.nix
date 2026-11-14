@@ -23,15 +23,13 @@ in
         enable = true;
         # Home Manager's former defaults for every host are not wanted; only what is declared here applies
         enableDefaultConfig = false;
-        matchBlocks."github.com" = {
-          user = "git";
+        settings."github.com" = {
+          User = "git";
           # The socket of the Bitwarden desktop app's SSH agent; it exists while the app runs
-          identityAgent = "~/.bitwarden-ssh-agent.sock";
-          extraOptions = {
-            # Only the pinned keys count: no question to trust a new key, and nothing is learned from the network
-            StrictHostKeyChecking = "yes";
-            UserKnownHostsFile = "${knownHostsFile pkgs}";
-          };
+          IdentityAgent = "~/.bitwarden-ssh-agent.sock";
+          # Only the pinned keys count: no question to trust a new key, and nothing is learned from the network
+          StrictHostKeyChecking = "yes";
+          UserKnownHostsFile = "${knownHostsFile pkgs}";
         };
       };
 
