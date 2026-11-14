@@ -676,6 +676,32 @@ in
           touch "$out"
         '';
 
+      # pi never runs a command that the shared login file names (the change is in modules/flake/nixpkgs.nix)
+      checks.pi-login-commands = pkgs.runCommand "pi-login-commands-check" { } ''
+        export HOME=$TMPDIR/home PI_CODING_AGENT_DIR=$TMPDIR/home/.pi/agent PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
+        mkdir -p "$PI_CODING_AGENT_DIR" "$HOME/work"
+        failed=0
+        # pi is asked one question with a key that is a command; without a network the request fails, after the key was needed
+        ask() {
+          rm -f "$TMPDIR/ran"
+          printf '{"openai": {"type": "api_key", "key": "%s"}}' "$2" > "$PI_CODING_AGENT_DIR/auth.json"
+          (cd "$HOME/work" && timeout 120 "$1/bin/pi" --provider openai --model gpt-4o --no-session -p hi) > "$TMPDIR/answer" 2>&1 || true
+          tail -n 2 "$TMPDIR/answer"
+        }
+        ask ${pkgs.pi-coding-agent} "!touch $TMPDIR/ran; echo not-a-key"
+        if [ -e "$TMPDIR/ran" ]; then echo "FAIL: pi ran the command of the login file"; failed=1; else echo "ok   the command of the login file did not run"; fi
+        # An ordinary key is still used: pi gets as far as the request
+        ask ${pkgs.pi-coding-agent} not-a-key
+        if grep -q "api.openai.com" "$TMPDIR/answer"; then echo "ok   an ordinary key reaches the request"; else echo "FAIL: an ordinary key did not reach the request"; failed=1; fi
+        # Control: pi as nixpkgs builds it does run the command, so this test can tell the difference
+        ask ${
+          inputs.nixpkgs-pi.legacyPackages.${pkgs.stdenv.hostPlatform.system}.pi-coding-agent
+        } "!touch $TMPDIR/ran; echo not-a-key"
+        if [ -e "$TMPDIR/ran" ]; then echo "ok   control: the unchanged pi runs it"; else echo "FAIL: the control did not run the command, so this test proves nothing"; failed=1; fi
+        [ "$failed" = 0 ] || exit 1
+        touch "$out"
+      '';
+
       # The declared extensions and settings: fixed versions, complete, and accepted by pi without the network
       checks.pi-config =
         pkgs.runCommand "pi-config-check"

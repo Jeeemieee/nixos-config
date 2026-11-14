@@ -43,7 +43,7 @@ Limits, stated plainly:
 
 | What | Moves |
 | --- | --- |
-| `pi` | pi itself (`nixpkgs-pi`) |
+| `pi` | pi itself (`nixpkgs-pi`). pi is built here with one change (see below), so an update builds it on this machine, in about a minute |
 | `extensions` | pi's extensions to their newest versions on npm, with their hashes, in `modules/dev/pi.nix`, and the versions that the `pi-config` check expects pi to report; `pi-chatgpt-limit` is not on npm and stays |
 | `search` | SearXNG (`nixpkgs-search`): when search engines stop answering |
 | `system` | NixOS and everything else that is not one of the separate pins |
@@ -53,8 +53,17 @@ Limits, stated plainly:
 
 The updater takes a version and a hash from the npm registry's answer only if they are a plain version and a sha512 hash; any other answer, or a package the registry does not know, leaves the file as it is.
 
+## The one change to pi
+
+All pi sessions share the login file (`~/.pi/agent/login/auth.json`), and each can write it, because a login renews itself. pi would run a value in that file that starts with `!` as a command to fetch a key. One session could so make every other session run a command. pi is therefore built with that function switched off (`modules/flake/nixpkgs.nix`): it never runs a command named in the login file, in `models.json` or in an MCP server's headers. Subscription logins and ordinary keys work as before.
+
+After a pi update two things show whether the change still holds: the build stops if pi no longer has that function in the two places, and the `pi-login-commands` check fails if pi runs such a command.
+
+Still possible: a session can replace or remove the shared login, which logs the other sessions out or makes them use another account.
+
 ## Validation
 
+- `pi-login-commands`: pi, asked a question with a login file whose key is a command, does not run it; an ordinary key is still used. Control: pi as nixpkgs builds it runs the command.
 - `pi-sandbox-protected`: in a sandbox, changing, adding to, renaming, removing and replacing protected files is refused and an ordinary file can be changed. Controls: with `--unlock` all of it is accepted; the same folder under another name is not protected, and `--unlock` is refused there.
 - `config-guard`: in a scratch repository with a stand-in for the checks: no commit without a check, after a change, or after a failed check; a protected file and a new module need the typed `yes` and are refused on `no` and without a terminal; an ordinary change does not ask; another repository is refused; a secret that is not encrypted fails the check; the extension updater against a stand-in registry, including two answers it must refuse.
 - Not covered by a check: `config update` against the real sources, which needs the network.
