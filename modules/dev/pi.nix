@@ -1,5 +1,5 @@
 # The pi coding agent, always run inside a bubblewrap sandbox; users opt in by importing homeManager.pi
-# The sandbox sees the project (the git repository around the current folder, or the folder itself), the Nix store and the network,
+# The sandbox sees the project (the nearest folder upwards that holds .git, or the current folder itself; its .git read-only), the Nix store and the network,
 # and nothing else of the home folder, no session sockets (Docker, D-Bus, SSH agent, keyrings) and no other processes
 # Of ~/.pi/agent it sees the declared files, fixed and read-only, and keeps the login and the sessions; whatever else is written there is discarded at exit
 # Its instructions, settings and extensions are declared here and read-only, also for pi itself
@@ -30,13 +30,22 @@ let
         } --strip-components=1 -C";
       };
       packages = [
-        (npm "@juicesharp/rpiv-todo" "2.15.0" "sha512-8WfYssdgQgSWzFNsRzdw5Z6ZJIjO2ecM/YqEzYpR/ore+Hh5aNmafGVy94uFbIofAv2wGGitx5e3J/ucRrViXQ==")
-        (npm "@juicesharp/rpiv-ask-user-question" "2.15.0" "sha512-Gm6de5IZF52BaSeh9dnDqJBn821Z5XfJkCmhkCmqTzvNv3SCpSv1mA4Gj5VBcfrSe+xTtWSVQzJwIqJFQHH3Lg==")
+        (npm "@juicesharp/rpiv-todo" "2.15.0"
+          "sha512-8WfYssdgQgSWzFNsRzdw5Z6ZJIjO2ecM/YqEzYpR/ore+Hh5aNmafGVy94uFbIofAv2wGGitx5e3J/ucRrViXQ=="
+        )
+        (npm "@juicesharp/rpiv-ask-user-question" "2.15.0"
+          "sha512-Gm6de5IZF52BaSeh9dnDqJBn821Z5XfJkCmhkCmqTzvNv3SCpSv1mA4Gj5VBcfrSe+xTtWSVQzJwIqJFQHH3Lg=="
+        )
         # Not an extension: the dependency of the two rpiv extensions
-        (npm "@juicesharp/rpiv-config" "2.15.0" "sha512-S2BAGX4dJjQ2AyNYOEjC6ha04p9f6CdEfmtxpdxzSKrfDMwqIvOjjO9HiHc1IPY7jDY1q2Q8cGCtpIZWV6Y8NQ==")
-        (npm "@geminixiang/pi-simplify" "0.2.0" "sha512-pASkAwxqwU7vB8phjir1h50jSaSwaziro/R3FbKC+GMtNdFNDVybTe1VQ0gcKQ5l6fVoxm5NhyZ30XUdKqM68g==")
+        (npm "@juicesharp/rpiv-config" "2.15.0"
+          "sha512-S2BAGX4dJjQ2AyNYOEjC6ha04p9f6CdEfmtxpdxzSKrfDMwqIvOjjO9HiHc1IPY7jDY1q2Q8cGCtpIZWV6Y8NQ=="
+        )
+        (npm "@geminixiang/pi-simplify" "0.2.0"
+          "sha512-pASkAwxqwU7vB8phjir1h50jSaSwaziro/R3FbKC+GMtNdFNDVybTe1VQ0gcKQ5l6fVoxm5NhyZ30XUdKqM68g=="
+        )
         (
-          npm "@gotgenes/pi-anthropic-auth" "3.4.4" "sha512-oWCkPFSa7AkvSju3OrlYu0GTo8Jdqz2OvszJtHj0hzXLw8tErtmPPMYPqK2it3zaXu+Wl2oH8nfpeIUVsqW2Vw=="
+          npm "@gotgenes/pi-anthropic-auth" "3.4.4"
+            "sha512-oWCkPFSa7AkvSju3OrlYu0GTo8Jdqz2OvszJtHj0hzXLw8tErtmPPMYPqK2it3zaXu+Wl2oH8nfpeIUVsqW2Vw=="
           // {
             # pi names an extension after the folder of its entry file, here "src": an entry in the package folder gives it its own name
             fix = ''
@@ -147,16 +156,28 @@ let
           esac
         done
 
-        # The project is the git repository around the current folder, or the folder itself
+        # The project is the nearest folder upwards that holds .git, or the current folder itself
+        # Found by path alone: git would answer from the repository's own settings (core.worktree), which an earlier session could have changed
         workdir=$(pwd -P)
-        project=$(git -C "$workdir" rev-parse --show-toplevel 2>/dev/null || echo "$workdir")
+        project=$workdir
+        folder=$workdir
+        while [ "$folder" != / ]; do
+          if [ -e "$folder/.git" ] || [ -L "$folder/.git" ]; then
+            project=$folder
+            break
+          fi
+          folder=$(dirname "$folder")
+        done
         checkPath "$project"
 
-        # Git hooks and the repository config run commands outside the sandbox later (hooks, core.fsmonitor), so the sandbox may not change them
+        # The whole of .git is read-only in the sandbox: git's settings and hooks run programs when the user next uses git outside it
+        # As a mount it can also not be renamed, removed or replaced by another .git. Reading works (status, log, diff); staging and committing do not
         protect=()
-        for path in "$project/.git/hooks" "$project/.git/config"; do
-          if [ -e "$path" ]; then protect+=(--ro-bind "$path" "$path"); fi
-        done
+        if [ -L "$project/.git" ]; then
+          deny "refusing $project: its .git is a link, which cannot be protected; start ${name} in the repository it points to"
+        elif [ -e "$project/.git" ]; then
+          protect+=(--ro-bind "$project/.git" "$project/.git")
+        fi
 
         # ~/.pi/agent inside the sandbox is a folder in memory. It holds the declared files as read-only mounts, which cannot be
         # deleted or replaced, and two things that persist: the sessions, and the login in its own folder. pi locks the login
@@ -218,7 +239,11 @@ let
           --unsetenv WAYLAND_DISPLAY \
           --unsetenv DISPLAY \
           --setenv PATH "${noBrowser}/bin:$PATH" \
-          ${pkgs.lib.concatStringsSep " " (pkgs.lib.mapAttrsToList (key: value: "--setenv ${key} ${pkgs.lib.escapeShellArg value}") environment)} \
+          ${
+            pkgs.lib.concatStringsSep " " (
+              pkgs.lib.mapAttrsToList (key: value: "--setenv ${key} ${pkgs.lib.escapeShellArg value}") environment
+            )
+          } \
           -- ${command} "$@"
       '';
     };
@@ -410,6 +435,101 @@ in
             if (cd "$HOME/project" && ${sandboxedProbe}/bin/pi) > out 2>&1; then echo "FAIL (replaced declared file): not refused"; exit 1; fi
             grep -q "is not the declared file" out || { echo "FAIL (replaced declared file): no descriptive refusal"; cat out; exit 1; }
             echo "refused (replaced declared file): $(cat out)"
+            touch "$out"
+          '';
+
+      # What a sandbox can change in git, and what the launcher takes from git when it starts
+      # Two weaknesses that were found in an earlier version, each with a control showing that the test can detect it
+      checks.pi-sandbox-git =
+        let
+          gitProbe = pkgs.writeShellScript "pi-sandbox-git-probe" ''
+            report() { echo "$1=$2"; }
+            cd "$PROJECT"
+            if [ -n "''${SIBLING:-}" ]; then
+              # Started in a project whose git settings name the folder above it as its work tree
+              if [ -e "$SIBLING" ]; then report sibling visible; else report sibling hidden; fi
+              if echo x >> "$SIBLING" 2>/dev/null; then report sibling-write accepted; else report sibling-write refused; fi
+              exit 0
+            fi
+            # Reading git works
+            if git status --porcelain > /dev/null 2>&1; then report git-status works; else report git-status fails; fi
+            if [ "$(git log --format=%s -1 2>/dev/null)" = base ]; then report git-log works; else report git-log fails; fi
+            if echo change >> tracked && [ -n "$(git diff --stat 2>/dev/null)" ]; then report git-diff works; else report git-diff fails; fi
+            # A program that git would run when the user next uses git here, outside the sandbox
+            printf '#!/bin/sh\necho ran > %s\n' "$MARKER" > "$PROJECT/left-behind.sh" && chmod +x "$PROJECT/left-behind.sh"
+            if git config core.fsmonitor "$PROJECT/left-behind.sh" 2>/dev/null; then report git-config-write accepted; else report git-config-write refused; fi
+            if git add left-behind.sh 2>/dev/null; then report git-add accepted; else report git-add refused; fi
+            # The same through a new .git in place of the old one
+            if mv .git .git-away 2>/dev/null && git init -q . 2>/dev/null && git config core.fsmonitor "$PROJECT/left-behind.sh" 2>/dev/null; then
+              report git-dir-replace done
+            else
+              report git-dir-replace refused
+              if rm -rf .git 2>/dev/null; then report git-dir-remove done; else report git-dir-remove refused; fi
+              if echo "$PROJECT/elsewhere" > .git/commondir 2>/dev/null; then report git-commondir written; else report git-commondir refused; fi
+            fi
+          '';
+          sandboxedGitProbe = mkSandbox pkgs {
+            name = "pi";
+            command = "${gitProbe}";
+            declared = [ ".pi/agent/AGENTS.md" ];
+          };
+        in
+        pkgs.runCommand "pi-sandbox-git-check"
+          {
+            nativeBuildInputs = [
+              pkgs.git
+              pkgs.bubblewrap
+            ];
+          }
+          ''
+            export HOME=$TMPDIR/home USER=tester GIT_CONFIG_GLOBAL=/dev/null
+            export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.org GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.org
+            mkdir -p "$HOME/.pi/agent" "$HOME/group/project" "$HOME/group/sibling" "$HOME/work/project"
+            ln -s ${pkgs.writeText "pi-sandbox-rules" "rules"} "$HOME/.pi/agent/AGENTS.md"
+            failed=0
+            expect() { if [ "$2" = "$3" ]; then echo "ok   $1: $2"; else echo "FAIL $1: $2 (expected $3)"; failed=1; fi; }
+
+            ## Step 1. Control: a program named in a repository's settings runs at the next `git status`
+            git init -q "$HOME/control" && git -C "$HOME/control" commit -q --allow-empty -m base
+            printf '#!/bin/sh\necho ran > %s\n' "$HOME/control-marker" > "$HOME/control/left-behind.sh" && chmod +x "$HOME/control/left-behind.sh"
+            git -C "$HOME/control" config core.fsmonitor "$HOME/control/left-behind.sh"
+            git -C "$HOME/control" status > /dev/null 2>&1 || true
+            expect "control: a program named in the settings runs at git status" "$([ -e "$HOME/control-marker" ] && echo ran || echo not-run)" ran
+
+            ## Step 2. From inside the sandbox: reading git works, changing it does not
+            project=$HOME/work/project
+            git init -q "$project" && echo content > "$project/tracked" && git -C "$project" add tracked && git -C "$project" commit -q -m base
+            before=$(cd "$project/.git" && find . -type f | sort | xargs sha256sum | sha256sum)
+            (cd "$project" && PROJECT=$project MARKER=$HOME/marker-outside ${sandboxedGitProbe}/bin/pi) > actual
+            cat actual
+            expect "inside: git status" "$(grep -x 'git-status=.*' actual)" "git-status=works"
+            expect "inside: git log" "$(grep -x 'git-log=.*' actual)" "git-log=works"
+            expect "inside: git diff" "$(grep -x 'git-diff=.*' actual)" "git-diff=works"
+            expect "inside: writing the repository's settings" "$(grep -x 'git-config-write=.*' actual)" "git-config-write=refused"
+            expect "inside: staging a file" "$(grep -x 'git-add=.*' actual)" "git-add=refused"
+            expect "inside: replacing .git" "$(grep -x 'git-dir-replace=.*' actual)" "git-dir-replace=refused"
+            expect "inside: removing .git" "$(grep -x 'git-dir-remove=.*' actual || echo not-tried)" "git-dir-remove=refused"
+            expect "inside: a commondir file" "$(grep -x 'git-commondir=.*' actual || echo not-tried)" "git-commondir=refused"
+            # The user's next git command in that project, outside the sandbox
+            git -C "$project" status > /dev/null 2>&1 || true
+            expect "outside: the program at the user's git status" "$([ -e "$HOME/marker-outside" ] && echo ran || echo not-run)" not-run
+            after=$(cd "$project/.git" 2>/dev/null && find . -type f | sort | xargs sha256sum | sha256sum)
+            expect "outside: .git is unchanged" "$([ "$before" = "$after" ] && echo unchanged || echo changed)" unchanged
+            expect "outside: the agent's change to a tracked file arrived" "$(tail -n 1 "$project/tracked")" change
+
+            ## Step 3. A project whose git settings name the folder above it as its work tree
+            project=$HOME/group/project
+            git init -q "$project" && git -C "$project" commit -q --allow-empty -m base
+            echo private > "$HOME/group/sibling/file"
+            git -C "$project" config core.worktree "$HOME/group"
+            expect "control: git names the folder above as the project" "$(git -C "$project" rev-parse --show-toplevel)" "$HOME/group"
+            (cd "$project" && PROJECT=$project SIBLING=$HOME/group/sibling/file ${sandboxedGitProbe}/bin/pi) > actual
+            cat actual
+            expect "inside: the folder beside the project" "$(grep -x 'sibling=.*' actual)" "sibling=hidden"
+            expect "inside: writing beside the project" "$(grep -x 'sibling-write=.*' actual)" "sibling-write=refused"
+            expect "outside: the file beside the project" "$(cat "$HOME/group/sibling/file")" private
+
+            [ "$failed" = 0 ] || { echo "pi-sandbox-git: git is not protected as expected"; exit 1; }
             touch "$out"
           '';
 

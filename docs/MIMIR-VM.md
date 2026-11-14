@@ -102,7 +102,7 @@ VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk 
 
 | Inside the sandbox | Hidden |
 | --- | --- |
-| The project: the git repository around the current folder, or the folder itself (read and write) | The rest of the home folder: `~/.ssh`, `~/.config` (sops keys, restic), Bitwarden, browser profiles, other projects |
+| The project: the nearest folder upwards that holds `.git`, or the current folder itself (read and write; its `.git` read-only) | The rest of the home folder: `~/.ssh`, `~/.config` (sops keys, restic), Bitwarden, browser profiles, other projects |
 | Of `~/.pi/agent`: the declared files (read-only, fixed in place), the login and the sessions (read and write); `~/.config/git` (read-only) | Session sockets: Docker, D-Bus, the SSH agent, keyrings, the desktop |
 | The Nix store and daemon, `/etc`, the system's programs, the project's direnv environment | Other processes |
 | The network | |
@@ -112,7 +112,10 @@ VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk 
 - Extensions, settings and prompts in a project's own `.pi` folder are not loaded and pi does not ask (`defaultProjectTrust` is `never`): an agent can write that folder, and a habitual yes would run its code in later sessions. `pi --approve` loads them for one run. A project's `AGENTS.md` is always read, like any file an agent wrote: review it
 - Processes inside cannot create further user namespaces (`--disable-userns`), which they could otherwise use to stack their own mounts over the declared files for themselves
 - Opening a browser from inside fails quietly (the system's `kde-open` would crash without a desktop session): pi shows login links itself, so Ctrl+click the link in the terminal, which opens it in the normal browser
-- The project's `.git/hooks` and `.git/config` are read-only inside, since git would run their commands outside the sandbox later
+- The project's whole `.git` is read-only inside, because git's settings and hooks run programs when git is next used outside the sandbox. An agent can read git (`git status`, `log`, `diff`, `show`) but cannot stage, commit, stash, switch branches or fetch; as a mount, `.git` can also not be renamed, removed or replaced. To restore a file an agent uses `git show HEAD:<path> > <path>`
+- The launcher finds the project by its path, not by asking git, whose answer depends on settings stored in the project (`core.worktree`)
+- Limits: a folder that is not a git repository has no `.git` to protect, and an agent can create a new repository inside a project; in both cases git used there afterwards, outside the sandbox, reads what the agent left. A project whose `.git` is a link is refused. In a git worktree or submodule, whose `.git` is a file pointing elsewhere, git does not work inside the sandbox
+- The check `pi-sandbox-git` tests both points with controls: a program named in a repository's settings runs at `git status` outside the sandbox, and git names the folder above as the project when `core.worktree` says so
 - Not covered: the network stays open (pi needs it for the model), so project contents can still leave the machine; whatever runs in the sandbox can read and change the login file and the sessions, as pi itself must; files in the project that you later run outside the sandbox (scripts, `flake.nix` via direnv) need the same review as any code an agent wrote. No Docker and no GPU inside yet
 
 ### Declared configuration
