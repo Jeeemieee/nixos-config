@@ -186,9 +186,10 @@ in
               autoprune = true;
             };
             # Shorter than /home's: workers' copies change fast, and a snapshot keeps every deleted file against the dataset's limit
+            # Committed work is in git and in the backup; these are the net under an agent that wrecks its own copy
             workers = {
               hourly = 24;
-              daily = 14;
+              daily = 7;
               monthly = 0;
               yearly = 0;
               autosnap = true;

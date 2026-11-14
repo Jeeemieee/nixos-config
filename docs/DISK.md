@@ -17,7 +17,7 @@
 | `rpool/home` | `/home` | Hourly for 48 hours, daily for 30 days, monthly for 6 months. `homeReservation` is kept for it whatever else fills |
 | `rpool/scratch` | `~/scratch` of `hostSpec.disk.scratchUser` | None; limited to `scratchQuota`, the workers' areas included |
 | `rpool/scratch/workers` | `~/scratch/workers` | None. Raw output of agent workers; the top folder belongs to root |
-| `rpool/workers` | `~/workers` | Hourly for 24 hours, daily for 14 days, also for every dataset created below it. Agent workers' copies of projects, reports and sessions; limited to `workersQuota`; the top folder belongs to root |
+| `rpool/workers` | `~/workers` | Hourly for 24 hours, daily for 7 days, also for every dataset created below it. Agent workers' copies of projects, reports and sessions; limited to `workersQuota`; the top folder belongs to root |
 
 The sizes are options of `hostSpec.disk` without defaults, because they depend on the disk. On `mimir` (2 TB, 1863 GiB; about 1770 GiB usable after the boot partition, swap and ZFS's own reserve of a thirty-second of the pool): 600 GiB reserved for `/home`, at most 250 GiB for the Nix store, 600 GiB for scratch and 200 GiB for `~/workers`. If every limit were reached while `/home` is at its reservation, about 120 GiB would be left. The disk is not split: a limit is the most a dataset may grow to, and unused space stays available to the others; the reservation is a minimum, and `/home` can grow beyond it.
 
