@@ -3,7 +3,7 @@
 #   devShell = import ./dev-shell.nix { inherit nixpkgs system; };
 #   devShell { blocks = [ "python" "numerics-cpu" ]; packages = pkgs: [ pkgs.gmsh ]; }
 #
-# Blocks: python, cpp, and at most one of numerics-cpu, numerics-cuda
+# Blocks: python, cpp, openfoam, and at most one of numerics-cpu, numerics-cuda
 { nixpkgs, system }:
 let
   lib = import "${nixpkgs}/lib";
@@ -14,6 +14,7 @@ let
     "cpp"
     "numerics-cpu"
     "numerics-cuda"
+    "openfoam"
   ];
 
   # Unmodified nixpkgs for every shell without numerics-cuda; explicit empty config and
@@ -46,6 +47,9 @@ let
   # also the ones C, C++ and Fortran use (PETSC_DIR, SLEPC_DIR, pkg-config)
   petsc = pkgs.python313Packages.petsc4py;
   slepc = pkgs.python313Packages.slepc4py;
+
+  # OpenFOAM from ESI, built against pkgs.mpi, the MPI of the numerics blocks
+  openfoam = import ./openfoam.nix { inherit pkgs; };
 
   # Libraries that PyPI wheels expect from the system
   wheelLibraries = [
@@ -96,6 +100,41 @@ let
       echo "numerics-cuda: libcuda.so.1 is neither in /run/opengl-driver/lib nor on LD_LIBRARY_PATH; PETSc cannot be loaded without the NVIDIA driver" >&2
     fi
   '';
+
+  # OpenFOAM's own environment script, as on any other system: it puts the programs
+  # and wmake on PATH, the libraries on LD_LIBRARY_PATH (OpenFOAM loads its libraries
+  # by name, also the user's own from FOAM_USER_LIBBIN) and sets WM_* and FOAM_*
+  #
+  # Where wmake installs the user's own solvers and libraries (WM_PROJECT_USER_DIR). That folder comes
+  # first on PATH and on LD_LIBRARY_PATH for every program of the shell, so it must not be a folder that
+  # an agent can write and the user's own terminal then searches:
+  #   - OPENFOAM_USER_DIR, if it is set
+  #   - inside a pi sandbox, whose home folder is in memory: .openfoam in the project (the nearest folder
+  #     upwards with a flake.nix), which only the agent's own shells use
+  #   - otherwise ~/.local/share/openfoam/v<release>, shared by the user's projects wherever their cases lie.
+  #     pi never shares a hidden folder of the home, so no agent can write it. The solvers' sources are
+  #     developed elsewhere; the user runs wmake himself to build his copy
+  #
+  # Where errors end the shell (set -e, as in the checks) the script would stop half-way:
+  # one of its helpers returns 1 in its normal course. `|| true` switches that off for
+  # the script, and the test after it says whether OpenFOAM is loaded
+  openfoamShellHook = ''
+    if [ -n "''${OPENFOAM_USER_DIR:-}" ]; then
+      openfoamUserDir=$OPENFOAM_USER_DIR
+    elif [ "$(stat -f -c %T "''${HOME:-/}" 2> /dev/null)" = tmpfs ]; then
+      openfoamUserDir=$PWD
+      while [ "$openfoamUserDir" != / ] && [ ! -e "$openfoamUserDir/flake.nix" ]; do openfoamUserDir=$(dirname "$openfoamUserDir"); done
+      if [ "$openfoamUserDir" = / ]; then openfoamUserDir=$PWD; fi
+      openfoamUserDir=$openfoamUserDir/.openfoam
+    else
+      openfoamUserDir=$HOME/.local/share/openfoam/v${openfoam.version}
+    fi
+    source ${openfoam}/opt/OpenFOAM-${openfoam.version}/etc/bashrc WM_PROJECT_USER_DIR="$openfoamUserDir" || true
+    unset openfoamUserDir
+    if [ "''${WM_PROJECT_DIR:-}" != "${openfoam}/opt/OpenFOAM-${openfoam.version}" ]; then
+      echo "openfoam: etc/bashrc of ${openfoam} did not set WM_PROJECT_DIR; OpenFOAM is not loaded" >&2
+    fi
+  '';
 in
 if (unknownBlocks != [ ]) then
   throw "devShell: unknown block(s) ${lib.concatStringsSep ", " unknownBlocks}; known blocks are ${lib.concatStringsSep ", " knownBlocks}"
@@ -107,7 +146,7 @@ else
       packages =
         # First on PATH: the Python environment also carries mpiexec (through mpi4py),
         # wrapped with the Python-scoped library path; MPI programs must not get that
-        lib.optional hasNumerics pkgs.mpi
+        lib.optional (hasNumerics || has "openfoam") pkgs.mpi
         ++ lib.optionals (has "python") [
           pythonEnv
           pkgs.uv
@@ -121,6 +160,11 @@ else
           pkgs.clang-tools
           pkgs.gdb
         ]
+        # What wmake needs besides the compilers of mkShell's stdenv
+        ++ lib.optionals (has "openfoam") [
+          pkgs.flex
+          pkgs.gnum4
+        ]
         ++ packages pkgs;
 
       buildInputs =
@@ -131,7 +175,10 @@ else
         # nvcc and the CUDA headers and libraries for the project's own CUDA code
         ++ lib.optional (has "numerics-cuda") pkgs.petscCudaToolkit;
 
-      shellHook = commonShellHook + lib.optionalString (has "numerics-cuda") cudaShellHook;
+      shellHook =
+        commonShellHook
+        + lib.optionalString (has "numerics-cuda") cudaShellHook
+        + lib.optionalString (has "openfoam") openfoamShellHook;
     }
     // lib.optionalAttrs (has "python") {
       # uv uses the Nix Python and never downloads one

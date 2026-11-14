@@ -7,7 +7,7 @@
   outputs =
     { self, blocks }:
     {
-      # Blocks: "python", "cpp", and at most one of "numerics-cpu", "numerics-cuda"
+      # Blocks: "python", "cpp", "openfoam", and at most one of "numerics-cpu", "numerics-cuda"
       devShells.x86_64-linux.default = blocks.lib.devShell {
         blocks = [
           "python"

@@ -21,7 +21,8 @@ in
   perSystem =
     { system, ... }:
     {
-      # Each block and combination in the Nix sandbox: MPI, PETSc with MUMPS from Python and C, SLEPc, Fortran, one PETSc per shell, the refusals
+      # Each block and combination in the Nix sandbox: MPI, PETSc with MUMPS from Python and C, SLEPc, Fortran, one PETSc per shell, the refusals;
+      # OpenFOAM serial, parallel, with wmake, beside PETSc, and where it keeps the user's own solvers
       checks = lib.mapAttrs' (name: lib.nameValuePair "dev-env-${name}") (
         import ../../dev-env/checks.nix {
           nixpkgs = inputs.nixpkgs-unstable;

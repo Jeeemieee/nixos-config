@@ -4,7 +4,7 @@ Development environment from Nix building blocks, loaded by direnv.
 
 ## First use
 
-1. Choose the blocks in `flake.nix`: `python`, `cpp`, and at most one of
+1. Choose the blocks in `flake.nix`: `python`, `cpp`, `openfoam`, and at most one of
    `numerics-cpu` and `numerics-cuda`. Extra tools go into `packages`.
 2. Run `direnv allow`, then `nix-direnv-reload`. The first load downloads the tools and writes `flake.lock`.
 3. After every change of `flake.nix` or `flake.lock`, run `nix-direnv-reload` again: the environment is not reloaded by itself.
