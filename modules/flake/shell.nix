@@ -1,10 +1,12 @@
 # Admin shell for this repository, loaded by .envrc through direnv
 {
   perSystem =
-    { pkgs, ... }:
+    { config, pkgs, ... }:
     {
       devShells.default = pkgs.mkShell {
         packages = with pkgs; [
+          # Checks, guarded commits and updates of this repository and nixos-secrets (docs/UPKEEP.md)
+          config.packages.config
           # Editing and inspecting the encrypted nixos-secrets
           sops
           age

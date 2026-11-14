@@ -120,6 +120,9 @@
         assert !(user.programs.git.settings ? credential);
         assert lib.hasInfix "IdentityAgent ~/.bitwarden-ssh-agent.sock" user.home.file.".ssh/config".text && lib.hasInfix "StrictHostKeyChecking yes" user.home.file.".ssh/config".text;
         # Bitwarden writes an autostart file of the same name itself; without force that file stops every later activation
+        # A commit in the two kept repositories goes through the guard, named in the user's own git settings
+        assert map (include: include.condition) user.programs.git.includes == [ "gitdir:~/repos/nixos-config/" "gitdir:~/repos/nixos-secrets/" ];
+        assert lib.all (include: lib.hasInfix "config-guard-hooks" include.contents.core.hooksPath) user.programs.git.includes;
         assert user.xdg.configFile."autostart/bitwarden.desktop".force && lib.hasInfix "--autostart" user.xdg.configFile."autostart/bitwarden.desktop".text;
         assert cfg.virtualisation.libvirtd.enable;
         # Only the laptop imports nixos.backup: a host of this profile without it never writes into the real backup

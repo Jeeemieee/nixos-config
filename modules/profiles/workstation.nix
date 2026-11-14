@@ -70,6 +70,7 @@ in
         modules.homeManager.vscode
         modules.homeManager.git
         modules.homeManager.ssh
+        modules.homeManager.config-tool
         modules.homeManager.office
         modules.homeManager.mail
         modules.homeManager.notes

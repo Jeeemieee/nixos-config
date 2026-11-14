@@ -99,6 +99,9 @@ let
       environment ? { },
       # Files below the home folder that Home Manager declares, as links into the Nix store
       declared ? [ ],
+      # Repositories below ~/repos with files that decide what an agent may do: { <repository> = [ <path in it> ... ]; }
+      # They are read-only in the sandbox unless it is started with --unlock
+      protected ? { },
     }:
     let
       # The sandbox has no desktop session, so the system's xdg-open (kde-open) crashes there; this one fails quietly instead
@@ -143,8 +146,13 @@ let
 
         # The wrapper's own options come first; everything else goes to ${name}
         extraBinds=()
+        unlock=0
         while [ "$#" -gt 0 ]; do
           case "$1" in
+            --unlock)
+              unlock=1
+              shift
+              ;;
             --allow | --allow-ro)
               [ "$#" -ge 2 ] || deny "$1 needs a folder"
               allowed=$(realpath -e -- "$2") || deny "$1: $2 does not exist"
@@ -177,6 +185,36 @@ let
           deny "refusing $project: its .git is a link, which cannot be protected; start ${name} in the repository it points to"
         elif [ -e "$project/.git" ]; then
           protect+=(--ro-bind "$project/.git" "$project/.git")
+        fi
+
+        # Files that decide what an agent may do (the sandbox itself, the checks, secrets, disk, installer, version pins) are read-only as well
+        # As mounts they can neither be changed nor renamed, removed or replaced. --unlock leaves them writable for this one session
+        protectedPaths=()
+        ${pkgs.lib.concatStrings (
+          pkgs.lib.mapAttrsToList (repository: paths: ''
+            if [ "$project" = "$HOME/repos/"${pkgs.lib.escapeShellArg repository} ]; then
+              protectedPaths=(${pkgs.lib.escapeShellArgs paths})
+            fi
+          '') protected
+        )}
+        if [ "$unlock" = 1 ]; then
+          if [ "''${#protectedPaths[@]}" -gt 0 ]; then
+            echo "${name}: unlocked for this session: the protected files of $project can be changed (''${protectedPaths[*]})" >&2
+          else
+            deny "--unlock: $project has no protected files"
+          fi
+        else
+          for path in "''${protectedPaths[@]}"; do
+            if [ -L "$project/$path" ]; then
+              deny "refusing $project: its protected $path is a link, which cannot be protected"
+            elif [ -e "$project/$path" ]; then
+              protect+=(--ro-bind "$project/$path" "$project/$path")
+            fi
+          done
+          # pi reads this file instead of the repository's AGENTS.md when it exists; it cannot be protected before it exists
+          if [ "''${#protectedPaths[@]}" -gt 0 ] && [ -e "$project/AGENTS.override.md" ]; then
+            deny "refusing $project: it holds an AGENTS.override.md, which would replace the repository's instructions; remove it, or start with --unlock to work on it"
+          fi
         fi
 
         # ~/.pi/agent inside the sandbox is a folder in memory. It holds the declared files as read-only mounts, which cannot be
@@ -269,6 +307,8 @@ in
           };
           # Every file this configuration puts into pi's folder
           declared = builtins.filter (pkgs.lib.hasPrefix ".pi/agent/") (builtins.attrNames config.home.file);
+          # The configuration's own repositories: what decides an agent's limits is read-only for agents
+          protected = import ../../config-tool/protected.nix;
         })
       ];
 
@@ -532,6 +572,84 @@ in
             [ "$failed" = 0 ] || { echo "pi-sandbox-git: git is not protected as expected"; exit 1; }
             touch "$out"
           '';
+
+      # Protected files of a repository are read-only in the sandbox, as mounts; --unlock leaves them writable for one session
+      checks.pi-sandbox-protected =
+        let
+          protectedProbe = pkgs.writeShellScript "pi-sandbox-protected-probe" ''
+            report() { echo "$1=$2"; }
+            cd "$PROJECT"
+            if echo change >> guarded/file 2>/dev/null; then report file-change accepted; else report file-change refused; fi
+            if echo new > guarded/new 2>/dev/null; then report folder-new-file accepted; else report folder-new-file refused; fi
+            if mv guarded guarded-away 2>/dev/null; then report folder-rename accepted; else report folder-rename refused; fi
+            if echo change >> single 2>/dev/null; then report single-change accepted; else report single-change refused; fi
+            if rm -f single 2>/dev/null && [ ! -e single ]; then report single-remove accepted; else report single-remove refused; fi
+            if echo replaced > single.new 2>/dev/null && mv single.new single 2>/dev/null; then report single-replace accepted; else report single-replace refused; fi
+            if echo change >> ordinary 2>/dev/null; then report ordinary-change accepted; else report ordinary-change refused; fi
+          '';
+          sandboxedProtectedProbe = mkSandbox pkgs {
+            name = "pi";
+            command = "${protectedProbe}";
+            declared = [ ".pi/agent/AGENTS.md" ];
+            protected.guarded-repo = [
+              "guarded"
+              "single"
+              "not-there"
+            ];
+          };
+        in
+        pkgs.runCommand "pi-sandbox-protected-check" { nativeBuildInputs = [ pkgs.bubblewrap ]; } ''
+          export HOME=$TMPDIR/home USER=tester
+          mkdir -p "$HOME/.pi/agent"
+          ln -s ${pkgs.writeText "pi-sandbox-rules" "rules"} "$HOME/.pi/agent/AGENTS.md"
+          failed=0
+          expect() { if [ "$2" = "$3" ]; then echo "ok   $1: $2"; else echo "FAIL $1: $2 (expected $3)"; failed=1; fi; }
+          fresh() {
+            rm -rf "$1" && mkdir -p "$1/guarded"
+            echo content > "$1/guarded/file" && echo content > "$1/single" && echo content > "$1/ordinary"
+          }
+          state() { (cd "$1" && cat guarded/file single ordinary 2> /dev/null | tr '\n' ' '; ls -A | tr '\n' ' '); }
+
+          ## Step 1. A session in the repository, without --unlock: the protected files hold, an ordinary file can be changed
+          project=$HOME/repos/guarded-repo
+          fresh "$project"
+          (cd "$project" && PROJECT=$project ${sandboxedProtectedProbe}/bin/pi) > actual
+          cat actual
+          for probe in file-change folder-new-file folder-rename single-change single-remove single-replace; do
+            expect "protected, $probe" "$(grep -x "$probe=.*" actual)" "$probe=refused"
+          done
+          expect "an ordinary file" "$(grep -x 'ordinary-change=.*' actual)" "ordinary-change=accepted"
+          # single.new is the probe's own ordinary file, left over from its refused attempt to put it in place of the protected one
+          expect "afterwards, on the host" "$(state "$project")" "content content content change guarded ordinary single single.new "
+
+          ## Step 2. Control: the same session with --unlock can change them
+          fresh "$project"
+          (cd "$project" && PROJECT=$project ${sandboxedProtectedProbe}/bin/pi --unlock) > actual 2> message
+          cat actual message
+          for probe in file-change folder-new-file folder-rename single-change single-remove single-replace; do
+            expect "unlocked, $probe" "$(grep -x "$probe=.*" actual)" "$probe=accepted"
+          done
+          grep -q "unlocked for this session" message || { echo "FAIL: --unlock did not say what it unlocked"; failed=1; }
+
+          ## Step 3. Control: the same folder under another name is no protected repository, and --unlock is refused there
+          other=$HOME/repos/another-repo
+          fresh "$other"
+          (cd "$other" && PROJECT=$other ${sandboxedProtectedProbe}/bin/pi) > actual
+          expect "another repository, file-change" "$(grep -x 'file-change=.*' actual)" "file-change=accepted"
+          if (cd "$other" && PROJECT=$other ${sandboxedProtectedProbe}/bin/pi --unlock) > out 2>&1; then echo "FAIL: --unlock was accepted where nothing is protected"; failed=1; fi
+          grep -q "has no protected files" out || { echo "FAIL: no descriptive refusal of --unlock"; cat out; failed=1; }
+
+          ## Step 4. A file that would replace the repository's instructions, and a protected path that is a link, are refused
+          fresh "$project" && echo other-rules > "$project/AGENTS.override.md"
+          if (cd "$project" && PROJECT=$project ${sandboxedProtectedProbe}/bin/pi) > out 2>&1; then echo "FAIL: started with an AGENTS.override.md"; failed=1; fi
+          grep -q "AGENTS.override.md" out || { echo "FAIL: no descriptive refusal of the override file"; cat out; failed=1; }
+          fresh "$project" && rm "$project/single" && ln -s ordinary "$project/single"
+          if (cd "$project" && PROJECT=$project ${sandboxedProtectedProbe}/bin/pi) > out 2>&1; then echo "FAIL: started with a protected path that is a link"; failed=1; fi
+          grep -q "is a link" out || { echo "FAIL: no descriptive refusal of the link"; cat out; failed=1; }
+
+          [ "$failed" = 0 ] || exit 1
+          touch "$out"
+        '';
 
       # The declared extensions and settings: fixed versions, complete, and accepted by pi without the network
       checks.pi-config =
