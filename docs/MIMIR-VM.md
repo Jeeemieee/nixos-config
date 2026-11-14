@@ -32,10 +32,12 @@ From this checkout:
 
 ```bash
 cd ~/repos/nixos-config
-nix --extra-experimental-features 'nix-command flakes' build --no-write-lock-file --out-link result 'path:'"$PWD"'#nixosConfigurations.mimir-vm.config.system.build.vm'
+nix --extra-experimental-features 'nix-command flakes' run "path:$PWD#config" -- build mimir-vm vm
 ```
 
-`result` is a build-output symlink, not the guest disk. Keep it while using the VM so the required host store paths remain reachable by Nix garbage collection. The explicit `path:` reference includes new, unstaged configuration files without requiring `git add`. Do not put private keys or other secrets in this repository: a path flake copies its source into the Nix store.
+This builds the VM of the last commit; it refuses while the folder holds uncommitted changes or no check passed on that commit (`config check`, see [UPKEEP.md](UPKEEP.md)). To try a change of your own before committing it, build the folder itself: `nix --extra-experimental-features 'nix-command flakes' build --no-write-lock-file --out-link result "path:$PWD#nixosConfigurations.mimir-vm.config.system.build.vm"`; that reads everything in the folder, also files that git ignores.
+
+`result` is a build-output symlink, not the guest disk. Keep it while using the VM so the required host store paths remain reachable by Nix garbage collection. Do not put private keys or other secrets in this repository: a path flake copies its source into the Nix store.
 
 Your private `nixos-secrets` repository is a pinned non-flake input; fetching an uncached revision requires GitHub authentication on Ubuntu. This command does not update the lockfile or pass GitHub credentials into the guest.
 

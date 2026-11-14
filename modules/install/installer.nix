@@ -319,10 +319,12 @@ in
                 ;;
 
               system)
-                [ -e flake.nix ] || fail "run this in the nixos-config checkout"
+                # The folder the system is built from: the commit that `config install` exported, or this folder
+                flake=''${INSTALL_FLAKE:-$PWD}
+                [ -e "$flake/flake.nix" ] || fail "run this in the nixos-config checkout"
                 [ -e "$share/format-script" ] || fail "no installer was started for $host"
                 echo "Building the system of $host ..."
-                payload=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths "path:$PWD#install-payload-$host")
+                payload=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths "path:$flake#install-payload-$host")
                 echo "$payload" > "$share/payload"
                 echo "Built: $(cat "$payload/system")"
                 echo "Now run install-system in the installer."

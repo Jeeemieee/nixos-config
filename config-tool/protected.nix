@@ -22,6 +22,8 @@
     # Which versions of everything are used
     "flake.nix"
     "flake.lock"
+    # Which files git leaves out of every status and commit
+    ".gitignore"
     # What direnv evaluates in the user's own shell: its settings, this repository's .envrc, and the admin shell that it loads
     "modules/dev/direnv.nix"
     ".envrc"
