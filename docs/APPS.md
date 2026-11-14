@@ -87,6 +87,15 @@ Once per Bitwarden account, by hand:
 
 After every login the vault has to be unlocked once before git can reach GitHub. Not verified yet on NixOS: the agent itself, and whether `nix flake update nixos-secrets` honours the rewrite.
 
+## SSH hosts
+
+`homeManager.ssh` (`modules/dev/ssh.nix`) gives the SSH client the user's own list of hosts: clusters and servers with their addresses and user names. The list is private, not secret, and comes from `ssh/config` in nixos-secrets; it is an ordinary OpenSSH settings file.
+
+- It is read **after** every declared host. ssh keeps the first value it finds for a setting, so the list cannot change what is declared, such as GitHub's pinned host keys. The check `ssh-settings` shows that with a stand-in list that tries to, and with a control in which the same list, read first, succeeds.
+- Keys are not declared: a key named in the list must exist as a file in `~/.ssh` on the machine, or live in Bitwarden.
+- To change the list: edit `ssh/config` in nixos-secrets, commit, `nix flake update nixos-secrets`, rebuild.
+- Test a host without connecting: `ssh -G <name>` prints the address and user that would be used.
+
 ## Search
 
 `nixos.search` (`modules/services/search.nix`) runs [SearXNG](https://docs.searxng.org), a meta-search: it asks several search engines and shows their results together, without ads; each result names the engines it came from. Every machine runs its own; it listens on `127.0.0.1:8877` only, so no other machine can use it. Its internal key is generated on the machine at the first start; there is no secret to enter.

@@ -62,6 +62,7 @@ in
         modules.homeManager.desktop-kde
         modules.homeManager.vscode
         modules.homeManager.git
+        modules.homeManager.ssh
         modules.homeManager.office
         modules.homeManager.mail
         modules.homeManager.notes
