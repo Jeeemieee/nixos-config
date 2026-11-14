@@ -26,7 +26,7 @@ Three things hold on NixOS whatever an agent is told or decides:
    | | `flake.nix`, `flake.lock` | Which versions of everything are used |
    | `nixos-secrets` | `AGENTS.md`, `.sops.yaml`, `secrets/` | Who may decrypt, and the encrypted values |
 
-   As mounts they can neither be changed nor renamed, removed or replaced. `pi --unlock` says which files it opens, for that one session. A repository that holds an `AGENTS.override.md`, which pi would read instead of `AGENTS.md`, is refused.
+   As mounts they can neither be changed nor renamed, removed or replaced. `pi --unlock` says which files it opens, for that one session. A repository that holds an `AGENTS.override.md`, which pi would read instead of `AGENTS.md`, is refused. The protection goes with the repository's place: it is the same wherever below the repository pi starts and when the repository is shared with `--allow`, where `--unlock` opens it too.
 3. **A commit passes two gates**, in `config commit` and, for a plain `git commit`, in a hook that the user's own git settings name for the two repositories (an agent only reads those settings):
    - the checks passed on exactly the staged content: a change after the check, or a failed check, stops the commit;
    - every change of a protected file, and every file added to, removed from or renamed below `modules/`, is listed and needs a typed `yes`. Before the question git itself shows what changes in those files: a summary, then the changes in its own viewer (`q` closes it). Without a terminal to ask on, the commit is refused.
@@ -64,6 +64,7 @@ Still possible: a session can replace or remove the shared login, which logs the
 ## Validation
 
 - `pi-login-commands`: pi, asked a question with a login file whose key is a command, does not run it; an ordinary key is still used. Control: pi as nixpkgs builds it runs the command.
+- `pi-sandbox-location`: the protected files and the git hooks are refused when pi starts below a folder named `.git` that a session made inside the repository, and when the repository is shared with `--allow` or `--allow-ro` from another one; a start in the folder above the repository, and `--allow` of that folder or of a folder inside the repository, are refused with a message; the hooks of a second shared project and of a repository below the project are refused, and nothing the launcher opened reaches the session. Controls: in the repository itself; `--unlock`, also through `--allow`; an ordinary folder can be made.
 - `pi-sandbox-protected`: in a sandbox, changing, adding to, renaming, removing and replacing protected files is refused and an ordinary file can be changed. Controls: with `--unlock` all of it is accepted; the same folder under another name is not protected, and `--unlock` is refused there.
 - `config-guard`: in a scratch repository with a stand-in for the checks: no commit without a check, after a change, or after a failed check; a protected file and a new module need the typed `yes` and are refused on `no` and without a terminal; an ordinary change does not ask; another repository is refused; a secret that is not encrypted fails the check; the extension updater against a stand-in registry, including two answers it must refuse.
 - Not covered by a check: `config update` against the real sources, which needs the network.

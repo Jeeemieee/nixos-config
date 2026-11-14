@@ -145,7 +145,9 @@ let
         }
 
         # The wrapper's own options come first; everything else goes to ${name}
-        extraBinds=()
+        # Every shared folder is a root: the project, and each folder named with --allow or --allow-ro
+        roots=()
+        writable=()
         unlock=0
         while [ "$#" -gt 0 ]; do
           case "$1" in
@@ -157,65 +159,111 @@ let
               [ "$#" -ge 2 ] || deny "$1 needs a folder"
               allowed=$(realpath -e -- "$2") || deny "$1: $2 does not exist"
               checkPath "$allowed"
-              if [ "$1" = --allow ]; then extraBinds+=(--bind "$allowed" "$allowed"); else extraBinds+=(--ro-bind "$allowed" "$allowed"); fi
+              roots+=("$allowed")
+              if [ "$1" = --allow ]; then writable+=(1); else writable+=(0); fi
               shift 2
               ;;
             *) break ;;
           esac
         done
 
+        # The repositories with protected files that exist on this machine, by their real paths
+        repositories=()
+        names=(${pkgs.lib.escapeShellArgs (builtins.attrNames protected)})
+        for repository in "''${names[@]}"; do
+          if repository=$(realpath -e -- "$HOME/repos/$repository" 2> /dev/null); then repositories+=("$repository"); fi
+        done
+        # Sets protectedPaths to the protected paths of a repository
+        protectedPathsOf() {
+          protectedPaths=()
+          ${pkgs.lib.concatStrings (
+            pkgs.lib.mapAttrsToList (repository: paths: ''
+              if [ "$1" = "$(realpath -e -- "$HOME/repos/"${pkgs.lib.escapeShellArg repository} 2> /dev/null)" ]; then
+                protectedPaths=(${pkgs.lib.escapeShellArgs paths})
+              fi
+            '') protected
+          )}
+        }
+
         # The project is the nearest folder upwards that holds .git, or the current folder itself
         # Found by path alone: git would answer from the repository's own settings (core.worktree), which an earlier session could have changed
+        # Inside a repository with protected files the project is that repository, whatever lies below: a folder named .git can be
+        # made in a session, and git never lists it
         workdir=$(pwd -P)
-        project=$workdir
-        folder=$workdir
-        while [ "$folder" != / ]; do
-          if [ -e "$folder/.git" ] || [ -L "$folder/.git" ]; then
-            project=$folder
-            break
-          fi
-          folder=$(dirname "$folder")
+        project=
+        for repository in "''${repositories[@]}"; do
+          case "$workdir/" in "$repository"/*) project=$repository ;; esac
         done
-        checkPath "$project"
-
-        # The whole of .git is read-only in the sandbox: git's settings and hooks run programs when the user next uses git outside it
-        # As a mount it can also not be renamed, removed or replaced by another .git. Reading works (status, log, diff); staging and committing do not
-        protect=()
-        if [ -L "$project/.git" ]; then
-          deny "refusing $project: its .git is a link, which cannot be protected; start ${name} in the repository it points to"
-        elif [ -e "$project/.git" ]; then
-          protect+=(--ro-bind "$project/.git" "$project/.git")
-        fi
-
-        # Files that decide what an agent may do (the sandbox itself, the checks, secrets, disk, installer, version pins) are read-only as well
-        # As mounts they can neither be changed nor renamed, removed or replaced. --unlock leaves them writable for this one session
-        protectedPaths=()
-        ${pkgs.lib.concatStrings (
-          pkgs.lib.mapAttrsToList (repository: paths: ''
-            if [ "$project" = "$HOME/repos/"${pkgs.lib.escapeShellArg repository} ]; then
-              protectedPaths=(${pkgs.lib.escapeShellArgs paths})
+        if [ -z "$project" ]; then
+          project=$workdir
+          folder=$workdir
+          while [ "$folder" != / ]; do
+            if [ -e "$folder/.git" ] || [ -L "$folder/.git" ]; then
+              project=$folder
+              break
             fi
-          '') protected
-        )}
-        if [ "$unlock" = 1 ]; then
-          if [ "''${#protectedPaths[@]}" -gt 0 ]; then
-            echo "${name}: unlocked for this session: the protected files of $project can be changed (''${protectedPaths[*]})" >&2
-          else
-            deny "--unlock: $project has no protected files"
+            folder=$(dirname "$folder")
+          done
+        fi
+        checkPath "$project"
+        roots=("$project" "''${roots[@]}")
+        writable=(1 "''${writable[@]}")
+
+        # A repository with protected files is shared as a whole or not at all: its protection is by its place, not by where
+        # ${name} starts or what is shared besides
+        for root in "''${roots[@]}"; do
+          for repository in "''${repositories[@]}"; do
+            if [ "$root" = "$repository" ]; then continue; fi
+            case "$root/" in "$repository"/*) deny "refusing $root: it lies inside $repository, which has protected files; share the repository itself (start ${name} in it, or use --allow $repository)" ;; esac
+            case "$repository/" in "$root"/*) deny "refusing $root: it contains $repository, which has protected files; start ${name} in a project and share the repository itself with --allow $repository" ;; esac
+          done
+        done
+
+        # What is mounted read-only, or kept in place, inside a folder an agent can write is opened here, once, and that is what
+        # gets mounted: a session that runs at the same time cannot put a link in its place between this check and the mount
+        protect=()
+        mountChecked() {
+          local option=$1 path=$2 descriptor
+          [ ! -L "$path" ] || deny "refusing: $path is a link, which cannot be protected"
+          [ -d "$path" ] || [ -f "$path" ] || deny "refusing: $path is neither a folder nor a regular file, so it cannot be protected"
+          exec {descriptor}< "$path"
+          [ "$(readlink "/proc/$$/fd/$descriptor")" = "$path" ] || deny "refusing: $path is reached through a link, which cannot be protected"
+          protect+=("$option" "$descriptor" "$path")
+        }
+
+        unlocked=()
+        for index in "''${!roots[@]}"; do
+          root=''${roots[index]}
+          # Every .git in a shared folder is read-only in the sandbox, the project's and those of repositories below it: git's settings
+          # and hooks run programs when the user next uses git outside. As a mount it can also not be renamed, removed or replaced.
+          # Reading works (status, log, diff); staging and committing do not
+          if [ -L "$root/.git" ]; then
+            deny "refusing $root: its .git is a link, which cannot be protected; start ${name} in the repository it points to"
           fi
-        else
+          while IFS= read -r -d "" found; do
+            mountChecked --ro-bind-fd "$found"
+          done < <(find "$root" -xdev -name .git -prune -print0)
+
+          # Files that decide what an agent may do (the sandbox itself, the checks, secrets, disk, installer, version pins) are read-only as well
+          # As mounts they can neither be changed nor renamed, removed or replaced. --unlock leaves them writable for this one session
+          protectedPathsOf "$root"
+          if [ "''${#protectedPaths[@]}" = 0 ] || [ "''${writable[index]}" = 0 ]; then continue; fi
+          if [ "$unlock" = 1 ]; then
+            unlocked+=("$root")
+            echo "${name}: unlocked for this session: the protected files of $root can be changed (''${protectedPaths[*]})" >&2
+            continue
+          fi
           # A mount protects the path itself. A folder above it could still be renamed and another put in its place, so each of those
           # folders is mounted onto itself as well, still writable: a mount can be neither renamed nor removed
           declare -A above=()
           guarded=()
           for path in "''${protectedPaths[@]}"; do
-            if [ -L "$project/$path" ]; then
-              deny "refusing $project: its protected $path is a link, which cannot be protected"
-            elif [ -e "$project/$path" ]; then
-              guarded+=(--ro-bind "$project/$path" "$project/$path")
+            if [ -L "$root/$path" ]; then
+              deny "refusing $root: its protected $path is a link, which cannot be protected"
+            elif [ -e "$root/$path" ]; then
+              guarded+=("$root/$path")
               parent=$(dirname "$path")
               while [ "$parent" != . ]; do
-                [ ! -L "$project/$parent" ] || deny "refusing $project: $parent, above its protected $path, is a link, which cannot be protected"
                 above[$parent]=1
                 parent=$(dirname "$parent")
               done
@@ -223,14 +271,23 @@ let
           done
           # Outer folders first and the protected paths last, so that no later mount covers an earlier one
           while IFS= read -r parent; do
-            [ -z "$parent" ] || protect+=(--bind "$project/$parent" "$project/$parent")
+            [ -z "$parent" ] || mountChecked --bind-fd "$root/$parent"
           done < <(printf '%s\n' "''${!above[@]}" | LC_ALL=C sort)
-          protect+=("''${guarded[@]}")
+          for path in "''${guarded[@]}"; do mountChecked --ro-bind-fd "$path"; done
           # pi reads this file instead of the repository's AGENTS.md when it exists; it cannot be protected before it exists
-          if [ "''${#protectedPaths[@]}" -gt 0 ] && [ -e "$project/AGENTS.override.md" ]; then
-            deny "refusing $project: it holds an AGENTS.override.md, which would replace the repository's instructions; remove it, or start with --unlock to work on it"
+          if [ -e "$root/AGENTS.override.md" ]; then
+            deny "refusing $root: it holds an AGENTS.override.md, which would replace the repository's instructions; remove it, or start with --unlock to work on it"
           fi
+        done
+        if [ "$unlock" = 1 ] && [ "''${#unlocked[@]}" = 0 ]; then
+          deny "--unlock: $project has no protected files, and no folder shared with --allow has any"
         fi
+
+        # The shared folders themselves, the project first; the read-only and kept-in-place mounts above come after them all
+        shared=()
+        for index in "''${!roots[@]}"; do
+          if [ "''${writable[index]}" = 1 ]; then shared+=(--bind "''${roots[index]}" "''${roots[index]}"); else shared+=(--ro-bind "''${roots[index]}" "''${roots[index]}"); fi
+        done
 
         # ~/.pi/agent inside the sandbox is a folder in memory. It holds the declared files as read-only mounts, which cannot be
         # deleted or replaced, and two things that persist: the sessions, and the login in its own folder. pi locks the login
@@ -281,9 +338,8 @@ let
           --symlink login/auth.json "$agent/auth.json" \
           --bind "$agent/sessions" "$agent/sessions" \
           --ro-bind-try "$HOME/.config/git" "$HOME/.config/git" \
-          --bind "$project" "$project" \
+          "''${shared[@]}" \
           "''${protect[@]}" \
-          "''${extraBinds[@]}" \
           --chdir "$workdir" \
           --unsetenv SSH_AUTH_SOCK \
           --unsetenv DBUS_SESSION_BUS_ADDRESS \
@@ -675,6 +731,128 @@ in
           [ "$failed" = 0 ] || exit 1
           touch "$out"
         '';
+
+      # Protection is by a repository's place: it does not depend on where the session starts or on what is shared with --allow
+      checks.pi-sandbox-location =
+        let
+          # Tries to change a protected folder, a protected file and a git hook of $TARGET, and lists what it inherited
+          locationProbe = pkgs.writeShellScript "pi-sandbox-location-probe" ''
+            t=$TARGET
+            if echo change >> "$t/guarded/file" 2>/dev/null; then echo "protected-folder=written"; else echo "protected-folder=refused"; fi
+            if echo change >> "$t/single" 2>/dev/null; then echo "protected-file=written"; else echo "protected-file=refused"; fi
+            if printf '#!/bin/sh\ntouch %s\n' "$MARKER" > "$t/.git/hooks/pre-commit" 2>/dev/null && chmod +x "$t/.git/hooks/pre-commit"; then echo "git-hook=written"; else echo "git-hook=refused"; fi
+            if [ -n "''${MAKE:-}" ]; then mkdir "$MAKE" 2>/dev/null && echo "made=$MAKE"; fi
+            # The launcher opens what it protects; none of those descriptors may reach the session, where it would give write access
+            for descriptor in /proc/self/fd/*; do
+              case "$(readlink "$descriptor")" in "$HOME"/*) echo "inherited=$(readlink "$descriptor")" ;; esac
+            done
+          '';
+          sandboxedLocationProbe = mkSandbox pkgs {
+            name = "pi";
+            command = "${locationProbe}";
+            declared = [ ".pi/agent/AGENTS.md" ];
+            protected.guarded-repo = [
+              "guarded"
+              "single"
+            ];
+          };
+          launcher = "${sandboxedLocationProbe}/bin/pi";
+        in
+        pkgs.runCommand "pi-sandbox-location-check"
+          {
+            nativeBuildInputs = [
+              pkgs.bubblewrap
+              pkgs.git
+            ];
+          }
+          ''
+            export HOME=$TMPDIR/home USER=tester GIT_CONFIG_GLOBAL=/dev/null
+            export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.org GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.org
+            mkdir -p "$HOME/.pi/agent"
+            ln -s ${pkgs.writeText "pi-sandbox-rules" "rules"} "$HOME/.pi/agent/AGENTS.md"
+            failed=0
+            expect() { if [ "$2" = "$3" ]; then echo "ok   $1: $2"; else echo "FAIL $1: $2 (expected $3)"; failed=1; fi; }
+            guarded=$HOME/repos/guarded-repo
+            fresh() {
+              rm -rf "$HOME/repos" "$HOME/projects" "$HOME/marker"
+              mkdir -p "$guarded/guarded" "$guarded/area/work" "$HOME/repos/other-repo" "$HOME/projects/a" "$HOME/projects/b" "$HOME/projects/group/inner"
+              for repo in "$guarded" "$HOME/repos/other-repo" "$HOME/projects/a" "$HOME/projects/b" "$HOME/projects/group/inner"; do git init -q "$repo"; done
+              echo content > "$guarded/guarded/file" && echo content > "$guarded/single"
+            }
+            # run <label> <start folder> <target> <expected: refused | written | no-start> [launcher options]
+            run() {
+              local label=$1 where=$2 target=$3 expected=$4 status=0
+              shift 4
+              (cd "$where" && TARGET=$target MARKER=$HOME/marker ${launcher} "$@") > actual 2> message || status=$?
+              case "$expected" in
+                no-start)
+                  expect "$label, the start" "$([ "$status" != 0 ] && [ ! -s actual ] && echo refused-with-a-message: "$(grep -c 'has protected files' message)")" "refused-with-a-message: 1"
+                  ;;
+                *)
+                  for probe in protected-folder protected-file git-hook; do
+                    expect "$label, $probe" "$(grep -x "$probe=.*" actual)" "$probe=$expected"
+                  done
+                  expect "$label, descriptors of the home that reached the session" "$(grep -c '^inherited=' actual)" "0"
+                  ;;
+              esac
+              if [ "$expected" != written ]; then
+                expect "$label, on the host" "$(cat "$guarded/guarded/file" "$guarded/single" | tr '\n' ' ')$(ls "$target/.git/hooks" | grep -cx pre-commit)" "content content 0"
+              fi
+            }
+
+            ## Step 1. Control: in the repository itself everything is refused; --unlock accepts the protected files and never the hook
+            fresh
+            run "in the repository" "$guarded" "$guarded" refused
+            fresh
+            (cd "$guarded" && TARGET=$guarded MARKER=$HOME/marker ${launcher} --unlock) > actual 2> message
+            expect "unlocked" "$(grep -x 'protected-folder=.*\|protected-file=.*\|git-hook=.*' actual | tr '\n' ' ')" "protected-folder=written protected-file=written git-hook=refused "
+
+            ## Step 2. The ways around it that the review found
+            fresh
+            run "with --allow of the folder above" "$guarded" "$guarded" no-start --allow "$HOME/repos"
+            fresh
+            run "with --allow of the repository itself" "$guarded" "$guarded" refused --allow "$guarded"
+            fresh
+            run "started in the folder above" "$HOME/repos" "$guarded" no-start
+            fresh
+            run "in another repository with --allow of the protected one" "$HOME/repos/other-repo" "$guarded" refused --allow "$guarded"
+            fresh
+            run "in another repository with --allow-ro of the protected one" "$HOME/repos/other-repo" "$guarded" refused --allow-ro "$guarded"
+            fresh
+            run "with --allow of a folder inside the protected repository" "$HOME/repos/other-repo" "$guarded" no-start --allow "$guarded/area"
+
+            ## Step 3. A folder named .git made below the repository's top does not move the project
+            fresh
+            (cd "$guarded" && TARGET=$guarded MARKER=$HOME/marker MAKE=$guarded/area/.git ${launcher}) > actual 2> message
+            expect "a session can make area/.git" "$(grep -c '^made=' actual)" "1"
+            expect "git does not list it" "$(git -C "$guarded" status --porcelain --ignored | grep -c area)" "0"
+            (cd "$guarded/area/work" && TARGET=$guarded MARKER=$HOME/marker ${launcher}) > actual 2> message
+            for probe in protected-folder protected-file git-hook; do
+              expect "started below area/.git, $probe" "$(grep -x "$probe=.*" actual)" "$probe=refused"
+            done
+
+            ## Step 4. The .git of every shared folder and of every repository below one is read-only, not only the project's
+            fresh
+            (cd "$HOME/projects/a" && TARGET=$HOME/projects/b MARKER=$HOME/marker ${launcher} --allow "$HOME/projects/b") > actual 2> message
+            expect "project a with --allow of project b, b's hook" "$(grep -x 'git-hook=.*' actual)" "git-hook=refused"
+            (cd "$HOME/projects/b" && git commit -q --allow-empty -m next) > /dev/null 2>&1
+            expect "the user's next commit in b ran a program of the session" "$([ -e "$HOME/marker" ] && echo yes || echo no)" "no"
+            (cd "$HOME/projects/group" && TARGET=$HOME/projects/group/inner MARKER=$HOME/marker ${launcher}) > actual 2> message
+            expect "a repository below the project, its hook" "$(grep -x 'git-hook=.*' actual)" "git-hook=refused"
+            # Control: the session can still write an ordinary file of each shared folder
+            (cd "$HOME/projects/a" && TARGET=$HOME/projects/b MARKER=$HOME/marker MAKE=$HOME/projects/b/new-folder ${launcher} --allow "$HOME/projects/b") > actual 2> message
+            expect "an ordinary folder in a shared project" "$(grep -c '^made=' actual)" "1"
+
+            ## Step 5. --unlock reaches a protected repository that is shared with --allow, and is refused where nothing is protected
+            fresh
+            (cd "$HOME/repos/other-repo" && TARGET=$guarded MARKER=$HOME/marker ${launcher} --unlock --allow "$guarded") > actual 2> message
+            expect "unlocked through --allow" "$(grep -x 'protected-file=.*' actual)" "protected-file=written"
+            grep -q "unlocked for this session" message || { echo "FAIL: --unlock did not say what it unlocked"; failed=1; }
+            if (cd "$HOME/projects/a" && TARGET=$HOME/projects/a ${launcher} --unlock) > actual 2> message; then echo "FAIL: --unlock was accepted where nothing is protected"; failed=1; fi
+
+            [ "$failed" = 0 ] || exit 1
+            touch "$out"
+          '';
 
       # pi never runs a command that the shared login file names (the change is in modules/flake/nixpkgs.nix)
       checks.pi-login-commands = pkgs.runCommand "pi-login-commands-check" { } ''
