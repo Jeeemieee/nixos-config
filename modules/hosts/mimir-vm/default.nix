@@ -11,7 +11,6 @@
 
       # A test VM, removed once the laptop has migrated; everything shared with the laptop is in nixos.workstation
       # The existing VM disk's public recipient is in the pinned ciphertext
-      hostSpec.hasSecrets = true;
       networking.hostName = "mimir-vm";
 
       # Public trial password only: change it with passwd after the first login
@@ -43,7 +42,6 @@
         memorySize = 8192;
         cores = 4;
         diskSize = 24576;
-        graphics = true;
         # Full HD, matching the external monitors and the chosen 16:9 aspect ratio
         resolution = { x = 1920; y = 1080; };
 

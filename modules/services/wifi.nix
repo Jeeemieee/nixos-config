@@ -5,8 +5,6 @@
   flake.modules.nixos.wifi =
     { config, lib, ... }:
     let
-      inherit (config.hostSpec) hasSecrets;
-
       # A WPA-PSK network whose SSID and passphrase are substituted from the environment file
       pskNetwork = id: var: {
         connection = {
@@ -28,19 +26,11 @@
     {
       imports = [ topLevel.config.flake.modules.nixos.secrets ];
 
-      # Without secrets there are no network names or passwords, so refuse instead of creating empty profiles
-      assertions = [
-        {
-          assertion = hasSecrets;
-          message = "nixos.wifi needs hostSpec.hasSecrets = true: its networks come from wifi_env in secrets/shared.yaml of nixos-secrets";
-        }
-      ];
-
-      sops.secrets.wifi_env = lib.mkIf hasSecrets {
+      sops.secrets.wifi_env = {
         sopsFile = "${inputs.nixos-secrets}/secrets/shared.yaml";
       };
 
-      networking.networkmanager.ensureProfiles = lib.mkIf hasSecrets {
+      networking.networkmanager.ensureProfiles = {
         environmentFiles = [ config.sops.secrets.wifi_env.path ];
         profiles = {
           # University of Twente, from its official eduroam CAT profile (cat.eduroam.org, profile 770)
@@ -75,7 +65,7 @@
       };
 
       # sops-nix does not order its secrets before regular services; a failed decryption must fail this unit instead of writing empty profiles
-      systemd.services.NetworkManager-ensure-profiles = lib.mkIf hasSecrets {
+      systemd.services.NetworkManager-ensure-profiles = {
         requires = [ "sops-install-secrets.service" ];
         after = [ "sops-install-secrets.service" ];
       };

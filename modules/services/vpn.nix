@@ -3,23 +3,20 @@
 {
   flake.modules.nixos.vpn =
     { config, lib, pkgs, ... }:
-    let
-      inherit (config.hostSpec) hasSecrets;
-    in
     {
       imports = [ topLevel.config.flake.modules.nixos.secrets ];
 
       # Tailscale joins with the host's auth key from secrets/<hostname>.yaml; without secrets, log in once with `sudo tailscale up`
       services.tailscale = {
         enable = true;
-        authKeyFile = lib.mkIf hasSecrets config.sops.secrets.tailscale_authkey.path;
+        authKeyFile = config.sops.secrets.tailscale_authkey.path;
       };
-      sops.secrets.tailscale_authkey = lib.mkIf hasSecrets {
+      sops.secrets.tailscale_authkey = {
         sopsFile = "${inputs.nixos-secrets}/secrets/${config.networking.hostName}.yaml";
       };
 
       # sops-nix does not order its secrets before regular services; a failed decryption must fail this unit instead of logging in without a key
-      systemd.services.tailscaled-autoconnect = lib.mkIf hasSecrets {
+      systemd.services.tailscaled-autoconnect = {
         requires = [ "sops-install-secrets.service" ];
         after = [ "sops-install-secrets.service" ];
       };

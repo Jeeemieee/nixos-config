@@ -5,7 +5,7 @@
   ...
 }:
 {
-  perSystem = { pkgs, system, options, ... }:
+  perSystem = { pkgs, options, ... }:
     let
       # Settings that decide what an agent may do or what is kept safe may only be set by protected files (config-tool/protected.nix)
       # Nix merges every module, so without this an ordinary module could set them too. The module system reports the file of every
@@ -173,10 +173,10 @@
         assert user.programs.git.settings.url."git@github.com:Jeeemieee/".insteadOf == "https://github.com/Jeeemieee/";
         assert !(user.programs.git.settings ? credential);
         assert lib.hasInfix "IdentityAgent ~/.bitwarden-ssh-agent.sock" user.home.file.".ssh/config".text && lib.hasInfix "StrictHostKeyChecking yes" user.home.file.".ssh/config".text;
-        # Bitwarden writes an autostart file of the same name itself; without force that file stops every later activation
         # A commit in the two kept repositories goes through the guard, named in the user's own git settings
         assert map (include: include.condition) user.programs.git.includes == [ "gitdir:~/repos/nixos-config/" "gitdir:~/repos/nixos-secrets/" ];
         assert lib.all (include: lib.hasInfix "config-guard-hooks" include.contents.core.hooksPath) user.programs.git.includes;
+        # Bitwarden writes an autostart file of the same name itself; without force that file stops every later activation
         assert user.xdg.configFile."autostart/bitwarden.desktop".force && lib.hasInfix "--autostart" user.xdg.configFile."autostart/bitwarden.desktop".text;
         assert cfg.virtualisation.libvirtd.enable;
         # Only the laptop imports nixos.backup: a host of this profile without it never writes into the real backup
@@ -214,7 +214,7 @@
         assert builtins.all (package: builtins.elem (lib.getName package) unfreeAllowed) unfreePackages;
         true;
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    {
       # The test VM: the workstation policies, and a launcher that shares nothing but the host's store
       checks.mimir-vm-config =
         let
@@ -371,9 +371,6 @@
       checks.mimir-vm-secrets =
         let
           vm = config.flake.nixosConfigurations.mimir-vm.config;
-          bootstrap = (config.flake.nixosConfigurations.mimir-vm.extendModules {
-            modules = [ { hostSpec.hasSecrets = lib.mkForce false; } ];
-          }).config;
           secret = vm.sops.secrets.bootstrap-test;
           # sops-nix expresses root either by name or, by default, as owner/group null with uid/gid 0
           rootOnly = s: (s.owner == "root" || (s.owner == null && s.uid == 0)) && (s.group == "root" || (s.group == null && s.gid == 0)) && s.mode == "0400";
@@ -389,12 +386,6 @@
         assert secret.path == "/run/secrets/bootstrap-test";
         assert vm.systemd.services.sops-age-key.requiredBy == [ "sops-install-secrets.service" ];
         assert builtins.elem "sops-install-secrets.service" vm.systemd.services.sops-age-key.before;
-        assert bootstrap.sops.secrets == { };
-        # Without secrets, Tailscale falls back to its documented manual login and nixos.wifi refuses explicitly
-        assert bootstrap.services.tailscale.authKeyFile == null;
-        assert builtins.any (a: !a.assertion && lib.hasPrefix "nixos.wifi needs hostSpec.hasSecrets" a.message) bootstrap.assertions;
-        assert !(bootstrap.systemd.services ? sops-install-secrets);
-        assert bootstrap.systemd.services.sops-age-key.requiredBy == [ ];
         vm.system.build.sops-nix-manifest;
     };
 }

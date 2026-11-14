@@ -1,6 +1,6 @@
 { config, ... }:
 {
-  # Reusable desktop selection for the VM and, later, physical workstations
+  # KDE Plasma with SDDM; the workstation profile imports it for every personal machine
   flake.modules.nixos.desktop-kde = {
     imports = [ config.flake.modules.nixos.desktop ];
 

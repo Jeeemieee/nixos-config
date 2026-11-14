@@ -10,7 +10,6 @@
           # Editing and inspecting the encrypted nixos-secrets
           sops
           age
-          ssh-to-age
           # Password hashes for nixos-secrets (mkpasswd -m yescrypt)
           mkpasswd
         ];

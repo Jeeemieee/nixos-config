@@ -25,8 +25,6 @@
 
     import-tree.url = "github:vic/import-tree";
 
-    treefmt-nix.url = "github:numtide/treefmt-nix";
-
     # Declares KDE Plasma settings through Home Manager
     plasma-manager = {
       url = "github:nix-community/plasma-manager";

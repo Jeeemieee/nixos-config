@@ -24,17 +24,16 @@ Every file under `modules/` is a [flake-parts](https://flake.parts) module, disc
 | `modules/hardware/`, `modules/users/` | Laptop services, NVIDIA, DisplayLink; the login password from secrets |
 | `modules/apps/` | Desktop applications, fonts and default applications |
 | `modules/desktop/` | KDE Plasma and PipeWire audio |
-| `modules/dev/` | VSCodium, direnv and the Git identity |
-| `modules/storage/`, `modules/boot/` | Encrypted ZFS disk with snapshots, UEFI boot, Secure Boot |
-| `modules/services/` | VPN clients, Wi-Fi, rootless Docker, libvirt |
+| `modules/dev/` | The pi coding agent and its sandbox, VSCodium, direnv, the Git identity, GitHub access and the SSH hosts |
+| `modules/storage/`, `modules/boot/` | Encrypted ZFS disk with snapshots and its per-host sizes (`hostSpec.disk`), UEFI boot, Secure Boot |
+| `modules/services/` | VPN clients, Wi-Fi, rootless Docker, libvirt, the backup and the local search |
 | `modules/security/` | Machine age identity and sops-nix secrets |
-| `modules/host-specification/` | Per-host settings (`hostSpec`) read by shared modules |
 | `modules/install/`, `install/` | The installer and the `install` tool; the disk validation and its test cases |
 | `config-tool/` | The `config` command and the list of protected files (plain files, not modules) |
 | `dev-env/` | Building blocks for project development environments, their tests and the project template (plain Nix, not modules) |
-| `modules/flake/` | Flake wiring: hosts, package set and unfree allowlist, checks, dev shell, formatter |
+| `modules/flake/` | Flake wiring: hosts, package set and unfree allowlist, the policy checks, dev shell, formatter. Other checks sit beside the module they test (`modules/dev/pi.nix`, `modules/services/backup.nix` and others); `nix flake check` runs them all |
 
-The dev shell (`nix develop`, or automatically through `.envrc` with direnv) provides `sops`, `age` and `ssh-to-age`.
+The dev shell (`nix develop`, or automatically through `.envrc` with direnv) provides `sops`, `age`, `mkpasswd` and the `config` command.
 
 ## Acknowledgements
 

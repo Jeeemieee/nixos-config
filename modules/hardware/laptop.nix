@@ -14,6 +14,5 @@
       enable = true;
       notifications.systembus-notify.enable = true;
     };
-    services.systembus-notify.enable = true;
   };
 }

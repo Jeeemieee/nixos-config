@@ -2,14 +2,12 @@
 # and set hardware.nvidia.prime.intelBusId and nvidiaBusId (from lspci)
 {
   flake.modules.nixos.nvidia-offload = {
-    hardware.graphics.enable = true;
     # Loads the NVIDIA driver, also on Wayland; it provides CUDA in /run/opengl-driver/lib
     services.xserver.videoDrivers = [ "nvidia" ];
 
     hardware.nvidia = {
       # The open kernel modules, which NVIDIA recommends from the RTX 20 series on; the user-space driver stays unfree
       open = true;
-      modesetting.enable = true;
 
       # The integrated GPU drives the desktop; a program uses the NVIDIA GPU when asked (nvidia-offload <program>) or through CUDA
       prime.offload = {

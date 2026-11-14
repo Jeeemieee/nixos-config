@@ -20,8 +20,8 @@ let
 in
 {
   perSystem =
-    { pkgs, system, ... }:
-    lib.optionalAttrs (system == "x86_64-linux") (
+    { pkgs, ... }:
+    (
       let
         targetOf = host: topLevel.flake.nixosConfigurations.${host};
 
@@ -281,7 +281,7 @@ in
                   [ -b "$target" ] || fail "$target is not a block device"
                   device=$(realpath "$target")
                   description=$(lsblk --json --bytes -o NAME,PATH,TYPE,SIZE,RO,MODEL,SERIAL,MOUNTPOINTS,FSTYPE "$device")
-                  verdict=$(jq -r --arg minBytes ${toString minimumBytes} --arg needSerial yes -f ${../../install/validate-disk.jq} <<< "$description")
+                  verdict=$(jq -r --arg minBytes ${toString minimumBytes} -f ${../../install/validate-disk.jq} <<< "$description")
                   [ "$verdict" = ok ] || fail "$verdict"
                   serial=$(jq -r '.blockdevices[0].serial' <<< "$description")
                   echo "This disk will be ERASED completely:"
@@ -371,18 +371,12 @@ in
         }
         // lib.genAttrs' hosts (host: lib.nameValuePair "install-payload-${host}" (payloadOf host));
 
-        apps.install = {
-          type = "app";
-          program = lib.getExe installHost;
-          meta.description = "Install a host onto a disk through a virtual machine that can only see that disk";
-        };
-
         # The disk validation refuses everything but a free, whole, writable, large enough disk with a serial number
         checks.install-disk-validation =
           pkgs.runCommand "install-disk-validation-check" { nativeBuildInputs = [ pkgs.jq ]; }
             ''
               verdict() {
-                jq -r --arg minBytes ${toString minimumBytes} --arg needSerial yes -f ${../../install/validate-disk.jq} ${../../install/fixtures}/$1.json
+                jq -r --arg minBytes ${toString minimumBytes} -f ${../../install/validate-disk.jq} ${../../install/fixtures}/$1.json
               }
               expect() {
                 actual=$(verdict "$1")

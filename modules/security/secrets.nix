@@ -55,7 +55,7 @@
       imports = [ topLevel.config.flake.modules.nixos.secrets ];
 
       # Enable only after this host's public recipient is in the pinned ciphertext
-      sops.secrets = lib.mkIf config.hostSpec.hasSecrets {
+      sops.secrets = {
         bootstrap-test = {
           sopsFile = "${inputs.nixos-secrets}/secrets/test.yaml";
           key = "message";

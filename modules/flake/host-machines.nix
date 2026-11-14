@@ -20,7 +20,6 @@ in
           modules = [
             module
             inputs.home-manager.nixosModules.home-manager
-            config.flake.modules.nixos.hostSpec
             { nixpkgs.pkgs = pkgs; }
             {
               # Use the system package set and install user packages through the system closure

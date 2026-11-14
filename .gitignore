@@ -3,3 +3,6 @@ result
 
 # nix-direnv cache from .envrc
 .direnv/
+
+# Python's compiled files, made when a test script is run by hand
+__pycache__/

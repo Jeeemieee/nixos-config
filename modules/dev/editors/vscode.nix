@@ -34,7 +34,6 @@
       # VSCodium's own module writes to VSCodium's paths (~/.config/VSCodium, ~/.vscode-oss); programs.vscode would write to VS Code's
       programs.vscodium = {
         enable = true;
-        package = pkgs.vscodium;
 
         # Extensions come only from Nix; the extension directory is read-only
         mutableExtensionsDir = false;

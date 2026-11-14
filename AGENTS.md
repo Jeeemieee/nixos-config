@@ -26,6 +26,6 @@ This repository declares the user's NixOS machines. It decides what agents thems
 | --- | --- |
 | `modules/` | Every file is a flake-parts module; `host-<name>` modules become machines |
 | `modules/profiles/workstation.nix` | What every personal machine gets |
-| `modules/flake/checks.nix` | The policies every machine must meet |
+| `modules/flake/checks.nix` | The policies every machine must meet. Other checks sit beside the module they test; `nix flake check` lists them all |
 | `dev-env/`, `install/`, `config-tool/` | Plain files, not modules: development environments, the installer's disk validation, the upkeep command |
 | `docs/` | One document per part; update it with the change |

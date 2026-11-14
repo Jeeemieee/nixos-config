@@ -21,7 +21,6 @@ in
       ...
     }:
     let
-      inherit (config.hostSpec) hasSecrets;
       secretsFile = "${inputs.nixos-secrets}/secrets/${config.networking.hostName}.yaml";
 
       # Decides before every run: 0 = the server answers, run the backup; 1 = no route, skip quietly; 255 = fail
@@ -54,19 +53,11 @@ in
     {
       imports = [ topLevel.config.flake.modules.nixos.secrets ];
 
-      # Without secrets there is no server address and no credentials, so refuse instead of installing a backup that cannot run
-      assertions = [
-        {
-          assertion = hasSecrets;
-          message = "nixos.backup needs hostSpec.hasSecrets = true: the server's address and credentials come from restic_env and restic_password in secrets/<hostname>.yaml of nixos-secrets";
-        }
-      ];
-
       # restic_env: the repository address and the rest-server login; restic_password: this machine's own key to the repository
-      sops.secrets.restic_env = lib.mkIf hasSecrets { sopsFile = secretsFile; };
-      sops.secrets.restic_password = lib.mkIf hasSecrets { sopsFile = secretsFile; };
+      sops.secrets.restic_env = { sopsFile = secretsFile; };
+      sops.secrets.restic_password = { sopsFile = secretsFile; };
 
-      services.restic.backups.home = lib.mkIf hasSecrets {
+      services.restic.backups.home = {
         # The whole of /home, so that a new folder is backed up without being listed; snapshots are stored under this machine's host name
         paths = [ "/home" ];
         environmentFile = config.sops.secrets.restic_env.path;
@@ -110,7 +101,7 @@ in
         # The repository already exists; creating one here would hide a wrong address behind a new, empty repository
       };
 
-      systemd.services.${unit} = lib.mkIf hasSecrets {
+      systemd.services.${unit} = {
         # sops-nix does not order its secrets before regular services; a failed decryption must fail this unit instead of running without credentials
         requires = [ "sops-install-secrets.service" ];
         after = [ "sops-install-secrets.service" ];
@@ -127,7 +118,7 @@ in
       };
 
       # A failed backup is shown on the desktop of whoever is logged in, in the same way as smartd's disk warnings
-      systemd.services."${unit}-failed" = lib.mkIf hasSecrets {
+      systemd.services."${unit}-failed" = {
         description = "Report a failed backup on the desktop";
         serviceConfig = {
           Type = "oneshot";
@@ -180,16 +171,6 @@ in
         htpasswd -nbB ${login} ${loginPassword} > "$out"
       '';
 
-      # The module refuses a host without secrets, instead of installing a backup that cannot run
-      withoutSecrets =
-        (inputs.nixpkgs.lib.nixosSystem {
-          modules = [
-            modules.backup
-            modules.hostSpec
-            { nixpkgs.pkgs = pkgs; }
-          ];
-        }).config;
-
       # T1's oracle: the SHA-256 of knownContent, computed with sha256sum outside this test
       knownContent = "restore-oracle 2026-11-12: byte-identical or it fails";
       knownSha256 = "ed7f60e3218e0365ea5a5f3a0cd2e20cc96c93e6b2c5eb932e09015e75555df0";
@@ -197,10 +178,6 @@ in
     {
       # The backup against a throwaway rest-server of the same kind as the real one (append-only, one private repository per login); no network, no real secrets
       checks.backup =
-        assert builtins.any (
-          a: lib.hasPrefix "nixos.backup needs hostSpec.hasSecrets" a.message && !a.assertion
-        ) withoutSecrets.assertions;
-        assert withoutSecrets.services.restic.backups == { };
         pkgs.testers.runNixOSTest {
           name = "backup";
 
@@ -218,11 +195,7 @@ in
           nodes.laptop =
             { lib, ... }:
             {
-              imports = [
-                modules.backup
-                modules.hostSpec
-              ];
-              hostSpec.hasSecrets = true;
+              imports = [ modules.backup ];
 
               # The test's own secrets instead of nixos-secrets; the machine key is installed by the test script, as an enrolment would
               sops.validateSopsFiles = false;

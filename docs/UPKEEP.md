@@ -29,7 +29,7 @@ Three things hold on NixOS whatever an agent is told or decides:
    | | `modules/flake/` | How the flake is put together: the checks, the package set, the hosts, the admin shell, the `config` command |
    | | `dev-env/` | The development environments, their checks and the checks' scripts |
    | | `modules/security/`, `modules/services/backup.nix`, `modules/storage/`, `modules/install/`, `install/`, `modules/boot/` | A wrong change loses data or access |
-   | | `modules/profiles/`, `modules/hosts/`, `modules/users/`, `modules/host-specification/` | The accounts, sudo, the firewall, the Nix settings, and what each host is made of |
+   | | `modules/profiles/`, `modules/hosts/`, `modules/users/` | The accounts, sudo, the firewall, the Nix settings, and what each host is made of |
    | | `modules/dev/git/`, `modules/dev/ssh.nix`, `modules/services/search.nix` | Where git and ssh run programs; modules that carry a check of their own |
    | | `flake.nix`, `flake.lock` | Which versions of everything are used |
    | | `.gitignore` | Which files git leaves out of every status and commit |

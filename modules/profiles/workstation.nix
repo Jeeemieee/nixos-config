@@ -1,5 +1,5 @@
 # Personal workstation: the account, desktop, applications and services shared by every personal machine
-# Hosts import nixos.workstation and add their hardware, storage and state versions; it needs hostSpec.hasSecrets (Wi-Fi, Tailscale)
+# Hosts import nixos.workstation and add their hardware, storage and state versions; its Wi-Fi and Tailscale need the host's secrets
 { config, ... }:
 let
   inherit (config.flake) modules;
@@ -22,7 +22,6 @@ in
 
       networking = {
         networkmanager.enable = true;
-        useDHCP = false;
         firewall.enable = true;
       };
       services.openssh.enable = false;

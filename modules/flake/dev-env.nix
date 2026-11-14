@@ -20,7 +20,7 @@ in
 
   perSystem =
     { system, ... }:
-    lib.optionalAttrs (system == "x86_64-linux") {
+    {
       # Each block and combination in the Nix sandbox: MPI, PETSc with MUMPS from Python and C, SLEPc, Fortran, one PETSc per shell, the refusals
       checks = lib.mapAttrs' (name: lib.nameValuePair "dev-env-${name}") (
         import ../../dev-env/checks.nix {

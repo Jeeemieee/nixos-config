@@ -21,7 +21,7 @@ bootctl status      # Secure Boot: enabled (user)
 
 ## Recovery
 
-- The firmware menu can restore the factory keys or switch Secure Boot off; with Secure Boot off the system still boots
+- The firmware menu can restore the factory keys or switch Secure Boot off; with Secure Boot off the system still boots. Secure Boot therefore only helps against someone at the keyboard while the firmware menu has a password of its own
 - The NixOS installer is not signed: switch Secure Boot off in the firmware to boot it
 - If `/var/lib/sbctl` is lost, new keys are generated at the next boot, and the firmware has to be put in setup mode again to enroll them
 

@@ -1,10 +1,10 @@
 # Mimir VM
 
-A persistent NixOS KDE Plasma test VM for `jeeemieee`, sharing the workstation profile with the laptop (see [MIMIR.md](MIMIR.md)). This is **not** an installer or the configuration of the physical laptop. Solver environments, backup/sync services, and other applications are deferred until the desktop works well.
+A persistent NixOS KDE Plasma test VM for `jeeemieee`, sharing the workstation profile with the laptop (see [MIMIR.md](MIMIR.md)). This is **not** an installer or the configuration of the physical laptop. The development environments are in [DEV-ENVIRONMENTS.md](DEV-ENVIRONMENTS.md); the backup runs on the laptop only ([BACKUP.md](BACKUP.md)).
 
 ## What is included
 
-- Stock KDE Plasma with SDDM login, NetworkManager, PipeWire, and Git
+- KDE Plasma with SDDM login, NetworkManager, PipeWire, and Git; the dark theme, the panel, the shortcuts, the virtual desktops and the window rules are declared (`modules/desktop/environment/kde/`)
 - A normal `jeeemieee` account with password-authenticated `sudo`; root login is locked
 - 4 virtual CPUs, 8 GiB RAM, and a dynamically allocated 24 GiB ext4 guest disk
 - QEMU user-mode networking with no incoming port forwards and no SSH server
@@ -13,11 +13,11 @@ A persistent NixOS KDE Plasma test VM for `jeeemieee`, sharing the workstation p
 - VSCodium with free extensions only, configured entirely from Nix; see [VSCodium](#vscodium)
 - System-wide direnv with nix-direnv, so a project's devShell loads automatically in Konsole and VSCodium; see [direnv](#direnv)
 - A declared Git identity (`Jeeemieee`, GitHub noreply email, default branch `main`, global `.direnv/` ignore) from `homeManager.git`
-- Desktop applications from shared modules in `modules/apps/`: Brave with managed privacy policies and a force-installed Bitwarden extension, LibreOffice with an English dictionary, Scribus, Pympress, Thunderbird with telemetry off, Obsidian, Zotero, GIMP, Inkscape, Blender, gThumb, ImageMagick, ParaView, PrusaSlicer, fstl, MeshLab, gnuplot, TeX Live (full), Discord, Spotify, VLC, ffmpeg, Teams (`teams-for-linux`), Zoom, RustDesk, Bitwarden, Raspberry Pi Imager, Vim as `EDITOR`, btop, tree, nmap, TestDisk, smartmontools and fastfetch, plus Office-compatible fonts and declared default applications; see [APPS.md](APPS.md)
-- Services from `modules/services/`: Tailscale (joining automatically with a key from nixos-secrets), Mullvad and eduVPN, Wi-Fi and eduroam profiles from nixos-secrets, rootless Docker, and libvirt with virt-manager; see [APPS.md](APPS.md#services) and [SECRETS.md](SECRETS.md)
+- The desktop applications of the shared modules in `modules/apps/`, with their managed settings and default applications; the list is in [APPS.md](APPS.md)
+- The services of `modules/services/` (VPN clients, Wi-Fi and eduroam, rootless Docker, libvirt, the local search); the list is in [APPS.md](APPS.md#services), their secrets in [SECRETS.md](SECRETS.md)
 - Lowercase home folders (`desktop`, `documents`, `downloads`, `music`, `pictures`, `projects`, `public`, `templates`, `videos`) from `homeManager.user-dirs`, declared in the read-only `~/.config/user-dirs.dirs` that applications use to find them
 - Electron and Chromium apps run natively on Wayland (`NIXOS_OZONE_WL=1`, set in `nixos.desktop-kde`)
-- Unfree software limited to an allowlist (Obsidian, Discord, Spotify, Zoom) in `modules/flake/nixpkgs.nix`
+- Unfree software limited to an allowlist in `modules/flake/nixpkgs.nix`; see [APPS.md](APPS.md#add-an-unfree-program)
 - Home Manager session variables, such as `EDITOR`, reach every login shell and the Plasma session through an `environment.extraInit` that sources `hm-session-vars.sh`, in the shared Home Manager module of `modules/flake/host-machines.nix`
 
 There are no physical disk mappings, GPU passthrough, home/project shares, Disko layouts, or ZFS. The guest mounts the Ubuntu host's `/nix/store` read-only and uses its own persistent writable overlay. Do not use this trial to run untrusted code: it has network access, and it can read the host store. It is not a portable, standalone VM image.
@@ -80,7 +80,7 @@ The service should be `active (exited)` after a successful login. Its declared t
 
 ## VSCodium
 
-`modules/dev/editors/vscode.nix` defines the reusable `homeManager.vscode` module (the name is kept from its VS Code origin); the VM imports it for `jeeemieee`. Start it from the application menu or with `codium`.
+`modules/dev/editors/vscode.nix` defines the reusable `homeManager.vscode` module (the name is kept from its VS Code origin); the workstation profile imports it for `jeeemieee` on every host. Start it from the application menu or with `codium`.
 
 Everything it manages is declared in that file and **read-only** at runtime:
 
@@ -131,7 +131,7 @@ VSCodium keeps its state in `~/.config/VSCodium` and `~/.vscode-oss`. On a disk 
 | `~/.pi/agent/settings.json` | Dark theme, default provider, model and thinking level, the five extensions as store paths, and `defaultProjectTrust` `never` | `modules/dev/pi.nix` |
 | `~/.pi/agent/chatgpt-limit.json` | Display settings of the usage footer | `modules/dev/pi.nix` |
 
-The extensions are fixed versions in one store folder: `rpiv-todo` and `rpiv-ask-user-question` 2.15.0 (with their dependency `rpiv-config`), `pi-simplify` 0.2.0, `pi-anthropic-auth` 3.4.4, and `pi-chatgpt-limit` 0.3.1 from GitHub. pi names an extension after the folder of its entry file, which is `src` for `pi-anthropic-auth`; the store copy therefore gets an entry file in the package folder that re-exports the original. Nothing is downloaded when pi starts. To update one, change its version and hash in `mkExtensions`; `npm view <name>@<version> dist.integrity` prints the hash of an npm package.
+The extensions are fixed versions in one store folder: `rpiv-todo` and `rpiv-ask-user-question` (with their dependency `rpiv-config`), `pi-simplify`, `pi-anthropic-auth`, and `pi-chatgpt-limit` from GitHub. Their versions are in `modules/dev/pi.nix`, in `mkExtensions` and in the list the `pi-config` check expects. pi names an extension after the folder of its entry file, which is `src` for `pi-anthropic-auth`; the store copy therefore gets an entry file in the package folder that re-exports the original. Nothing is downloaded when pi starts. To update them, run `config update extensions` ([UPKEEP.md](UPKEEP.md)): it changes the versions and hashes in `mkExtensions` and the list of the check together.
 
 Inside the sandbox, `~/.pi/agent` is a folder in memory, built at every start:
 
@@ -148,7 +148,7 @@ The `pi-sandbox` check runs a probe in the same sandbox and compares what it can
 
 ## direnv
 
-`modules/dev/direnv.nix` defines `nixos.direnv`, which enables direnv with nix-direnv for every shell; the VM imports it. It is hooked in only there, not through Home Manager. To load a flake's devShell whenever you enter a project directory:
+`modules/dev/direnv.nix` defines `nixos.direnv`, which enables direnv with nix-direnv for every shell; the workstation profile imports it for every host. It is hooked in only there, not through Home Manager. To load a flake's devShell whenever you enter a project directory:
 
 ```bash
 echo 'use flake' > .envrc && direnv allow
@@ -164,7 +164,7 @@ direnv runs in your own shell, outside the pi sandbox, so two settings keep it f
 
 The `pi-sandbox-direnv` check shows both, with a control. Not covered: an `.envrc` that does more than `use flake`, for example one that loads a `.env` file; what it reads is then loaded without a question whenever it changes. In VSCodium, `mkhl.direnv` applies the same environment to language servers, debuggers, and Jupyter kernels.
 
-Projects normally get their tools from the building blocks in [DEV-ENVIRONMENTS.md](DEV-ENVIRONMENTS.md). Other project flakes must name nixpkgs explicitly, for example `inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";`, and commit their `flake.lock`. A bare `nixpkgs` input is locked through the global registry, which points to nixpkgs-unstable, not the system's pinned nixpkgs.
+Projects normally get their tools from the building blocks in [DEV-ENVIRONMENTS.md](DEV-ENVIRONMENTS.md). Other project flakes should name nixpkgs explicitly, for example `inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";`, and commit their `flake.lock`. A bare `nixpkgs` input is locked through the registry: on these NixOS hosts that is the system's own pinned nixpkgs, on Ubuntu it is the global registry's nixpkgs-unstable.
 
 ## Shut down and restart
 
@@ -199,13 +199,13 @@ Relevant files:
 - `modules/apps/`: reusable application modules and default applications; see [APPS.md](APPS.md)
 - `modules/services/`: VPN clients, Wi-Fi and eduroam, rootless Docker and libvirt; see [APPS.md](APPS.md#services)
 
-Other selected applications can be added later without replacing this VM's data disk. The physical `mimir` host will need a separate hardware/boot/storage configuration and its own acceptance tests.
+Other selected applications can be added later without replacing this VM's data disk. The physical `mimir` host has its own hardware, boot and storage configuration and its own acceptance tests ([MIMIR.md](MIMIR.md)).
 
 ## Shared configuration architecture
 
 The configuration uses **flakes + flake-parts + import-tree** (the [dendritic pattern](https://github.com/mightyiam/dendritic)). `flake.nix` discovers module files, and `host-machines.nix` turns every `flake.modules.nixos.host-<name>` into `nixosConfigurations.<name>`. New files under `modules/` must be flake-parts modules, not bare NixOS modules accidentally fed to the import tree.
 
-`flake.modules.nixos.desktop-kde` defines Plasma/SDDM once and imports the shared `desktop` audio module. The VM imports `desktop-kde`; a future physical `mimir` can import exactly the same desktop. Applications added later should likewise be named shared NixOS or Home Manager modules, selected by each host/user rather than copied into every host. A server need not inherit workstation applications.
+`flake.modules.nixos.desktop-kde` defines Plasma/SDDM once and imports the shared `desktop` audio module. Both hosts get `desktop-kde` through the workstation profile. Applications added later should likewise be named shared NixOS or Home Manager modules, selected by each host/user rather than copied into every host. A server need not inherit workstation applications.
 
 Everything the VM shares with the laptop is in `nixos.workstation`; the VM-only initial password, display service and virtual hardware stay in `host-mimir-vm`. A new host imports the profile, adds its hardware, and is added to the host list asserted in `modules/flake/checks.nix`. The VM host is removed once the laptop has migrated.
 
@@ -217,10 +217,10 @@ One SSH key per machine, generated on that machine; only public keys are declare
 nix --extra-experimental-features 'nix-command flakes' flake check --no-write-lock-file 'path:'"$PWD"
 ```
 
-Six checks cover this VM; `pi-sandbox` is described [above](#pi). `mimir-vm-config` asserts the workstation policies, which `mimir-config` asserts for the laptop too, and the VM's own: the expected host list, no auto-login, a single normal account, locked root, password-authenticated sudo, disabled SSH, an enabled firewall, no port forwards, restricted directory sharing, declarative Home Manager packages, a read-only VSCodium configuration with free extensions only, basedpyright as the only Python language server, a Jupyter override matching the nixpkgs version, telemetry, AI features and update checks off, direnv enabled only at system level, a GitHub noreply Git email, the secrets key's location and permissions, `NIXOS_OZONE_WL=1`, Home Manager session variables in login shells, every Brave telemetry and AI policy in the generated policy file with Bitwarden force-installed, the four Thunderbird telemetry preferences set to false, a forced `mimeapps.list`, rootless Docker without a root daemon or `docker` group, the VPN and libvirt services, Tailscale's key and the Wi-Fi and eduroam profiles (see [SECRETS.md](SECRETS.md#validation)), and that every unfree package in the system and the user's packages is on the allowlist. `mimir-vm-editor-binaries` checks the built extensions: every ELF file is x86-64, Jupyter's x86-64 ZeroMQ library is present, every Node add-on resolves its libraries, and Node can load the ZeroMQ binding. `mimir-vm-secrets` validates the encrypted secrets and the mode without secrets, without a decryption key. `mimir-vm-eduroam-ca` compares the eduroam CA bundle with the university's official fingerprints. `mimir-vm-system` builds the whole system closure. They complement, rather than replace, a real boot and desktop test.
+Of the repository's checks (`nix flake check` lists them), these read this VM's configuration; `pi-sandbox` is described [above](#pi). `mimir-vm-config` asserts the workstation policies, which `mimir-config` asserts for the laptop too, and the VM's own: the expected host list, no auto-login, a single normal account, locked root, password-authenticated sudo, disabled SSH, an enabled firewall, no port forwards, restricted directory sharing, declarative Home Manager packages, a read-only VSCodium configuration with free extensions only, basedpyright as the only Python language server, a Jupyter override matching the nixpkgs version, telemetry, AI features and update checks off, direnv enabled only at system level, a GitHub noreply Git email, the secrets key's location and permissions, `NIXOS_OZONE_WL=1`, Home Manager session variables in login shells, every Brave telemetry and AI policy in the generated policy file with Bitwarden force-installed, the four Thunderbird telemetry preferences set to false, a forced `mimeapps.list`, rootless Docker without a root daemon or `docker` group, the VPN and libvirt services, Tailscale's key and the Wi-Fi and eduroam profiles (see [SECRETS.md](SECRETS.md#validation)), and that every unfree package in the system and the user's packages is on the allowlist. `mimir-vm-editor-binaries` checks the built extensions: every ELF file is x86-64, Jupyter's x86-64 ZeroMQ library is present, every Node add-on resolves its libraries, and Node can load the ZeroMQ binding. `mimir-vm-secrets` validates the encrypted secrets and the mode without secrets, without a decryption key. `mimir-vm-eduroam-ca` compares the eduroam CA bundle with the university's official fingerprints. `mimir-vm-system` builds the whole system closure. They complement, rather than replace, a real boot and desktop test.
 
 After booting, check that login, Konsole, networking, sudo, shutdown, and restart work, and that a test file in your home survives restart. Check that `systemctl status home-manager-jeeemieee` is `active (exited)`: a failed Home Manager activation is otherwise invisible and leaves the previous user configuration in place. It fails when a file it manages already exists as a normal file, for example one written before Home Manager managed it or copied from another system; the journal (`journalctl -b -u home-manager-jeeemieee`) names the file. Check display scaling, keyboard behavior, and basic desktop responsiveness. Virtual graphics do not validate the laptop's NVIDIA hybrid graphics, suspend, docking, or Secure Boot.
 
 ## Starting over without deleting the old trial
 
-Shut down first, then use a **different** `NIX_DISK_IMAGE` filename (for example `root-fresh.qcow2`). This creates a fresh guest with the initial password and preserves the old disk. Its new age identity is not enrolled in the pinned secrets, so `sops-install-secrets.service`, Tailscale's automatic login and the Wi-Fi profiles fail on that disk until it is enrolled; see [SECRETS.md](SECRETS.md) and the nixos-secrets README. Setting `hostSpec.hasSecrets = false` alone is refused by `nixos.wifi`; drop that import as well for an enrollment-only boot. Do not delete a disk unless you are sure no needed data remains.
+Shut down first, then use a **different** `NIX_DISK_IMAGE` filename (for example `root-fresh.qcow2`). This creates a fresh guest with the initial password and preserves the old disk. Its new age identity is not enrolled in the pinned secrets, so `sops-install-secrets.service`, Tailscale's automatic login and the Wi-Fi profiles fail on that disk until it is enrolled; see [SECRETS.md](SECRETS.md) and the nixos-secrets README. Do not delete a disk unless you are sure no needed data remains.

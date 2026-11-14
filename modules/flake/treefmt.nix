@@ -1,19 +1,8 @@
-{ inputs, ... }:
+# `nix fmt` formats every Nix file with nixfmt; nix flake check does not enforce it
 {
-  imports = [
-    inputs.treefmt-nix.flakeModule
-  ];
-
   perSystem =
-    { ... }:
+    { pkgs, ... }:
     {
-      treefmt.config = {
-        projectRootFile = "flake.nix";
-        # `nix fmt` formats with nixfmt; nix flake check does not enforce it
-        flakeCheck = false;
-        programs = {
-          nixfmt.enable = true;
-        };
-      };
+      formatter = pkgs.nixfmt-tree;
     };
 }

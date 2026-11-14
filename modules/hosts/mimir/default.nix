@@ -17,9 +17,6 @@ in
       modules.nixos.backup
     ];
 
-    # The laptop's own age recipient is enrolled in nixos-secrets when it is installed
-    hostSpec.hasSecrets = true;
-
     networking.hostName = "mimir";
     # Required by ZFS, which refuses to import a pool last used by another host ID
     networking.hostId = "30d630f0";

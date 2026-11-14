@@ -23,7 +23,6 @@
     "modules/profiles"
     "modules/hosts"
     "modules/users"
-    "modules/host-specification"
     # Where git and ssh run programs, and modules that carry a check of their own
     "modules/dev/git"
     "modules/dev/ssh.nix"
