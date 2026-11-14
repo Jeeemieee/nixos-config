@@ -58,6 +58,7 @@
               pkgs.sops
               pkgs.python3
               pkgs.hostname
+              pkgs.jq
             ];
           }
           ''
@@ -178,6 +179,33 @@
                         echo "value: readable" > secrets/plain.yaml && git add -A
                         expect "a secret that is not encrypted" "$(outcome yes ${tool}/bin/config check)" refused
                         said "secrets/plain.yaml is not encrypted"
+                        rm secrets/plain.yaml
+                        # A plain value typed into an encrypted file: sops itself still calls the file encrypted
+                        cp secrets/host.yaml "$TMPDIR/host.yaml" && echo "extra: readable" >> secrets/host.yaml && git add -A
+                        expect "sops' own word on that file" "$(sops filestatus secrets/host.yaml | jq -r .encrypted)" true
+                        expect "a plain value in an encrypted file" "$(outcome yes ${tool}/bin/config check)" refused
+                        said "secrets/host.yaml is not encrypted: extra"
+                        if grep -q readable "$TMPDIR/out"; then echo "FAIL: the check printed a value"; failed=1; fi
+                        cp "$TMPDIR/host.yaml" secrets/host.yaml
+                        # A plain file deeper down, and a file of a kind the check cannot read
+                        mkdir -p secrets/sub && echo "value: readable" > secrets/sub/nested.yaml && git add -A
+                        expect "a plain file in a folder below secrets/" "$(outcome yes ${tool}/bin/config check)" refused
+                        said "secrets/sub/nested.yaml is not encrypted"
+                        rm -r secrets/sub && echo readable > secrets/key.txt && git add -A
+                        expect "a file of another kind below secrets/" "$(outcome yes ${tool}/bin/config check)" refused
+                        said "secrets/key.txt is of a kind this check cannot read"
+                        rm secrets/key.txt && git add -A
+                        expect "control: the encrypted file alone again" "$(outcome yes ${tool}/bin/config check)" accepted
+                        # A new file outside the checked places is shown and asked about before it leaves the machine
+                        git commit -q --no-verify -m base
+                        echo text > notes.txt && git add -A
+                        expect "the check with a new plain file outside secrets/" "$(outcome yes ${tool}/bin/config check)" accepted
+                        expect "a new file in a repository of secrets, answer no" "$(outcome no ${tool}/bin/config guard)" refused
+                        said "notes.txt (a new file in a repository of secrets)"
+                        expect "a new file in a repository of secrets, answer yes" "$(outcome yes ${tool}/bin/config guard)" accepted
+                        git commit -q --no-verify -m notes && echo more >> notes.txt && git add -A
+                        expect "a change of that file later: the check" "$(outcome yes ${tool}/bin/config check)" accepted
+                        expect "a change of that file later, answer no" "$(outcome no ${tool}/bin/config guard)" accepted
 
                         ## Step 7. The extension updater, against a stand-in registry
                         mkdir -p registry/@scope/one registry/two

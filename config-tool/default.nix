@@ -21,6 +21,8 @@ pkgs.writeShellApplication {
     pkgs.git
     pkgs.jq
     pkgs.sops
+    pkgs.yq-go
+    pkgs.findutils
     pkgs.coreutils
     pkgs.gnugrep
     pkgs.hostname

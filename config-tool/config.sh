@@ -88,15 +88,30 @@ runChecks() {
   elif [ -e "$exported/flake.nix" ]; then
     nixCommand flake check "path:$exported"
   else
-    # A repository of secrets: every file below secrets/ must be encrypted
-    local file failed=0
-    for file in "$exported"/secrets/*; do
-      [ -f "$file" ] || continue
-      if [ "$(sops filestatus "$file" 2> /dev/null | jq -r '.encrypted')" != true ]; then
-        echo "config: ${file#"$exported"/} is not encrypted" >&2
+    # A repository of secrets: every value in every file below secrets/, at any depth, must be encrypted
+    # sops says "encrypted" of a file as soon as it has sops' own block, also when a plain value was added by hand, so every
+    # value is looked at: all but sops' own block must have the form sops writes. Only the names are printed, never a value
+    local file plain name failed=0
+    while IFS= read -r -d "" file; do
+      case "$file" in
+        *.yaml | *.yml | *.json) ;;
+        *)
+          echo "config: ${file#"$exported"/} is of a kind this check cannot read (it reads .yaml, .yml and .json), so it cannot say that it is encrypted" >&2
+          failed=1
+          continue
+          ;;
+      esac
+      if ! plain=$(yq -o=json '.' "$file" 2> /dev/null | jq -r '
+        if (type != "object") or (has("sops") | not) then "(the whole file: it has no block of sops)"
+        else [paths(scalars) as $path | select($path[0] != "sops") | select((getpath($path) | type) != "string" or (getpath($path) | test("^ENC\\[AES256_GCM,data:[^,]*,iv:[^,]*,tag:[^,]*,type:[a-z]+\\]$") | not)) | $path | map(tostring) | join(".")][]
+        end'); then
+        plain="(the whole file: it cannot be read)"
+      fi
+      if [ -n "$plain" ]; then
+        while IFS= read -r name; do echo "config: ${file#"$exported"/} is not encrypted: $name" >&2; done <<< "$plain"
         failed=1
       fi
-    done
+    done < <(find "$exported/secrets" -type f -print0 2> /dev/null)
     [ "$failed" = 0 ]
   fi
 }
@@ -187,6 +202,11 @@ guard() {
             sensitivePaths+=("$candidate")
             ;;
         esac
+      elif [ ! -e flake.nix ] && [[ $status == A* ]]; then
+        # A repository of secrets is pushed and then copied to the Nix store of every machine that builds: a new file there,
+        # outside the places that are checked, is shown before it leaves
+        sensitive+=("$status $candidate (a new file in a repository of secrets)")
+        sensitivePaths+=("$candidate")
       fi
     done
   done < <(git diff --cached --name-status -z)

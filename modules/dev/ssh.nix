@@ -20,6 +20,7 @@ in
       # Home Manager's former defaults for every host are not wanted; only what is declared applies
       enableDefaultConfig = false;
       # Read after every declared host: ssh keeps the first value it finds for a setting, so the list cannot change what is declared, such as GitHub's pinned keys
+      # What the list may hold is limited by the ssh-settings check below: ssh has settings that run a program or load a library
       settings."*".Include = hostsFile;
     };
   };
@@ -39,11 +40,30 @@ in
           HostName cluster.example.org
           User researcher
       '';
+      # A list with settings that run a program, or load a library, on this machine whenever ssh is used
+      runsPrograms = pkgs.writeText "ssh-hosts-running-programs" ''
+        Host cluster
+          HostName cluster.example.org
+          ProxyCommand sh -c "touch /tmp/marker; exit 1"
+        Match exec "touch /tmp/marker"
+          User researcher
+        Host other
+          PKCS11Provider=/tmp/library.so
+      '';
+      # The settings a list of hosts may hold: where a host is, who logs in, with which key, and through which other host;
+      # and the two more that the user's own list uses, keys kept in the agent and windows of a remote program shown here
+      allowedSettings = "host hostname user port identityfile identitiesonly proxyjump serveraliveinterval serveralivecountmax compression addkeystoagent forwardx11";
     in
     {
       # The declared settings for GitHub hold whatever the private list of hosts says, and the list's own hosts work
       checks.ssh-settings =
-        pkgs.runCommand "ssh-settings-check" { nativeBuildInputs = [ pkgs.openssh ]; }
+        pkgs.runCommand "ssh-settings-check"
+          {
+            nativeBuildInputs = [
+              pkgs.openssh
+              pkgs.gawk
+            ];
+          }
           ''
             export HOME=$TMPDIR
             failed=0
@@ -70,6 +90,20 @@ in
             { echo "Include $PWD/list"; grep -v "Include $PWD/list" declared; } > list-first
             expect "control: the list read first changes GitHub's user" "$(value list-first github.com user)" someone-else
             expect "control: and switches the host key check off" "$(value list-first github.com stricthostkeychecking)" false
+
+            # The list may only hold settings from an agreed set: ssh's other settings include ones that run a program
+            # (ProxyCommand, LocalCommand, Match exec, KnownHostsCommand) or load a library (PKCS11Provider), at every use of ssh
+            # Only the line's number and the setting's name are printed: the list is private
+            notAllowed() {
+              awk -v allowed="${allowedSettings}" '
+                BEGIN { count = split(allowed, names, " "); for (i = 1; i <= count; i++) agreed[names[i]] = 1 }
+                { line = $0; sub(/^[ \t]+/, "", line); if (line == "" || line ~ /^#/) next
+                  name = tolower(line); sub(/[ \t=].*$/, "", name)
+                  if (!(name in agreed)) print "line " NR ": " name }' "$1" | tr '\n' ';'
+            }
+            expect "the private list of hosts holds only agreed settings" "$(notAllowed ${hostsFile})" ""
+            expect "control: a list with two other settings" "$(notAllowed ${standIn})" "line 3: stricthostkeychecking;line 4: userknownhostsfile;"
+            expect "a list with settings that run programs" "$(notAllowed ${runsPrograms})" "line 3: proxycommand;line 4: match;line 7: pkcs11provider;"
 
             [ "$failed" = 0 ] || exit 1
             touch "$out"

@@ -1060,6 +1060,55 @@ in
             touch "$out"
           '';
 
+      # The launcher as it is installed, with the real list of protected paths, in copies of the two repositories as they are
+      checks.pi-sandbox-protected-list =
+        let
+          # Tries to change every path it is given: a file by adding a line, a folder by making a file in it
+          listProbe = pkgs.writeShellScript "pi-sandbox-protected-list-probe" ''
+            for path in $PATHS; do
+              if [ -d "$path" ]; then target=$path/made-by-the-probe; else target=$path; fi
+              if echo change >> "$target" 2>/dev/null; then echo "$path=changed"; else echo "$path=refused"; fi
+            done
+          '';
+          sandboxedListProbe = mkSandbox pkgs {
+            name = "pi";
+            command = "${listProbe}";
+            declared = [ ".pi/agent/AGENTS.md" ];
+            protected = import ../../config-tool/protected.nix;
+          };
+          protectedPaths = import ../../config-tool/protected.nix;
+        in
+        pkgs.runCommand "pi-sandbox-protected-list-check" { nativeBuildInputs = [ pkgs.bubblewrap ]; } ''
+          export HOME=$TMPDIR/home USER=tester
+          mkdir -p "$HOME/.pi/agent" "$HOME/repos"
+          ln -s ${pkgs.writeText "pi-sandbox-rules" "rules"} "$HOME/.pi/agent/AGENTS.md"
+          failed=0
+          expect() { if [ "$2" = "$3" ]; then echo "ok   $1: $2"; else echo "FAIL $1: $2 (expected $3)"; failed=1; fi; }
+          # The two repositories as this configuration has them: itself, and the pinned nixos-secrets
+          cp -r ${inputs.self} "$HOME/repos/nixos-config" && cp -r ${inputs.nixos-secrets} "$HOME/repos/nixos-secrets"
+          chmod -R u+w "$HOME/repos"
+
+          verify() {
+            local repository=$1 ordinary=$2 paths=$3 path
+            cd "$HOME/repos/$repository"
+            # A path of the list that does not exist cannot be protected: the list would be wrong
+            for path in $paths; do
+              [ -e "$path" ] || { echo "FAIL: $repository has no $path, which the list names"; failed=1; }
+            done
+            PATHS="$paths $ordinary" ${sandboxedListProbe}/bin/pi > "$TMPDIR/actual" 2> "$TMPDIR/message"
+            expect "$repository: protected paths that were changed" "$(grep -v "^$ordinary=" "$TMPDIR/actual" | grep -c '=changed$')" "0"
+            expect "$repository: protected paths that were refused" "$(grep -c '=refused$' "$TMPDIR/actual")" "$(echo $paths | wc -w)"
+            expect "$repository: control, an ordinary file" "$(grep -x "$ordinary=.*" "$TMPDIR/actual")" "$ordinary=changed"
+            PATHS="$paths" ${sandboxedListProbe}/bin/pi --unlock > "$TMPDIR/actual" 2> "$TMPDIR/message"
+            expect "$repository: control, with --unlock all are changed" "$(grep -c '=changed$' "$TMPDIR/actual")" "$(echo $paths | wc -w)"
+          }
+          verify nixos-config README.md ${pkgs.lib.escapeShellArg (toString protectedPaths.nixos-config)}
+          verify nixos-secrets README.md ${pkgs.lib.escapeShellArg (toString protectedPaths.nixos-secrets)}
+
+          [ "$failed" = 0 ] || exit 1
+          touch "$out"
+        '';
+
       # pi never runs a command that the shared login file names (the change is in modules/flake/nixpkgs.nix)
       checks.pi-login-commands = pkgs.runCommand "pi-login-commands-check" { } ''
         export HOME=$TMPDIR/home PI_CODING_AGENT_DIR=$TMPDIR/home/.pi/agent PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0

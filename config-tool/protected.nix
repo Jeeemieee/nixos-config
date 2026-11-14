@@ -42,5 +42,11 @@
     # Who may decrypt, and the encrypted values
     ".sops.yaml"
     "secrets"
+    # The instructions every agent gets, the list of hosts that ssh reads, and the desktops' names: plain files that become
+    # part of the system
+    "pi"
+    "ssh"
+    "desktop"
+    ".gitignore"
   ];
 }
