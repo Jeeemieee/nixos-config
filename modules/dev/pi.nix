@@ -290,12 +290,19 @@ let
         done
 
         # ~/.pi/agent inside the sandbox is a folder in memory. It holds the declared files as read-only mounts, which cannot be
-        # deleted or replaced, and two things that persist: the sessions, and the login in its own folder. pi locks the login
-        # file next to its real location, so several sandboxes share that lock through the login folder
+        # deleted or replaced, and two things that persist: the project's sessions, and the login in its own folder. pi locks
+        # the login file next to its real location, so several sandboxes share that lock through the login folder
         # Anything else written there (an extension, a system prompt, model endpoints, the model cache) is gone at exit
         agent=$HOME/.pi/agent
-        mkdir -p "$agent/sessions" "$agent/login"
+        # Every project has its own folder of sessions, named by the project's folder and a digest of its path: a session holds
+        # file contents and command output, and pi reads an earlier one as the user's own words when it is continued
+        sessions=$agent/sessions/$(basename "$project" | tr -c 'A-Za-z0-9._\n-' _ | cut -c1-40)-$(printf %s "$project" | sha256sum | cut -c1-12)
+        mkdir -p "$sessions" "$agent/login"
         chmod 700 "$agent/login"
+        # Every session can write the login folder. A link or anything else in the login file's place is not written through
+        if [ -L "$agent/login/auth.json" ] || { [ -e "$agent/login/auth.json" ] && [ ! -f "$agent/login/auth.json" ]; }; then
+          deny "$agent/login/auth.json is not a regular file; a session can have put something else in its place. Remove it (rm -rf $agent/login/auth.json), start ${name} again and log in with /login"
+        fi
         # A login file from pi running without this sandbox moves to its new place once
         if [ -f "$agent/auth.json" ] && [ ! -L "$agent/auth.json" ] && [ ! -e "$agent/login/auth.json" ]; then
           mv "$agent/auth.json" "$agent/login/auth.json"
@@ -336,7 +343,7 @@ let
           "''${declaredBinds[@]}" \
           --bind "$agent/login" "$agent/login" \
           --symlink login/auth.json "$agent/auth.json" \
-          --bind "$agent/sessions" "$agent/sessions" \
+          --bind "$sessions" "$agent/sessions" \
           --ro-bind-try "$HOME/.config/git" "$HOME/.config/git" \
           "''${shared[@]}" \
           "''${protect[@]}" \
@@ -522,7 +529,7 @@ in
             # After the run, on the host: the declared file is untouched, the sessions and the login persist, nothing else was left behind
             agent=$HOME/.pi/agent
             [ -L "$agent/AGENTS.md" ] && [ "$(cat "$agent/AGENTS.md")" = rules ] || { echo "FAIL: the declared file changed on the host"; exit 1; }
-            [ "$(cat "$agent/sessions/probe-session")" = session ] || { echo "FAIL: the session did not persist"; exit 1; }
+            [ "$(cat "$agent"/sessions/project-*/probe-session)" = session ] || { echo "FAIL: the session did not persist in the project's folder"; exit 1; }
             [ ! -e "$agent/auth.json" ] && [ "$(cat "$agent/login/auth.json")" = '{"probe":true}' ] || { echo "FAIL: the login did not move or persist"; exit 1; }
             [ "$(stat -c %a "$agent/login")" = 700 ] || { echo "FAIL: the login folder is not private"; exit 1; }
             ls -A "$agent" | sort | tr '\n' ' ' > left
@@ -960,6 +967,94 @@ in
             scenario stock-change ${stockSettings} by-itself change > actual
             cat actual
             expect "control, the changed flake is evaluated by itself" "$(grep -x 'afterwards=.*' actual)" "afterwards=genuine, evaluations 2"
+
+            [ "$failed" = 0 ] || exit 1
+            touch "$out"
+          '';
+
+      # A session sees the sessions of its own project only, and the launcher does not write through a login file that is a link
+      checks.pi-sandbox-sessions =
+        let
+          # Writes a session of its own, then lists and tries to change whatever sessions it can see
+          sessionsProbe = pkgs.writeShellScript "pi-sandbox-sessions-probe" ''
+            sessions=$HOME/.pi/agent/sessions
+            mkdir -p "$sessions/--$NAME--" && echo "words of $NAME" >> "$sessions/--$NAME--/session.jsonl"
+            echo "visible=$(cd "$sessions" && find . -name session.jsonl | sort | tr '\n' ' ')"
+            for other in "$sessions"/*/session.jsonl "$sessions"/*/*/session.jsonl; do
+              case "$other" in *"--$NAME--"*) continue ;; esac
+              if [ -e "$other" ] && echo forged >> "$other" 2>/dev/null; then echo "other=changed ($other)"; fi
+            done
+            if [ -n "''${LINK:-}" ]; then rm -f "$HOME/.pi/agent/login/auth.json" && ln -s "$LINK" "$HOME/.pi/agent/login/auth.json" && echo "login=made-a-link"; fi
+          '';
+          sandboxedSessionsProbe = mkSandbox pkgs {
+            name = "pi";
+            command = "${sessionsProbe}";
+            declared = [ ".pi/agent/AGENTS.md" ];
+          };
+          # pi itself, asked where it keeps the session of this start
+          sandboxedPi = mkSandbox pkgs {
+            name = "pi";
+            command = "${pkgs.pi-coding-agent}/bin/pi";
+            declared = [ ".pi/agent/AGENTS.md" ];
+            environment = {
+              PI_OFFLINE = "1";
+              PI_SKIP_VERSION_CHECK = "1";
+              PI_TELEMETRY = "0";
+            };
+          };
+        in
+        pkgs.runCommand "pi-sandbox-sessions-check"
+          {
+            nativeBuildInputs = [
+              pkgs.bubblewrap
+              pkgs.git
+              pkgs.jq
+            ];
+          }
+          ''
+            export HOME=$TMPDIR/home USER=tester
+            mkdir -p "$HOME/.pi/agent" "$HOME/one/sub" "$HOME/two" "$HOME/elsewhere/one"
+            ln -s ${pkgs.writeText "pi-sandbox-rules" "rules"} "$HOME/.pi/agent/AGENTS.md"
+            # Project one is a repository, so that a folder below it belongs to it; the others are plain folders
+            git init -q "$HOME/one"
+            agent=$HOME/.pi/agent
+            failed=0
+            expect() { if [ "$2" = "$3" ]; then echo "ok   $1: $2"; else echo "FAIL $1: $2 (expected $3)"; failed=1; fi; }
+            session() { (cd "$1" && NAME=$2 LINK=''${3:-} ${sandboxedSessionsProbe}/bin/pi) > actual 2> message; }
+
+            ## Step 1. Two projects, and a third with the same folder name elsewhere: each sees its own sessions and no other's
+            session "$HOME/two" two
+            expect "project two, first session" "$(grep -x 'visible=.*' actual)" "visible=./--two--/session.jsonl "
+            session "$HOME/one" one
+            expect "project one sees only its own" "$(grep -x 'visible=.*' actual)" "visible=./--one--/session.jsonl "
+            expect "project one changed another project's session" "$(grep -c '^other=changed' actual)" "0"
+            session "$HOME/elsewhere/one" elsewhere
+            expect "a project of the same name elsewhere sees only its own" "$(grep -x 'visible=.*' actual)" "visible=./--elsewhere--/session.jsonl "
+            expect "on the host, two's session" "$(cat "$agent"/sessions/*/--two--/session.jsonl)" "words of two"
+
+            ## Step 2. Control: a project's sessions are there again at its next start, also from a folder below it
+            session "$HOME/one/sub" one-again
+            expect "project one, a later session from a folder below" "$(grep -x 'visible=.*' actual)" "visible=./--one--/session.jsonl ./--one-again--/session.jsonl "
+            expect "on the host, one folder per project" "$(find "$agent/sessions" -mindepth 1 -maxdepth 1 | wc -l)" "3"
+
+            ## Step 3. pi itself keeps its session where the project's sessions are, so that continuing one finds it
+            reported=$(cd "$HOME/one" && echo '{"id": "1", "type": "get_state"}' | ${sandboxedPi}/bin/pi --mode rpc 2> /dev/null | jq -r 'select(.id == "1") | .data.sessionFile')
+            echo "pi's session file: $reported"
+            expect "pi's session file lies in its sessions folder" "$(case "$reported" in "$agent/sessions/--"*"--/"*.jsonl) echo yes ;; *) echo no ;; esac)" "yes"
+            # The folder's name, worked out here: the project's folder name and the first twelve characters of the digest of its path
+            own=$agent/sessions/one-$(printf %s "$HOME/one" | sha256sum | cut -c1-12)
+            expect "on the host it is in the project's own folder" "$([ -d "$own/$(basename "$(dirname "$reported")")" ] && echo yes || echo no)" "yes"
+            expect "beside the project's other sessions" "$(ls "$own" | tr '\n' ' ')" "--build-home-one-- --one-- --one-again-- "
+
+            ## Step 4. A login file that a session replaced by a link: the next start refuses and writes nothing through it
+            session "$HOME/one" one "$HOME/outside-file"
+            expect "the session made the link" "$(grep -c '^login=made-a-link' actual)" "1"
+            if session "$HOME/two" two; then echo "FAIL: started with a login file that is a link"; failed=1; fi
+            grep -q "is not a regular file" message || { echo "FAIL: no descriptive refusal of the login file"; cat message; failed=1; }
+            expect "written through the link" "$([ -e "$HOME/outside-file" ] && echo yes || echo no)" "no"
+            # Control: with a regular login file again, the project starts
+            rm "$agent/login/auth.json" && echo '{}' > "$agent/login/auth.json"
+            if session "$HOME/two" two; then echo "ok   control: a regular login file starts"; else echo "FAIL: the control did not start"; cat message; failed=1; fi
 
             [ "$failed" = 0 ] || exit 1
             touch "$out"
