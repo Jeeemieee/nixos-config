@@ -6,6 +6,7 @@
 #   config switch                build this machine's system from the last commit and switch to it
 #   config install <arguments>   run the install tool (docs/INSTALL.md) from the last commit
 #   config guard                 the two gates of a commit; git's pre-commit hook calls it
+#   config guard-push <remote>   the same gates for what a push sends; git's pre-push hook calls it
 # The checks and every build read the content of a commit, exported from git, and never the folder: a file that git ignores or
 # that is not committed takes no part in them
 # PROTECTED (a JSON file: repository name -> protected paths), CHECK_COMMAND and BUILD_COMMAND come from the build
@@ -173,13 +174,11 @@ install() {
   INSTALL_FLAKE=$exported buildStep nixCommand run "path:$exported#install" -- "$@"
 }
 
-# The two gates of a commit
-guard() {
-  local tree status path extra sensitive=() sensitivePaths=() modules=() shown=() protectedPath isProtected
-  refuseIgnoredModules
-  tree=$(stagedTree)
-
-  ## Gate 1. Changes to protected files, and every change below modules/, where all files are loaded, need one typed yes
+# Gate 1 for a change, given as the arguments of `git diff` (--cached for a commit, two commits for a push):
+# changes to protected files, and every change below modules/, where all files are loaded, need one typed yes
+confirmChanges() {
+  local action=$1 status path extra sensitive=() sensitivePaths=() modules=() shown=() protectedPath isProtected
+  shift
   while IFS= read -r -d "" status; do
     IFS= read -r -d "" path
     extra=
@@ -209,37 +208,90 @@ guard() {
         sensitivePaths+=("$candidate")
       fi
     done
-  done < <(git diff --cached --name-status -z)
+  done < <(git diff "$@" --name-status -z)
   if [ "${#sensitive[@]}" -gt 0 ] || [ "${#modules[@]}" -gt 0 ]; then
     if [ "${#sensitive[@]}" -gt 0 ]; then
-      echo "config: this commit changes protected files of $name:"
+      echo "config: this $action changes protected files of $name:"
       printf '  %s\n' "${sensitive[@]}" | sort -u
     fi
     if [ "${#modules[@]}" -gt 0 ]; then
       # Not protected, yet loaded like every file below modules/: a module can set what another one sets
-      echo "config: this commit changes modules of $name, all of which are loaded into the system:"
+      echo "config: this $action changes modules of $name, all of which are loaded into the system:"
       printf '  %s\n' "${modules[@]}" | sort -u
     fi
     # What changes, shown by git itself before the question: a summary of all of it, then the protected files and the added or
-    # removed modules in full, on a terminal in git's own viewer (q closes it). The changed modules are for `git diff --cached`
+    # removed modules in full, on a terminal in git's own viewer (q closes it). The changed modules are for `git diff`
     echo
     for path in "${modules[@]}"; do shown+=("${path#* }"); done
-    git --no-pager diff --cached --stat -- "${sensitivePaths[@]}" "${shown[@]}"
+    git --no-pager diff "$@" --stat -- "${sensitivePaths[@]}" "${shown[@]}"
     if [ "${#sensitivePaths[@]}" -gt 0 ]; then
       if [ -t 1 ]; then
-        git diff --cached -- "${sensitivePaths[@]}"
+        git diff "$@" -- "${sensitivePaths[@]}"
       else
-        git --no-pager diff --cached -- "${sensitivePaths[@]}"
+        git --no-pager diff "$@" -- "${sensitivePaths[@]}"
       fi
     fi
     local answer=
-    read -r -p "Type yes to commit these changes: " answer < "${CONFIG_GUARD_TTY:-/dev/tty}" \
-      || die "no terminal to ask on, so these changes are not committed"
-    [ "$answer" = yes ] || die "not confirmed; nothing was committed"
+    read -r -p "Type yes to $action these changes: " answer < "${CONFIG_GUARD_TTY:-/dev/tty}" \
+      || die "no terminal to ask on, so these changes are not accepted"
+    [ "$answer" = yes ] || die "not confirmed; nothing was done"
   fi
+}
+
+# The two gates of a commit
+guard() {
+  local tree
+  refuseIgnoredModules
+  tree=$(stagedTree)
+
+  ## Gate 1. The user's yes to what the commit changes
+  confirmChanges commit --cached
+  # Remembered for the push: this content was shown and confirmed as a step from the commit before it
+  mkdir -p "$state"
+  touch "$state/$tree.confirmed"
 
   ## Gate 2. The checks passed on exactly this content
   [ -e "$state/$tree" ] || die "no passed check is recorded for this content; run: config check"
+}
+
+# The same two gates for what a push sends: git's pre-push hook calls this with the remote's name, and one line per branch on
+# its input: <local ref> <local commit> <remote ref> <remote commit>
+# A commit made by `config commit`, or by `git commit` with the hook, has passed both gates and passes here without a word.
+# What arrived another way (a merge, a fast-forward, a cherry-pick, a rebase, a commit with --no-verify) has not
+guardPush() {
+  local remote=${1:-origin} localRef localCommit remoteRef remoteCommit zero base tree unconfirmed commit
+  zero=$(git hash-object --stdin < /dev/null | tr '0-9a-f' '0')
+  while read -r localRef localCommit remoteRef remoteCommit; do
+    # A branch that is removed from the remote sends nothing
+    [ "$localCommit" != "$zero" ] || continue
+    ## Gate 2. The checks passed on exactly the content that the branch will have
+    tree=$(git rev-parse "$localCommit^{tree}")
+    [ -e "$state/$tree" ] || die "no passed check is recorded for the content of $localRef: check it out and run: config check"
+
+    ## Gate 1. The commits that are sent, and of them those that were not confirmed one by one when they were made
+    if [ "$remoteCommit" = "$zero" ]; then
+      # A branch that is new on the remote: everything the remote does not have yet
+      mapfile -t sent < <(git rev-list "$localCommit" --not --remotes="$remote")
+      base=$(git rev-list --boundary "$localCommit" --not --remotes="$remote" | sed -n 's/^-//p' | head -n 1)
+      # Nothing of it is on the remote: compared with an empty folder
+      [ -n "$base" ] || base=$(git hash-object -t tree /dev/null)
+    else
+      git cat-file -e "$remoteCommit^{commit}" 2> /dev/null || die "the remote's $remoteRef is at a commit this repository does not have: fetch first"
+      mapfile -t sent < <(git rev-list "$localCommit" --not "$remoteCommit")
+      base=$remoteCommit
+    fi
+    unconfirmed=()
+    for commit in "${sent[@]}"; do
+      [ -e "$state/$(git rev-parse "$commit^{tree}").confirmed" ] || unconfirmed+=("$commit")
+    done
+    if [ "${#unconfirmed[@]}" -gt 0 ]; then
+      echo "config: $localRef holds ${#unconfirmed[@]} commit(s) that did not pass the commit guard (merged, picked, rebased, or committed without it):"
+      git --no-pager log --no-walk --format='  %h %s' "${unconfirmed[@]}"
+      echo "config: everything they hold leaves this machine with the push; what the branch changes on the remote, all commits together:"
+      confirmChanges push "$base" "$localCommit"
+      touch "$state/$tree.confirmed"
+    fi
+  done
 }
 
 commit() {
@@ -308,6 +360,7 @@ update() {
 case "${1:-}" in
   check) check ;;
   guard) guard ;;
+  guard-push) guardPush "${2:-}" ;;
   commit) commit "${2:-}" ;;
   update) update "${2:-}" ;;
   build) build "${2:-}" "${3:-}" ;;
