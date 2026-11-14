@@ -25,22 +25,30 @@ Three things hold on NixOS whatever an agent is told or decides:
    | Repository | Protected | Why |
    | --- | --- | --- |
    | `nixos-config` | `modules/dev/pi.nix`, `AGENTS.md` | What an agent's sandbox is, and its instructions |
-   | | `config-tool/`, `modules/flake/config-tool.nix` | This list and the guard |
-   | | `modules/flake/checks.nix`, `dev-env/checks.nix` | The checks |
+   | | `config-tool/` | This list and the guard |
+   | | `modules/flake/` | How the flake is put together: the checks, the package set, the hosts, the admin shell, the `config` command |
+   | | `dev-env/` | The development environments, their checks and the checks' scripts |
    | | `modules/security/`, `modules/services/backup.nix`, `modules/storage/`, `modules/install/`, `install/`, `modules/boot/` | A wrong change loses data or access |
+   | | `modules/profiles/`, `modules/hosts/`, `modules/users/`, `modules/host-specification/` | The accounts, sudo, the firewall, the Nix settings, and what each host is made of |
+   | | `modules/dev/git/`, `modules/dev/ssh.nix`, `modules/services/search.nix` | Where git and ssh run programs; modules that carry a check of their own |
    | | `flake.nix`, `flake.lock` | Which versions of everything are used |
    | | `.gitignore` | Which files git leaves out of every status and commit |
-   | | `modules/dev/direnv.nix`, `.envrc`, `modules/flake/shell.nix` | What direnv evaluates in your own shell |
+   | | `modules/dev/direnv.nix`, `.envrc` | What direnv evaluates in your own shell |
    | `nixos-secrets` | `AGENTS.md`, `.sops.yaml`, `secrets/` | Who may decrypt, and the encrypted values |
+
+   Not protected, so that everyday changes need no `--unlock`: the applications (`modules/apps/`), the desktop (`modules/desktop/`), the hardware modules, the editor, Wi-Fi, VPN, Docker and libvirt, and the documents.
 
    As mounts they can neither be changed nor renamed, removed or replaced. `pi --unlock` says which files it opens, for that one session. A repository that holds an `AGENTS.override.md`, which pi would read instead of `AGENTS.md`, is refused. The protection goes with the repository's place: it is the same wherever below the repository pi starts and when the repository is shared with `--allow`, where `--unlock` opens it too.
 3. **A commit passes two gates**, in `config commit` and, for a plain `git commit`, in a hook that the user's own git settings name for the two repositories (an agent only reads those settings):
    - the checks passed on exactly the staged content, exported from git: a change after the check, or a failed check, stops the commit. A file below `modules/` that git ignores stops the check and the commit, and is named;
-   - every change of a protected file, and every file added to, removed from or renamed below `modules/`, is listed and needs a typed `yes`. Before the question git itself shows what changes in those files: a summary, then the changes in its own viewer (`q` closes it). Without a terminal to ask on, the commit is refused.
+   - every change of a protected file and every change below `modules/` is listed and needs one typed `yes` per commit. Before the question git itself shows a summary of all of it, then the protected files and the added or removed modules in full, in its own viewer (`q` closes it); look at the changed modules with `git diff --cached`. Without a terminal to ask on, the commit is refused.
+4. **The settings that matter are only set by protected files, and have the values that were decided.** Nix merges every module, so an ordinary module could also set the firewall or the backup's list. Two kinds of assertion in `modules/flake/checks.nix` stop that:
+   - by place: the module system reports which file defines an option. For the backup, the firewall, the accounts, sudo, the Nix settings and package set, the secrets' key, the disk and boot settings, what every shell of yours runs, your git and ssh settings, and the flake's own checks, programs and shells, every defining file of this repository must be on the protected list;
+   - by value: no port is open and only the loopback interface is trusted, `root` is the only trusted user of the Nix daemon, and the backup leaves out exactly what [BACKUP.md](BACKUP.md) lists.
 
 Limits, stated plainly:
 - **On a machine where pi runs without the sandbox** (Ubuntu before the move) none of this is enforced against an agent; `config commit` still applies the two gates to the user's own commits.
-- **Every file below `modules/` is loaded**, so a new, unprotected file there can change what a protected file sets. That is why the guard asks about added and removed modules; the user's review of the commit is the last line.
+- **Every file below `modules/` is loaded**, and no list of guarded settings is complete: an ordinary module can still add what nobody listed, for example a service that runs as root. A module can also give a made-up file name for what it defines, which the assertion by place then believes; the assertions by value do not depend on it. That is why the guard asks about every commit that changes a module; the user's review of the commit is the last line.
 - `git commit --no-verify` skips the hook. Only the user can commit, so that is his decision.
 - **Building the folder directly** (`nixos-rebuild --flake .`, `nix build "path:$PWD#…"`) reads whatever lies in the folder, also files that git ignores and changes that nobody has confirmed. Use `config build` and `config switch`, which take the last commit and refuse unless the checks passed on it and the folder holds nothing else.
 - The record of a passed check is a file in `~/.local/state/config-checks/`, a hidden folder that no sandbox sees.
@@ -81,6 +89,8 @@ Still possible: a session can replace or remove the shared login, which logs the
 
 - `pi-login-commands`: pi, asked a question with a login file whose key is a command, does not run it; an ordinary key is still used. Control: pi as nixpkgs builds it runs the command.
 - `pi-sandbox-location`: the protected files and the git hooks are refused when pi starts below a folder named `.git` that a session made inside the repository, and when the repository is shared with `--allow` or `--allow-ro` from another one; a start in the folder above the repository, and `--allow` of that folder or of a folder inside the repository, are refused with a message; the hooks of a second shared project and of a repository below the project are refused, and nothing the launcher opened reaches the session. Controls: in the repository itself; `--unlock`, also through `--allow`; an ordinary folder can be made.
+- `mimir-config` and `mimir-vm-config` hold the assertions by place and by value of point 4. Tried by hand, one change at a time in a copy (`config-guard` cannot build a whole configuration): an ordinary module that leaves a folder out of the backup, opens a port or replaces a check; a port opened and a trusted Nix user added in the workstation profile; the same exclusion under a made-up file name. Each makes `mimir-config` fail. A new root service from an ordinary module does not: see the limits.
+- `config-guard`, for changed modules: a commit that changes a module is refused on `no` and without a terminal, names the module, and is accepted on `yes`.
 - `pi-sandbox-direnv`: with the laptop's direnv settings, a line that a session adds to a cache file, a program it puts where nix-direnv looks first, and a flake it changes are neither run nor evaluated when the user enters the project afterwards; the cache lies outside the project. Control: with nix-direnv's own settings all three happen.
 - `pi-sandbox-protected`: in a sandbox, changing, adding to, renaming, removing and replacing protected files is refused and an ordinary file can be changed. Controls: with `--unlock` all of it is accepted; the same folder under another name is not protected, and `--unlock` is refused there.
 - `config-guard`, for the content that is checked and built: with files in the folder that git ignores, the stand-in for the checks receives exactly the files of the staged content, byte for byte; an ignored file below `modules/` stops the check and the commit and is named (control: accepted without it); `build`, `switch` and `install` hand the last commit's files to a stand-in for nix, and are refused while the folder differs from that commit or no check passed on it (control: accepted after `config check`).

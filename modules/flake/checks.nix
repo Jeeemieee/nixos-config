@@ -5,8 +5,55 @@
   ...
 }:
 {
-  perSystem = { pkgs, system, ... }:
+  perSystem = { pkgs, system, options, ... }:
     let
+      # Settings that decide what an agent may do or what is kept safe may only be set by protected files (config-tool/protected.nix)
+      # Nix merges every module, so without this an ordinary module could set them too. The module system reports the file of every
+      # definition as "<this repository>/<file>, via option ..."; definitions from nixpkgs and the other inputs are not ours to list
+      protectedPaths = (import ../../config-tool/protected.nix).nixos-config;
+      isProtected = file: builtins.any (path: file == path || lib.hasPrefix "${path}/" file) protectedPaths;
+      ownFiles = option:
+        lib.unique (map (file: builtins.head (lib.splitString ", via option " (lib.removePrefix "${inputs.self}/" file)))
+          (builtins.filter (lib.hasPrefix "${inputs.self}/") (map toString option.files)));
+      # "<option> in <file>" for every definition of these options by a file that is not protected; an option a host does not have is skipped
+      unprotectedDefinitions = allOptions: names:
+        lib.concatMap (name:
+          let path = lib.splitString "." name; in
+          lib.optionals (lib.hasAttrByPath path allOptions)
+            (map (file: "${name} in ${file}") (builtins.filter (file: !isProtected file) (ownFiles (lib.getAttrFromPath path allOptions))))
+        ) names;
+      guardedSystemOptions = [
+        # The backup, and what it runs as
+        "services.restic.backups"
+        # What can reach the machine
+        "networking.firewall.enable" "networking.firewall.allowedTCPPorts" "networking.firewall.allowedUDPPorts"
+        "networking.firewall.allowedTCPPortRanges" "networking.firewall.allowedUDPPortRanges" "networking.firewall.trustedInterfaces"
+        "networking.firewall.interfaces" "networking.firewall.extraCommands" "services.openssh.enable"
+        # Who is who, and who becomes root
+        "users.users" "users.groups" "users.mutableUsers" "security.sudo.enable" "security.sudo.wheelNeedsPassword" "security.sudo.extraRules"
+        "security.sudo.extraConfig" "security.wrappers" "security.pam.services" "security.polkit.extraConfig"
+        # The Nix daemon, which every sandbox reaches, and which packages exist
+        "nix.settings" "nix.extraOptions" "nixpkgs.overlays" "nixpkgs.config" "nixpkgs.pkgs"
+        # Where the secrets' key is
+        "sops.age.keyFile" "sops.age.generateKey" "sops.age.sshKeyPaths" "sops.defaultSopsFile"
+        # Disk, boot, and what runs as root when the system is activated
+        "fileSystems" "swapDevices" "boot.initrd.luks.devices" "boot.kernelParams" "services.sanoid.datasets" "system.activationScripts"
+        # What every shell of the user runs, outside any sandbox
+        "environment.extraInit" "environment.shellInit" "programs.bash.interactiveShellInit" "programs.direnv.direnvrcExtra"
+        # The user's own settings as a whole
+        "home-manager.users" "home-manager.sharedModules"
+      ];
+      guardedUserOptions = [
+        # The commit guard's hook, and where git and ssh run programs
+        "programs.git.includes" "programs.git.hooks" "programs.git.settings"
+        "programs.ssh.settings" "programs.ssh.includes" "programs.ssh.extraConfig"
+      ];
+      # What this flake itself offers: the checks, the programs that `nix run` starts, the shells, and the package set they are built from
+      guardedFlakeOptions = [ "checks" "packages" "apps" "devShells" "formatter" "_module.args" ];
+      guardedSettings = host:
+        unprotectedDefinitions host.options guardedSystemOptions
+        ++ unprotectedDefinitions host.options.home-manager.users.valueMeta.attrs.jeeemieee.configuration.options guardedUserOptions
+        ++ unprotectedDefinitions options guardedFlakeOptions;
       # Must match the allowlist in modules/flake/nixpkgs.nix
       unfreeAllowed = [ "obsidian" "discord" "spotify" "zoom" "nvidia-x11" "nvidia-settings" "displaylink" ];
 
@@ -38,6 +85,13 @@
         assert cfg.security.sudo.enable && cfg.security.sudo.wheelNeedsPassword;
         assert !cfg.services.openssh.enable;
         assert cfg.networking.firewall.enable;
+        # Nothing listens: no port is open on any interface, and only the machine's own loopback interface is trusted
+        assert cfg.networking.firewall.allowedTCPPorts == [ ] && cfg.networking.firewall.allowedUDPPorts == [ ];
+        assert cfg.networking.firewall.allowedTCPPortRanges == [ ] && cfg.networking.firewall.allowedUDPPortRanges == [ ];
+        assert cfg.networking.firewall.interfaces == { } && cfg.networking.firewall.trustedInterfaces == [ "lo" ];
+        # A trusted user of the Nix daemon is as good as root, and every pi sandbox reaches the daemon
+        assert cfg.nix.settings.trusted-users == [ "root" ];
+        assert lib.assertMsg (guardedSettings host == [ ]) "guarded settings are defined by files that are not protected (config-tool/protected.nix): ${lib.concatStringsSep "; " (guardedSettings host)}";
         assert cfg.sops.age.keyFile == "/var/lib/sops-nix/key.txt";
         assert !cfg.sops.age.generateKey;
         assert cfg.sops.age.sshKeyPaths == [ ] && cfg.sops.gnupg.sshKeyPaths == [ ];
@@ -195,7 +249,9 @@
         # The laptop backs up the whole of /home hourly, never prunes from its side, and reports a failure on the desktop
         assert mimir.services.restic.backups.home.paths == [ "/home" ] && mimir.services.restic.backups.home.pruneOpts == [ ];
         assert mimir.services.restic.backups.home.passwordFile == mimir.sops.secrets.restic_password.path;
-        assert builtins.elem "/home/*/scratch" mimir.services.restic.backups.home.exclude;
+        # Exactly what docs/BACKUP.md lists as left out, whichever module says so
+        assert lib.sort lib.lessThan mimir.services.restic.backups.home.exclude == [ ".direnv" ".ipynb_checkpoints" ".pytest_cache" ".venv" "/home/*/.cache" "/home/*/.local/share/Trash" "/home/*/.local/share/docker" "/home/*/scratch" "__pycache__" "node_modules" ];
+        assert mimir.services.restic.backups.home.extraBackupArgs == [ "--one-file-system" "--exclude-caches" ];
         assert mimir.systemd.services.restic-backups-home.onFailure == [ "restic-backups-home-failed.service" ];
         # Everything but the EFI partition is encrypted: ZFS inside LUKS, swap with a random key
         assert builtins.attrNames mimir.boot.initrd.luks.devices == [ "crypt" ];

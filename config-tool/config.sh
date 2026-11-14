@@ -160,46 +160,61 @@ install() {
 
 # The two gates of a commit
 guard() {
-  local tree status path extra sensitive=() sensitivePaths=() protectedPath
+  local tree status path extra sensitive=() sensitivePaths=() modules=() shown=() protectedPath isProtected
   refuseIgnoredModules
   tree=$(stagedTree)
 
-  ## Gate 1. Changes to protected files, and files added to or removed from a folder whose files are all loaded, need a typed yes
+  ## Gate 1. Changes to protected files, and every change below modules/, where all files are loaded, need one typed yes
   while IFS= read -r -d "" status; do
     IFS= read -r -d "" path
     extra=
     case "$status" in R* | C*) IFS= read -r -d "" extra ;; esac
     for candidate in "$path" $extra; do
+      isProtected=0
       while IFS= read -r protectedPath; do
         case "$candidate" in
-          "$protectedPath" | "$protectedPath"/*)
-            sensitive+=("$status $candidate")
+          "$protectedPath" | "$protectedPath"/*) isProtected=1 ;;
+        esac
+      done < <(jq -r --arg name "$name" '.[$name][]' "$PROTECTED")
+      if [ "$isProtected" = 1 ]; then
+        sensitive+=("$status $candidate")
+        sensitivePaths+=("$candidate")
+      elif [[ $candidate == modules/* ]]; then
+        case "$status" in
+          M*) modules+=("$status $candidate") ;;
+          *)
+            sensitive+=("$status $candidate (a module added, removed or renamed)")
             sensitivePaths+=("$candidate")
             ;;
         esac
-      done < <(jq -r --arg name "$name" '.[$name][]' "$PROTECTED")
-      case "$status:$candidate" in
-        [ADRC]*:modules/*)
-          sensitive+=("$status $candidate (a module added, removed or renamed: every file below modules/ is loaded)")
-          sensitivePaths+=("$candidate")
-          ;;
-      esac
+      fi
     done
   done < <(git diff --cached --name-status -z)
-  if [ "${#sensitive[@]}" -gt 0 ]; then
-    echo "config: this commit changes protected files of $name:"
-    printf '  %s\n' "${sensitive[@]}" | sort -u
-    # What changes in them, shown by git itself before the question: on a terminal in git's own viewer (q closes it)
+  if [ "${#sensitive[@]}" -gt 0 ] || [ "${#modules[@]}" -gt 0 ]; then
+    if [ "${#sensitive[@]}" -gt 0 ]; then
+      echo "config: this commit changes protected files of $name:"
+      printf '  %s\n' "${sensitive[@]}" | sort -u
+    fi
+    if [ "${#modules[@]}" -gt 0 ]; then
+      # Not protected, yet loaded like every file below modules/: a module can set what another one sets
+      echo "config: this commit changes modules of $name, all of which are loaded into the system:"
+      printf '  %s\n' "${modules[@]}" | sort -u
+    fi
+    # What changes, shown by git itself before the question: a summary of all of it, then the protected files and the added or
+    # removed modules in full, on a terminal in git's own viewer (q closes it). The changed modules are for `git diff --cached`
     echo
-    git --no-pager diff --cached --stat -- "${sensitivePaths[@]}"
-    if [ -t 1 ]; then
-      git diff --cached -- "${sensitivePaths[@]}"
-    else
-      git --no-pager diff --cached -- "${sensitivePaths[@]}"
+    for path in "${modules[@]}"; do shown+=("${path#* }"); done
+    git --no-pager diff --cached --stat -- "${sensitivePaths[@]}" "${shown[@]}"
+    if [ "${#sensitivePaths[@]}" -gt 0 ]; then
+      if [ -t 1 ]; then
+        git diff --cached -- "${sensitivePaths[@]}"
+      else
+        git --no-pager diff --cached -- "${sensitivePaths[@]}"
+      fi
     fi
     local answer=
     read -r -p "Type yes to commit these changes: " answer < "${CONFIG_GUARD_TTY:-/dev/tty}" \
-      || die "no terminal to ask on, so the changes to protected files are not committed"
+      || die "no terminal to ask on, so these changes are not committed"
     [ "$answer" = yes ] || die "not confirmed; nothing was committed"
   fi
 

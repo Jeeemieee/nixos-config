@@ -8,10 +8,10 @@
     "AGENTS.md"
     # This list and the commit guard
     "config-tool"
-    "modules/flake/config-tool.nix"
-    # The checks, and what they are built from
-    "modules/flake/checks.nix"
-    "dev-env/checks.nix"
+    # How the flake is put together: the checks, the package set, the hosts, the admin shell, the config command
+    "modules/flake"
+    # The development environments, their checks and the checks' scripts
+    "dev-env"
     # Secrets, backup, disk, installer and boot: a wrong change loses data or access
     "modules/security"
     "modules/services/backup.nix"
@@ -19,15 +19,23 @@
     "modules/install"
     "install"
     "modules/boot"
+    # The accounts, sudo, the firewall and the Nix settings; and what each host is made of
+    "modules/profiles"
+    "modules/hosts"
+    "modules/users"
+    "modules/host-specification"
+    # Where git and ssh run programs, and modules that carry a check of their own
+    "modules/dev/git"
+    "modules/dev/ssh.nix"
+    "modules/services/search.nix"
     # Which versions of everything are used
     "flake.nix"
     "flake.lock"
     # Which files git leaves out of every status and commit
     ".gitignore"
-    # What direnv evaluates in the user's own shell: its settings, this repository's .envrc, and the admin shell that it loads
+    # What direnv evaluates in the user's own shell: its settings and this repository's .envrc
     "modules/dev/direnv.nix"
     ".envrc"
-    "modules/flake/shell.nix"
   ];
   nixos-secrets = [
     "AGENTS.md"

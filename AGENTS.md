@@ -5,9 +5,9 @@ This repository declares the user's NixOS machines. It decides what agents thems
 ## What holds whether you follow these rules or not
 
 - **You cannot stage, commit or push.** In a pi session the repository's `.git` is read-only. The user reviews and commits.
-- **Protected files are read-only** unless the user started this session with `pi --unlock`: the pi sandbox, the checks, secrets, backup, disk layout, installer, boot, the version pins, direnv's settings with `.envrc` and the admin shell, this file, and the commit guard. The list is `config-tool/protected.nix`. If your task needs one of them, stop and say so; do not work around it.
-- **Every file below `modules/` is loaded.** A new file there can change anything, including what a protected file sets. The commit guard shows the user every module that is added, removed or renamed.
-- **A commit passes two gates** (`docs/UPKEEP.md`): the checks passed on exactly the content being committed, and the user typed yes to every change of a protected file.
+- **Protected files are read-only** unless the user started this session with `pi --unlock`: the pi sandbox, everything below `modules/flake/` (the checks, the package set, the hosts, the admin shell), the development environments, secrets, backup, disk layout, installer, boot, the profiles, hosts and accounts, the git and ssh settings, the version pins, direnv's settings with `.envrc`, `.gitignore`, this file, and the commit guard. The list is `config-tool/protected.nix`. If your task needs one of them, stop and say so; do not work around it.
+- **Every file below `modules/` is loaded.** A file there can change anything, including what a protected file sets. The checks refuse an unprotected file that sets a guarded setting (the firewall, the backup, the accounts, sudo, the Nix settings, the checks themselves; the list is in `modules/flake/checks.nix`), and the commit guard asks the user about every commit that changes a module.
+- **A commit passes two gates** (`docs/UPKEEP.md`): the checks passed on exactly the content being committed, and the user typed yes to every change of a protected file and to every commit that changes a module.
 
 ## How to work here
 

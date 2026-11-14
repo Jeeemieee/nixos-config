@@ -113,6 +113,14 @@
                         expect "a new module, answer yes" "$(outcome yes $config commit 'module')" accepted
                         mkdir -p docs && echo text > docs/new.md
                         expect "a new ordinary file, answer no" "$(outcome no $config commit 'docs')" accepted
+                        # A changed module is asked about once, with its name: every module is loaded and can set what a protected file sets
+                        echo "{ changed = true; }" > modules/extra.nix
+                        expect "a changed module, answer no" "$(outcome no $config commit 'changed module')" refused
+                        said "changes modules of nixos-config"
+                        said "M modules/extra.nix"
+                        expect "a changed module, no terminal" "$(CONFIG_GUARD_TTY=/nonexistent $config commit 'changed module' > /dev/null 2>&1 && echo accepted || echo refused)" refused
+                        expect "a changed module, answer yes" "$(outcome yes $config commit 'changed module')" accepted
+                        expect "the changed module was committed" "$(git log --format=%s -1)" "changed module"
 
                         ## Step 4. The checks and the builds take a commit's content, never the folder
                         printf 'ignored-*\nresult\n' > .gitignore && echo '#!/bin/sh' > tool.sh && chmod +x tool.sh && ln -s notes.md link

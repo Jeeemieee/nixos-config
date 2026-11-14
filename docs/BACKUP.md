@@ -17,7 +17,7 @@ Snapshots on the disk ([DISK.md](DISK.md)) undo mistakes within days; the backup
   | `.direnv`, `.venv`, `node_modules` | Development environments, rebuilt from their definition files |
   | `__pycache__`, `.pytest_cache`, `.ipynb_checkpoints` | Python and Jupyter by-products |
   | Folders with a `CACHEDIR.TAG` file | They mark themselves as a cache |
-  | Other file systems under `/home` | Network drives, a mounted backup |
+  | Other file systems under `/home` | Network drives, a mounted backup. On the laptop this also leaves out `~/workers`, which is a dataset of its own ([DISK.md](DISK.md)): the agent workers' copies, reports and sessions are not in the backup until the worker tools add them. Its snapshots on the disk exist |
 
   `.pi` folders in projects are kept: they hold unmerged work. Nothing outside `/home` is backed up; the system is rebuilt from this repository.
 - **Where:** the home server's rest-server, reached through Tailscale only. Its address and this machine's credentials are the secrets `restic_env` and `restic_password` in `secrets/mimir.yaml` of nixos-secrets ([SECRETS.md](SECRETS.md)).
