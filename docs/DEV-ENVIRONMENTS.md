@@ -22,7 +22,7 @@ mkdir ~/projects/<name> && cd ~/projects/<name> && git init
 nix flake init -t github:Jeeemieee/nixos-config#project
 ```
 
-Choose the blocks in `flake.nix`, then `direnv allow`. The template's `README.md` describes the Python steps: `uv venv --system-site-packages` once, then `uv add <package>`; the numerics packages come from the shell and are listed under `exclude-dependencies` in `pyproject.toml`, so uv does not install its own copies.
+Choose the blocks in `flake.nix`, then `direnv allow` and `nix-direnv-reload`; run `nix-direnv-reload` again after every change of `flake.nix` or `flake.lock`, since the environment is not reloaded by itself (see [MIMIR-VM.md](MIMIR-VM.md), direnv). The template's `README.md` describes the Python steps: `uv venv --system-site-packages` once, then `uv add <package>`; the numerics packages come from the shell and are listed under `exclude-dependencies` in `pyproject.toml`, so uv does not install its own copies.
 
 Update the blocks of a project with `nix flake update blocks`, then delete `.venv` and create it again.
 

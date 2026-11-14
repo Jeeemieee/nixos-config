@@ -3,7 +3,7 @@
 # and nothing else of the home folder, no session sockets (Docker, D-Bus, SSH agent, keyrings) and no other processes
 # Of ~/.pi/agent it sees the declared files, fixed and read-only, and keeps the login and the sessions; whatever else is written there is discarded at exit
 # Its instructions, settings and extensions are declared here and read-only, also for pi itself
-{ inputs, ... }:
+{ inputs, config, ... }:
 let
   # The extensions pi loads, by their folder in the tree below
   extensionNames = [
@@ -849,6 +849,117 @@ in
             expect "unlocked through --allow" "$(grep -x 'protected-file=.*' actual)" "protected-file=written"
             grep -q "unlocked for this session" message || { echo "FAIL: --unlock did not say what it unlocked"; failed=1; }
             if (cd "$HOME/projects/a" && TARGET=$HOME/projects/a ${launcher} --unlock) > actual 2> message; then echo "FAIL: --unlock was accepted where nothing is protected"; failed=1; fi
+
+            [ "$failed" = 0 ] || exit 1
+            touch "$out"
+          '';
+
+      # Nothing a session writes in a project is evaluated by direnv in the user's shell afterwards (the settings are in modules/dev/direnv.nix)
+      checks.pi-sandbox-direnv =
+        let
+          # In a session: a line added to direnv's cached environment, a program where nix-direnv puts programs first, and a changed flake
+          direnvProbe = pkgs.writeShellScript "pi-sandbox-direnv-probe" ''
+            cd "$PROJECT"
+            mkdir -p .direnv/bin
+            for cache in .direnv/flake-profile-session.rc .direnv/*.rc "$LAYOUTS"/*/*.rc; do
+              if [ -e "$(dirname "$cache")" ] && echo "touch '$MARKER_CACHE'" >> "$cache" 2>/dev/null; then echo "cache=written ($cache)"; fi
+            done
+            if printf '#!/bin/sh\ntouch %s\n' "$MARKER_PROGRAM" > .direnv/bin/git 2>/dev/null && chmod +x .direnv/bin/git; then echo "program=written"; fi
+            if [ "$FLAKE" = change ]; then echo '{ } # changed in the session' > flake.nix && echo "flake=changed"; fi
+          '';
+          sandboxedDirenvProbe = mkSandbox pkgs {
+            name = "pi";
+            command = "${direnvProbe}";
+            declared = [ ".pi/agent/AGENTS.md" ];
+          };
+          # Stands in for nix: it hands out a dev shell without building anything, and counts how often one is evaluated
+          countingNix = pkgs.writeShellScriptBin "nix" ''
+            profile= ; link= ; last=
+            args=("$@")
+            for ((i = 0; i < ''${#args[@]}; i++)); do
+              case "''${args[i]}" in
+                --version) echo "nix (Nix) 2.34.9"; exit 0 ;;
+                --profile) profile=''${args[i + 1]} ;;
+                --out-link) link=''${args[i + 1]} ;;
+              esac
+              last=''${args[i]}
+            done
+            case " $* " in
+              *" print-dev-env "*) echo evaluated >> "$HOME/evaluations"; ln -sfn ${pkgs.emptyFile} "$profile"; echo 'export FROM_DEVSHELL=genuine' ;;
+              *" flake archive "*) echo '{}' ;;
+              *" build "*) ln -sfn "$(readlink -f "$last")" "$link" ;;
+            esac
+          '';
+          # direnv's settings as the laptop has them, and as they are without this repository's two lines
+          declaredSettings =
+            pkgs.writeTextDir "direnvrc"
+              config.flake.nixosConfigurations.mimir.config.environment.etc."direnv/direnvrc".text;
+          stockSettings = pkgs.writeTextDir "direnvrc" "source ${pkgs.nix-direnv}/share/nix-direnv/direnvrc\n";
+        in
+        pkgs.runCommand "pi-sandbox-direnv-check"
+          {
+            nativeBuildInputs = [
+              pkgs.bubblewrap
+              pkgs.git
+              pkgs.direnv
+              countingNix
+            ];
+          }
+          ''
+            export USER=tester GIT_CONFIG_GLOBAL=$TMPDIR/gitconfig
+            git config --global user.name t && git config --global user.email t@example.org
+            failed=0
+            expect() { if [ "$2" = "$3" ]; then echo "ok   $1: $2"; else echo "FAIL $1: $2 (expected $3)"; failed=1; fi; }
+            ran() { if [ -e "$1" ]; then echo ran; else echo did-not-run; fi; }
+
+            # The user sets a project up and loads it; a session works in it; the user comes back. Prints what happened afterwards
+            scenario() {
+              export HOME=$TMPDIR/$1 DIRENV_CONFIG=$2
+              mkdir -p "$HOME/.pi/agent" "$HOME/project"
+              touch "$HOME/evaluations"
+              ln -s ${pkgs.writeText "pi-sandbox-rules" "rules"} "$HOME/.pi/agent/AGENTS.md"
+              project=$HOME/project
+              git init -q "$project" && echo 'use flake' > "$project/.envrc" && echo '{ }' > "$project/flake.nix"
+              git -C "$project" add -A && git -C "$project" commit -q -m base
+              (cd "$project" && direnv allow . && direnv exec . true) > "$HOME/first-load" 2>&1 || true
+              reload=$(find "$HOME/.cache/direnv" "$project/.direnv" -name nix-direnv-reload 2> /dev/null | head -n 1 || true)
+              echo "reload-program=''${reload#"$HOME"/}"
+              echo "asked-to-reload=$(grep -c 'use "nix-direnv-reload"' "$HOME/first-load")"
+              if [ "$3" = by-hand ]; then (cd "$project" && bash "$reload") > /dev/null 2>&1 || echo "reload=failed"; fi
+              echo "before-the-session=$(cd "$project" && direnv exec . sh -c 'echo "$FROM_DEVSHELL"' 2> /dev/null), evaluations $(wc -l < "$HOME/evaluations")"
+              sleep 1
+              (cd "$project" && PROJECT=$project FLAKE=$4 LAYOUTS=$HOME/.cache/direnv/layouts MARKER_CACHE=$HOME/marker-cache MARKER_PROGRAM=$HOME/marker-program ${sandboxedDirenvProbe}/bin/pi) 2>&1 | sed 's/^/session: /'
+              echo "afterwards=$(cd "$project" && direnv exec . sh -c 'echo "$FROM_DEVSHELL"' 2> /dev/null), evaluations $(wc -l < "$HOME/evaluations")"
+              (cd "$project" && direnv exec . git status > /dev/null 2>&1) || true
+              echo "line-in-the-cache=$(ran "$HOME/marker-cache")"
+              echo "program-instead-of-git=$(ran "$HOME/marker-program")"
+            }
+
+            ## Step 1. With the declared settings: the cache is outside the project and nothing of the session runs outside
+            scenario declared-keep ${declaredSettings} by-hand keep > actual
+            cat actual
+            expect "the cache is outside the project" "$(grep -c '^reload-program=.cache/direnv/layouts/' actual)" "1"
+            expect "the first load waits for the user" "$(grep -x 'asked-to-reload=.*' actual)" "asked-to-reload=1"
+            expect "the user's reload loads the dev shell" "$(grep -x 'before-the-session=.*' actual)" "before-the-session=genuine, evaluations 1"
+            expect "the session did not reach the cache" "$(grep -c '^session: cache=written (.*/.cache/' actual)" "0"
+            expect "the session's line in a cache file" "$(grep -x 'line-in-the-cache=.*' actual)" "line-in-the-cache=did-not-run"
+            expect "the session's program in place of git" "$(grep -x 'program-instead-of-git=.*' actual)" "program-instead-of-git=did-not-run"
+
+            ## Step 2. With the declared settings: a flake changed in the session is not evaluated until the user asks
+            scenario declared-change ${declaredSettings} by-hand change > actual
+            cat actual
+            expect "the session changed the flake" "$(grep -c '^session: flake=changed' actual)" "1"
+            expect "the changed flake is not evaluated by itself" "$(grep -x 'afterwards=.*' actual)" "afterwards=genuine, evaluations 1"
+
+            ## Step 3. Control: with nix-direnv's own settings all three happen, so this test can tell the difference
+            scenario stock-keep ${stockSettings} by-itself keep > actual
+            cat actual
+            expect "control, the cache is in the project" "$(grep -c '^reload-program=project/.direnv/' actual)" "1"
+            expect "control, the session's line in the cache file" "$(grep -x 'line-in-the-cache=.*' actual)" "line-in-the-cache=ran"
+            expect "control, the session's program in place of git" "$(grep -x 'program-instead-of-git=.*' actual)" "program-instead-of-git=ran"
+            scenario stock-change ${stockSettings} by-itself change > actual
+            cat actual
+            expect "control, the changed flake is evaluated by itself" "$(grep -x 'afterwards=.*' actual)" "afterwards=genuine, evaluations 2"
 
             [ "$failed" = 0 ] || exit 1
             touch "$out"

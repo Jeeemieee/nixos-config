@@ -22,6 +22,10 @@
     # Which versions of everything are used
     "flake.nix"
     "flake.lock"
+    # What direnv evaluates in the user's own shell: its settings, this repository's .envrc, and the admin shell that it loads
+    "modules/dev/direnv.nix"
+    ".envrc"
+    "modules/flake/shell.nix"
   ];
   nixos-secrets = [
     "AGENTS.md"

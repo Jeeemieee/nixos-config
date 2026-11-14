@@ -147,9 +147,17 @@ The `pi-sandbox` check runs a probe in the same sandbox and compares what it can
 
 ```bash
 echo 'use flake' > .envrc && direnv allow
+nix-direnv-reload
 ```
 
-Leaving the directory unloads the environment. nix-direnv caches the evaluated shell in `.direnv/` (add it to the project's `.gitignore`; on these machines it is also ignored globally by `homeManager.git`) and keeps it from garbage collection, so re-entering is fast. Every change to `.envrc` must be approved again with `direnv allow`. In VSCodium, `mkhl.direnv` applies the same environment to language servers, debuggers, and Jupyter kernels.
+Leaving the directory unloads the environment. nix-direnv caches the evaluated shell and keeps it from garbage collection, so re-entering is fast. Every change to `.envrc` must be approved again with `direnv allow`.
+
+direnv runs in your own shell, outside the pi sandbox, so two settings keep it from evaluating what an agent wrote in a project:
+
+- The cache is in `~/.cache/direnv/layouts/`, one folder per project, not in the project's `.direnv/`. No sandbox sees it.
+- A changed `flake.nix` or `flake.lock` is not loaded by itself. direnv says `cache is out of date`, and the old environment stays until you run `nix-direnv-reload` in the project. Look at what changed first (`git diff`): a dev shell's hook runs in your shell.
+
+The `pi-sandbox-direnv` check shows both, with a control. Not covered: an `.envrc` that does more than `use flake`, for example one that loads a `.env` file; what it reads is then loaded without a question whenever it changes. In VSCodium, `mkhl.direnv` applies the same environment to language servers, debuggers, and Jupyter kernels.
 
 Projects normally get their tools from the building blocks in [DEV-ENVIRONMENTS.md](DEV-ENVIRONMENTS.md). Other project flakes must name nixpkgs explicitly, for example `inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";`, and commit their `flake.lock`. A bare `nixpkgs` input is locked through the global registry, which points to nixpkgs-unstable, not the system's pinned nixpkgs.
 
