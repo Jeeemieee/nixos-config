@@ -1,8 +1,12 @@
-# The config command for the upkeep of this repository and nixos-secrets: checks, guarded commits, updates (docs/UPKEEP.md)
-# `nix run .#config -- <command>`; also in the admin shell, and on the workstations as a program of the user
+# Config command flake wiring
+#
+# What it is    The config package, user installation, Git hooks and end-to-end guard test
+# Who uses it   The owner through nix run, the admin shell or the installed workstation command
+# A user adds   Nothing; the command recognises the two repositories listed in config-tool/protected.nix
+# Protected     Yes: it implements the repository safeguards described in docs/UPKEEP.md
 let
-  # What git runs in the two repositories: before every commit the two gates of `config commit`, and before every push the same
-  # gates for what the push sends, since a merge, a fast-forward, a cherry-pick and a rebase make commits without the first hook
+  # Run the command's two gates before commits and again before pushes in both kept repositories
+  # Pushes need their own hook because several Git operations can bypass the commit hook
   hooksFor =
     pkgs: tool:
     pkgs.linkFarm "config-guard-hooks" [
@@ -17,27 +21,33 @@ let
     ];
 in
 {
+  ## Part 1. User installation and Git hooks
   flake.modules.homeManager.config-tool =
     { pkgs, ... }:
     let
+      # Build the real command without the stand-ins used by its test
       tool = import ../../config-tool pkgs { };
     in
     {
+      # Install the command in the user's normal PATH
       home.packages = [ tool ];
 
-      # Named in the user's own git settings, which a pi sandbox only reads, so an agent cannot switch the hook off
+      # Name the hooks in protected Git settings that a pi sandbox can read but cannot change
       programs.git.includes = map (repository: {
         condition = "gitdir:~/repos/${repository}/";
         contents.core.hooksPath = "${hooksFor pkgs tool}";
       }) (builtins.attrNames (import ../../config-tool/protected.nix));
     };
 
+  ## Part 2. Package output and guard test
   perSystem =
     { pkgs, ... }:
     let
+      # Publish the same real command that Home Manager installs
       tool = import ../../config-tool pkgs { };
-      # The real checks and builds cannot run inside a check. The stand-in for the checks passes unless the content holds a file
-      # named BROKEN; both stand-ins keep a copy of the folder they were given, and the one for builds its arguments
+
+      # Replace recursive checks and builds with stand-ins while testing the command itself
+      # The check fails on a file named BROKEN, and both stand-ins save their input for exact comparisons
       testTool = import ../../config-tool pkgs {
         checkCommand = pkgs.writeShellScript "config-stand-in-checks" ''
           rm -rf "$HOME/checked" && cp -a "$1" "$HOME/checked"
@@ -52,9 +62,10 @@ in
       };
     in
     {
+      # Expose the command as packages.config and therefore through nix run .#config
       packages.config = tool;
 
-      # The gates of a commit, in a scratch repository with a stand-in for the checks; and the extension updater against a stand-in registry
+      # Exercise the commit and push gates in scratch repositories and the updater against a stand-in registry
       checks.config-guard =
         pkgs.runCommand "config-guard-check"
           {
@@ -120,7 +131,7 @@ in
             expect "a new module, answer yes" "$(outcome yes $config commit 'module')" accepted
             mkdir -p docs && echo text > docs/new.md
             expect "a new ordinary file, answer no" "$(outcome no $config commit 'docs')" accepted
-            # A changed module is asked about once, with its name: every module is loaded and can set what a protected file sets
+            # Ask once for a changed module because every module is loaded and can set protected options
             echo "{ changed = true; }" > modules/extra.nix
             expect "a changed module, answer no" "$(outcome no $config commit 'changed module')" refused
             said "changes modules of nixos-config"
@@ -132,7 +143,7 @@ in
             ## Step 4. The checks and the builds take a commit's content, never the folder
             printf 'ignored-*\nresult\n' > .gitignore && echo '#!/bin/sh' > tool.sh && chmod +x tool.sh && ln -s notes.md link
             expect "a rule for git to ignore files, answer yes" "$(outcome yes $config commit 'ignore')" accepted
-            # A file that git ignores is not in the content that is checked, whatever it is: this one would fail the stand-in
+            # Ignore files outside the staged content even when one would fail the stand-in check
             touch ignored-BROKEN && cp ignored-BROKEN BROKEN && echo "BROKEN" >> .git/info/exclude
             echo checked >> notes.md && git add -A
             expect "a check with ignored files in the folder" "$(outcome yes $config check)" accepted
@@ -140,7 +151,7 @@ in
             expect "a file of it, byte for byte" "$(cmp -s notes.md "$HOME/checked/notes.md" && echo equal)" equal
             expect "a program and a link of it" "$([ -x "$HOME/checked/tool.sh" ] && readlink "$HOME/checked/link")" notes.md
             rm BROKEN ignored-BROKEN
-            # Below modules/ every file is loaded when the folder is built, so an ignored file there is refused and named
+            # Refuse and name an ignored file below modules/ because a direct folder build would load it
             mkdir -p modules/result && echo "{ }" > modules/result/hidden.nix
             expect "git shows nothing of it" "$(git status --porcelain -- modules | wc -l)" 0
             expect "a check with an ignored module" "$(outcome yes $config check)" refused
@@ -165,7 +176,7 @@ in
             said "no passed check is recorded for the last commit"
             expect "the check of that commit, then the build" "$(outcome yes $config check && outcome yes $config build mimir)" "$(printf 'accepted\n%s' "accepted")"
 
-            ## Step 5. A push passes the same two gates, through the hooks that git is given in the two repositories
+            ## Step 5. Apply the same two gates through both repositories' push hooks
             git push -q origin main
             git config core.hooksPath ${hooksFor pkgs testTool}
             pushed() { git -C "$HOME/remote/nixos-config.git" log --format=%s -1 "''${1:-main}"; }
@@ -176,7 +187,7 @@ in
             echo two >> notes.md && git add -A
             expect "the check, then a plain git commit and push" "$(outcome no $config check > /dev/null; outcome no git commit -q -m 'through the commit hook' && outcome no git push -q origin main)" "$(printf 'accepted\n%s' "accepted")"
             expect "it was pushed" "$(pushed)" "through the commit hook"
-            # A commit made without the guard, changing a protected file: the push needs a passed check, and then the yes
+            # Require a passed check and typed yes when an unguarded commit changed a protected file
             echo weaker >> modules/dev/pi.nix && git add -A && git commit -q --no-verify -m 'without the guard'
             expect "a push of a commit without the guard, no check" "$(outcome yes git push -q origin main)" refused
             said "no passed check is recorded for the content of refs/heads/main"
@@ -274,7 +285,7 @@ in
             cat updater.out
             expect "the updated file" "$(tr '\n' ' ' < pins.nix)" '(npm "@scope/one" "2.0.0"   "sha512-bmV3SGFzaE9uZQ==" ) (npm "two" "1.0.0" "sha512-c2FtZUhhc2g=") other = "1.5.0"; "@scope/one 2.0.0" "two 1.0.0" '
             grep -q '@scope/one: 1.5.0 -> 2.0.0' updater.out && grep -q 'two: unchanged' updater.out || { echo "FAIL: the updater did not say what changed"; failed=1; }
-            # An answer that is not a version and a hash, and a package the registry does not know: the file stays as it is
+            # Leave the file unchanged for malformed registry data or a missing package
             cp pins.nix before.nix
             echo '{"version":"3.0.0\"; other","dist":{"integrity":"sha512-bmV3SGFzaE9uZQ=="}}' > registry/two/latest
             if CONFIG_NPM_REGISTRY=file://$PWD/registry python3 -I ${../../config-tool/update-extensions.py} pins.nix > /dev/null 2>&1; then echo "FAIL: a malformed answer was accepted"; failed=1; fi

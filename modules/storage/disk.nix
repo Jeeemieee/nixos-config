@@ -1,23 +1,32 @@
-# Encrypted ZFS system disk with snapshots; hosts opt in by importing nixos.disk and setting hostSpec.disk
-# Layout: EFI partition, swap with a random key per boot, and a LUKS container holding the ZFS pool rpool
-# Each dataset and its snapshot policy are declared here, in one place
+# Encrypted ZFS disk layout
+#
+# What it is    EFI, random-key swap and a LUKS-encrypted ZFS pool with quotas and snapshots
+# Who uses it   A physical NixOS host by importing nixos.disk and filling hostSpec.disk
+# A host adds   Its stable disk path, scratch owner and sizes chosen for that disk
+# Protected     Yes: applying this layout erases a disk and a wrong change can lose data (docs/DISK.md)
 { inputs, config, ... }:
 let
+  # Keep the named disk and boot modules available for the install test below
   topLevel = config;
 in
 {
   flake.modules.nixos.disk =
     { config, lib, ... }:
     let
+      ## Part 1. Host values and reusable dataset shape
+      # Use one short name for the host-specific disk choices
       cfg = config.hostSpec.disk;
+
+      # Look up the account that owns the writable scratch dataset
       scratchOwner = config.users.users.${cfg.scratchUser};
-      # Not read from the account: the list of accounts depends on the file systems, which depend on this path
+      # Build this path directly because accounts and file systems depend on each other during evaluation
       scratchPath = "/home/${cfg.scratchUser}/scratch";
-      # The copies and the raw output of agent workers; both top folders belong to root, so that nothing running as the user can rename or replace what is mounted below them
+      # Keep worker copies and raw worker output below root-owned top folders
+      # This prevents user processes from renaming or replacing the mount points
       workersPath = "/home/${cfg.scratchUser}/workers";
       workersScratchPath = "${scratchPath}/workers";
 
-      # Every dataset is mounted through fileSystems (legacy mountpoint), so NixOS orders the mounts
+      # Use legacy mount points so NixOS orders every ZFS dataset through fileSystems
       dataset = mountpoint: options: {
         type = "zfs_fs";
         inherit mountpoint;
@@ -28,8 +37,10 @@ in
       };
     in
     {
+      # Add disko's declarative disk and installation scripts
       imports = [ inputs.disko.nixosModules.disko ];
 
+      ## Part 2. Values every host must choose
       options.hostSpec.disk = {
         device = lib.mkOption {
           type = lib.types.str;
@@ -50,7 +61,7 @@ in
           type = lib.types.str;
           description = "The user whose ~/scratch is the scratch dataset and whose ~/workers is the workers dataset.";
         };
-        # The sizes have no defaults: they depend on the disk, so every host states them
+        # Require host-specific capacities because safe limits depend on the physical disk size
         scratchQuota = lib.mkOption {
           type = lib.types.str;
           example = "800G";
@@ -74,6 +85,7 @@ in
       };
 
       config = {
+        # Refuse a scratch path that does not sit inside the chosen account's real home folder
         assertions = [
           {
             assertion = scratchOwner.home == "/home/${cfg.scratchUser}";
@@ -81,6 +93,7 @@ in
           }
         ];
 
+        ## Part 3. Partitions, encryption and datasets
         disko.devices = {
           disk.main = {
             type = "disk";
@@ -88,6 +101,7 @@ in
             content = {
               type = "gpt";
               partitions = {
+                # Reserve a private UEFI system partition for boot files
                 ESP = {
                   size = "1G";
                   type = "EF00";
@@ -98,7 +112,7 @@ in
                     mountOptions = [ "umask=0077" ];
                   };
                 };
-                # A new random key at every boot: nothing in swap survives a reboot, and there is no hibernation
+                # Use a fresh random swap key each boot because hibernation is deliberately unavailable
                 swap = {
                   size = cfg.swapSize;
                   content = {
@@ -106,13 +120,14 @@ in
                     randomEncryption = true;
                   };
                 };
+                # Give all remaining space to one encrypted container holding the ZFS pool
                 luks = {
                   size = "100%";
                   content = {
                     type = "luks";
                     name = "crypt";
                     inherit (cfg) passwordFile;
-                    # TRIM reaches the SSD through the encryption layer
+                    # Pass discard information through encryption so SSD TRIM still works
                     settings.allowDiscards = true;
                     content = {
                       type = "zfs";
@@ -127,9 +142,12 @@ in
           zpool.rpool = {
             type = "zpool";
             options = {
+              # Align ZFS writes to 4 KiB sectors
               ashift = "12";
+              # Return unused blocks to the SSD automatically
               autotrim = "on";
             };
+            # Apply space-saving and Linux-compatible defaults to every child dataset
             rootFsOptions = {
               mountpoint = "none";
               canmount = "off";
@@ -139,6 +157,7 @@ in
               acltype = "posixacl";
               dnodesize = "auto";
             };
+            # Separate reproducible data, personal data, scratch output and agent work for independent limits
             datasets = {
               root = dataset "/" { };
               nix = dataset "/nix" { quota = cfg.nixQuota; };
@@ -150,30 +169,35 @@ in
           };
         };
 
-        # /home is mounted before users are created, so home folders are created in it and not underneath it
+        ## Part 4. Mount order and ownership
+        # Mount /home before account creation so home folders are created inside its dataset
         fileSystems."/home".neededForBoot = true;
 
-        # The mount point of a dataset belongs to root; the scratch folder belongs to its user, the two workers folders stay root's
+        # Give scratch to its user while keeping both worker mount points owned by root
         systemd.tmpfiles.rules = [
           "d ${scratchPath} 0755 ${scratchOwner.name} ${scratchOwner.group} -"
           "d ${workersPath} 0755 root root -"
           "d ${workersScratchPath} 0755 root root -"
         ];
 
+        # Never force-import a root pool that appears to belong to another active system
         boot.zfs.forceImportRoot = false;
-        # ZFS's cache gives memory back slowly; capped at 4 GiB so that simulations and agent workers keep the RAM
+
+        # Cap ZFS's slowly released cache at 4 GiB so simulations and agent workers retain memory
         boot.kernelParams = [ "zfs.zfs_arc_max=${toString (4 * 1024 * 1024 * 1024)}" ];
 
+        ## Part 5. Disk maintenance and snapshots
         services.zfs = {
-          # Reads every block and verifies its checksum
+          # Read every block monthly so checksum errors are found while recovery is still possible
           autoScrub = {
             enable = true;
             interval = "monthly";
           };
+          # Schedule explicit pool TRIM in addition to the pool's automatic setting
           trim.enable = true;
         };
 
-        # Snapshots: only for data that cannot be recreated; none for /nix and scratch, the workers' areas in scratch included
+        # Snapshot only data that cannot be recreated, excluding /nix and all scratch datasets
         services.sanoid = {
           enable = true;
           templates = {
@@ -185,8 +209,8 @@ in
               autosnap = true;
               autoprune = true;
             };
-            # Shorter than /home's: workers' copies change fast, and a snapshot keeps every deleted file against the dataset's limit
-            # Committed work is in git and in the backup; these are the net under an agent that wrecks its own copy
+            # Retain worker snapshots for less time because fast-changing copies consume their quota quickly
+            # Git and backup hold committed work; these snapshots only protect an agent's current copy
             workers = {
               hourly = 24;
               daily = 7;
@@ -207,7 +231,7 @@ in
           datasets = {
             "rpool/home".useTemplate = [ "home" ];
             "rpool/root".useTemplate = [ "system" ];
-            # Recursive: the dataset of every worker, created later below this one, is covered without a rule of its own
+            # Cover every worker dataset created later below this one without adding another rule
             "rpool/workers" = {
               useTemplate = [ "workers" ];
               recursive = true;
@@ -217,32 +241,40 @@ in
       };
     };
 
+  ## Part 6. Full disk installation test
   perSystem =
     { pkgs, ... }:
     let
-      # A minimal system on this layout; disko's install test formats empty virtual disks with it, installs, and boots from them
+      # Let disko format empty virtual disks, install a minimal host and boot it from this layout
       testHost = inputs.nixpkgs.lib.nixosSystem {
         modules = [
           topLevel.flake.modules.nixos.disk
           topLevel.flake.modules.nixos.boot
           {
+            # Use the same package set as the check runner
             nixpkgs.pkgs = pkgs;
+
+            # Give the isolated test fixed identifiers that do not describe a real host
             networking.hostName = "disktest";
             networking.hostId = "8425e349";
             system.stateVersion = "26.05";
+            # Provide the account whose home, scratch and worker permissions are tested
             users.users.tester = {
               isNormalUser = true;
               uid = 1000;
             };
 
             hostSpec.disk = {
+              # Use disko's empty secondary virtual disk as the destructive target
               device = "/dev/vdb";
-              # The test disks are 4 GiB
+
+              # Fit swap and reservations inside the test's 4 GiB disks
               swapSize = "256M";
-              # Only for formatting; at boot the passphrase is typed on the console below
+              # Supply a formatting key only; type the boot passphrase through the console below
               passwordFile = "/tmp/secret.key";
               scratchUser = "tester";
-              # Small enough for the test disks; the reservation must fit, the limits need not
+
+              # Keep the reservation small enough to fit; quota limits may be larger than current use
               scratchQuota = "1G";
               workersQuota = "512M";
               nixQuota = "3G";
@@ -250,32 +282,33 @@ in
             };
 
             disko.tests = {
+              # Unlock the encrypted root disk at the boot prompt
               bootCommands = ''
                 machine.wait_for_console_text("Please enter passphrase for disk")
                 machine.send_console("secretsecret\n")
               '';
               extraChecks = ''
-                # 1. The pool is healthy and sits on the opened LUKS container
+                ## Step 1. Check the healthy pool sits on the opened LUKS container
                 machine.succeed("zpool status -x rpool | grep -q 'is healthy'")
                 machine.succeed("cryptsetup isLuks /dev/disk/by-partlabel/disk-main-luks")
                 machine.succeed("zpool status -LP rpool | grep -q \"$(readlink -f /dev/mapper/crypt)\"")
 
-                # 2. The six datasets are mounted, compressed, without access-time updates
+                ## Step 2. Check every dataset mount, compression and access-time setting
                 for path, name in [("/", "rpool/root"), ("/nix", "rpool/nix"), ("/home", "rpool/home"), ("/home/tester/scratch", "rpool/scratch"), ("/home/tester/scratch/workers", "rpool/scratch/workers"), ("/home/tester/workers", "rpool/workers")]:
                     machine.succeed(f"test \"$(findmnt -n -o SOURCE {path})\" = {name}")
                     machine.succeed(f"test \"$(zfs get -H -o value compression {name})\" = zstd")
                     machine.succeed(f"test \"$(zfs get -H -o value atime {name})\" = off")
 
-                # 3. Swap is active on a plain dm-crypt device with a random key
-                # swapon reports the kernel name (/dev/dm-N), so the device itself is asked for its type and mapping name
+                ## Step 3. Check swap uses plain dm-crypt with a random key
+                # Ask the device for its type because swapon reports only the kernel's /dev/dm-N name
                 swap = machine.succeed("swapon --noheadings --show=NAME").strip()
                 machine.succeed(f"test \"$(lsblk -n -o TYPE {swap})\" = crypt")
                 machine.succeed(f"cryptsetup status \"$(dmsetup info -c --noheadings -o name {swap})\" | grep -q 'type: *PLAIN'")
 
-                # 4. A snapshot of /home is taken, and a deleted file is restored from it
+                ## Step 4. Take a /home snapshot and restore a deleted file from it
                 machine.succeed("test \"$(stat -c '%U %a' /home/tester)\" = 'tester 700'")
                 machine.succeed("su tester -c 'echo precious > /home/tester/file'")
-                # --wait: the unit only reports "started", the snapshots are taken while it runs
+                # Wait for completion because the unit reports started before snapshots have finished
                 machine.succeed("systemctl start --wait sanoid.service")
                 snapshots = machine.succeed("zfs list -H -t snapshot -o name")
                 print(snapshots)
@@ -285,18 +318,18 @@ in
                 snapshot = machine.succeed("zfs list -H -t snapshot -o name rpool/home | grep _hourly | head -1 | cut -d@ -f2").strip()
                 machine.succeed(f"test \"$(cat /home/.zfs/snapshot/{snapshot}/tester/file)\" = precious")
 
-                # 5. Scratch and /nix have no snapshots; the limits and the reservation are set; scratch belongs to its user
+                ## Step 5. Check excluded snapshots, limits, reservation and scratch ownership
                 machine.fail("zfs list -H -t snapshot -o name | grep -qE '^rpool/(scratch|scratch/workers|nix)@'")
                 for name, prop, value in [("rpool/scratch", "quota", "1G"), ("rpool/workers", "quota", "512M"), ("rpool/nix", "quota", "3G"), ("rpool/home", "reservation", "256M")]:
                     machine.succeed(f"test \"$(zfs get -H -o value {prop} {name})\" = {value}")
                 machine.succeed("su tester -c 'echo data > /home/tester/scratch/output'")
 
-                # 6. The cache is capped at 4 GiB; scrub and TRIM are scheduled
+                ## Step 6. Check the 4 GiB cache cap and disk-maintenance timers
                 machine.succeed("test \"$(cat /sys/module/zfs/parameters/zfs_arc_max)\" = 4294967296")
                 machine.succeed("systemctl is-enabled zfs-scrub.timer zpool-trim.timer")
 
-                # 7. The two workers folders belong to root: the user can neither create something in them nor rename them
-                # Control: the same user can write in ~/scratch (step 5) and rename an ordinary folder of his own
+                ## Step 7. Check root owns and protects both worker mount points
+                # Control that the same user can write in scratch and rename an ordinary folder
                 for path in ["/home/tester/workers", "/home/tester/scratch/workers"]:
                     machine.succeed(f"test \"$(stat -c '%U %a' {path})\" = 'root 755'")
                     machine.fail(f"su tester -c 'mkdir {path}/project'")
@@ -304,9 +337,9 @@ in
                     machine.succeed(f"test -d {path} && ! test -e {path}-moved")
                 machine.succeed("su tester -c 'mkdir /home/tester/plain && mv /home/tester/plain /home/tester/plain-moved'")
 
-                # 8. A dataset created later below the workers dataset gets snapshots without a rule of its own; one below scratch does not
+                ## Step 8. Check recursive worker snapshots do not spread into scratch
                 machine.succeed("zfs create -o canmount=off -o mountpoint=none rpool/workers/project && zfs create -o canmount=off -o mountpoint=none rpool/scratch/workers/project")
-                # sanoid remembers its list of datasets for 20 minutes, less than the hour between its runs; the test forgets it instead of waiting
+                # Remove sanoid's 20-minute dataset cache instead of waiting for the next hourly run
                 machine.succeed("rm /var/cache/private/sanoid/datasets.txt")
                 machine.succeed("systemctl start --wait sanoid.service")
                 machine.succeed("zfs list -H -t snapshot -o name | grep -qE '^rpool/workers@autosnap_.*_hourly$'")
@@ -319,6 +352,7 @@ in
       };
     in
     {
+      # Publish disko's destructive install-and-boot test as the disk-layout check
       checks.disk-layout = testHost.config.system.build.installTest;
     };
 }

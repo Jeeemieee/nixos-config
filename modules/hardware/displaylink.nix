@@ -1,9 +1,12 @@
-# DisplayLink docks (USB graphics); hosts opt in by importing nixos.displaylink
-# The driver is unfree and cannot be downloaded by Nix: fetch it once per driver version, which accepts DisplayLink's licence
-# (the build prints the command when the file is missing), see docs/MIMIR.md
+# DisplayLink dock graphics
+#
+# What it is    The USB display driver and ordinary modesetting fallback used by DisplayLink docks
+# Who uses it   A NixOS host by importing nixos.displaylink
+# A host adds   The driver file once per version by following the missing-file build message
+# Protected     No: the explicit proprietary download only adds display drivers (docs/MIMIR.md)
 {
   flake.modules.nixos.displaylink = {
-    # Adds the evdi kernel module and the DisplayLink manager service
+    # Load the DisplayLink manager and EVDI module while retaining normal graphics modesetting
     services.xserver.videoDrivers = [
       "displaylink"
       "modesetting"

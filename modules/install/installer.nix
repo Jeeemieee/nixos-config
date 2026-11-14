@@ -1,5 +1,9 @@
-# Installation of a physical host from another Linux system, through a virtual machine that can only see the target disk
-# The procedure is in docs/INSTALL.md; plain resources (the disk validation and its test cases) are in install/
+# Isolated physical-host installer
+#
+# What it is    A host command and networkless VM that can see only the chosen target disk and host Nix store
+# Who uses it   The owner through config install, following docs/INSTALL.md
+# A host adds   nixos.disk, a name in hosts below and the secrets needed by its built system
+# Protected     Yes: this tool erases, formats and installs a real disk (docs/UPKEEP.md)
 {
   inputs,
   config,
@@ -7,15 +11,17 @@
   ...
 }:
 let
+  ## Part 1. Installable hosts and fixed limits
+  # Keep the complete flake outputs available inside per-system package definitions
   topLevel = config;
 
-  # Hosts that can be installed this way: they import nixos.disk
+  # List only hosts that import nixos.disk and are safe to install through this workflow
   hosts = [ "mimir" ];
 
-  # Inside the installer the target is always this device, whatever its name is on the machine that runs the installer
+  # Give the selected target one fixed device name inside the isolated VM
   installDevice = "/dev/disk/by-id/virtio-target";
 
-  # Smallest target: the EFI and swap partitions, the system, and room to work
+  # Require enough space for EFI, swap, the system and useful working room
   minimumBytes = 96 * 1024 * 1024 * 1024;
 in
 {
@@ -23,17 +29,19 @@ in
     { pkgs, ... }:
     (
       let
+        ## Part 2. Target-specific build inputs
+        # Look up the already declared NixOS configuration for an allowed host
         targetOf = host: topLevel.flake.nixosConfigurations.${host};
 
-        # The target's disk scripts, for the device as the installer sees it
-        # The installed system does not depend on the device name: it finds its partitions by label
+        # Rebuild only the disk scripts for the VM's fixed device name
+        # The installed system later finds these partitions by label rather than by that name
         diskScriptsOf =
           host:
           ((targetOf host).extendModules {
             modules = [ { hostSpec.disk.device = lib.mkForce installDevice; } ];
           }).config.system.build;
 
-        # What the installer needs of the built system: its path, the registration of its closure, and its secrets
+        # Bundle the built system path, store registration and required secret names for the VM
         payloadOf =
           host:
           let
@@ -53,13 +61,16 @@ in
               passAsFile = [ "secrets" ];
             }
             ''
+              ## Step 1. Write the built system and its closure registration
               mkdir "$out"
               echo ${cfg.system.build.toplevel} > "$out/system"
               ln -s "$closure/registration" "$out/registration"
+              ## Step 2. Add the secret files and keys that the target must decrypt
               cp "$secretsPath" "$out/secrets.json"
             '';
 
-        # Commands inside the installer; the paths of the target's scripts and system come from the shared folder /install
+        ## Part 3. Commands available inside the installer VM
+        # Read target scripts and payload paths from the host's shared /install folder
         installFormat = pkgs.writeShellApplication {
           name = "install-format";
           runtimeInputs = with pkgs; [
@@ -68,17 +79,19 @@ in
             util-linux
           ];
           text = ''
+            ## Step 1. Confirm the VM received the selected target
             [ -e ${installDevice} ] || { echo "install-format: no target disk is attached"; exit 1; }
             echo "Formatting the target disk ($(lsblk -dn -o SIZE ${installDevice} | tr -d ' ')). Choose the disk passphrase when asked."
-            # The disk was confirmed by its serial number before the installer started
+            ## Step 2. Erase and format the already confirmed disk
             "$(cat /install/format-script)" --yes-wipe-all-disks
 
-            # The machine's age identity is generated here, on the target disk, and never leaves it
+            ## Step 3. Generate this machine's age identity on its encrypted disk
             key=/mnt/var/lib/sops-nix/key.txt
             install -d -m 700 /mnt/var/lib/sops-nix
             if [ ! -e "$key" ]; then
               (umask 077 && age-keygen -o "$key" 2> /dev/null)
             fi
+            ## Step 4. Show only the public key needed for enrolment
             echo
             echo "The disk is formatted and mounted at /mnt. This machine's public key:"
             echo
@@ -91,6 +104,7 @@ in
         installMount = pkgs.writeShellApplication {
           name = "install-mount";
           text = ''
+            # Reuse the target's declared mount script rather than duplicating the disk layout
             "$(cat /install/mount-script)"
             echo "The target is mounted at /mnt."
           '';
@@ -107,13 +121,14 @@ in
             util-linux
           ];
           text = ''
+            ## Step 1. Refuse missing host payload, mount or machine key
             payload=$(cat /install/payload 2> /dev/null) || { echo "install-system: run 'install system' on the host first"; exit 1; }
             mountpoint -q /mnt || { echo "install-system: the target is not mounted; run install-mount"; exit 1; }
             key=/mnt/var/lib/sops-nix/key.txt
             [ -s "$key" ] || { echo "install-system: $key is missing; run install-format"; exit 1; }
 
-            # The login password is decrypted while the accounts are created at the first boot:
-            # refuse to install a system whose secrets this machine cannot decrypt
+            ## Step 2. Prove the new machine can decrypt every secret its system needs
+            # The login password is decrypted while accounts are created during the first boot
             failed=0
             while IFS=$'\t' read -r file name; do
               if SOPS_AGE_KEY_FILE=$key sops decrypt --extract "[\"$name\"]" "$file" > /dev/null 2>&1; then
@@ -129,9 +144,9 @@ in
               exit 1
             fi
 
-            # The system was built on the host; its store is visible here, and this makes its paths known to this Nix
+            ## Step 3. Register the host-built system in the installer's view of the shared store
             nix-store --load-db < "$payload/registration"
-            # Everything is copied from this store; without the option Nix first tries to reach the binary cache
+            ## Step 4. Install only from the shared host store without contacting a binary cache
             nixos-install --root /mnt --system "$(cat "$payload/system")" --no-root-passwd --no-channel-copy --option substituters ""
             echo
             echo "Installed. Run install-finish to unmount the target and power off."
@@ -145,7 +160,7 @@ in
             systemd
           ];
           text = ''
-            # Unmounts, exports the pool and closes the encrypted container, so that the installed system can import the pool
+            # Export the pool and close encryption so the installed system can import it cleanly
             "$(cat /install/unmount-script)"
             sync
             echo "The target is unmounted. Powering off."
@@ -153,7 +168,8 @@ in
           '';
         };
 
-        # The installer: no network, no disk of its own, the host's Nix store read-only, and the target disk
+        ## Part 4. Isolated installer VM
+        # Give the VM no network or own disk, only the read-only host store and selected target
         installerOf =
           host:
           inputs.nixpkgs.lib.nixosSystem {
@@ -162,14 +178,19 @@ in
               {
                 nixpkgs.pkgs = pkgs;
                 system.stateVersion = "26.05";
+                # Give logs and the prompt a clear temporary machine name
                 networking.hostName = "installer";
-                # The pool is created under the target's host ID, so the installed system imports it without force
+
+                # Create the pool under the target host ID so the installed system imports it without force
                 networking.hostId = (targetOf host).config.networking.hostId;
+                # Keep the short-lived installer image smaller by omitting local documentation
                 documentation.enable = false;
 
+                # Include ZFS support but never force-import an unexpected pool
                 boot.supportedFilesystems.zfs = true;
                 boot.zfs.forceImportRoot = false;
 
+                # Enter the isolated console directly because the VM holds no reusable login credentials
                 services.getty.autologinUser = "root";
                 users.motd = ''
 
@@ -181,6 +202,7 @@ in
                     install-finish   unmount the target and power off
 
                 '';
+                # Put the four workflow commands and their manual recovery tools in the VM
                 environment.systemPackages = [
                   installFormat
                   installMount
@@ -192,14 +214,17 @@ in
                 ];
 
                 virtualisation = {
-                  # The console is the terminal that started the installer, so the public key can be copied
+                  # Use the starting terminal as the console so the public key can be copied
                   graphics = false;
+                  # Give formatting and installation enough memory and parallel build capacity
                   memorySize = 8192;
                   cores = 8;
-                  # No disk of its own: the root file system is in memory
+                  # Keep the VM's root file system in memory so it cannot confuse another disk with the target
                   diskImage = null;
-                  # No network: the system comes from the host's store, and no credentials enter the installer
+                  # Remove networking because the system comes from the host store
+                  # No credentials need to enter the VM
                   qemu.networkingOptions = lib.mkForce [ "-nic none" ];
+                  # Share only the selected host's scripts and payload through /install
                   sharedDirectories.install = {
                     source = ''"$INSTALL_SHARE"'';
                     target = "/install";
@@ -210,8 +235,10 @@ in
             ];
           };
 
+        # Use Secure Boot-capable firmware for rehearsal boots
         ovmf = pkgs.OVMF.override { secureBoot = true; };
 
+        # Select the VM and disk scripts for the host named on the command line
         perHost = host: ''
           ${host})
             installerVm=${(installerOf host).config.system.build.vm}/bin/run-installer-vm
@@ -221,7 +248,7 @@ in
             ;;
         '';
 
-        # The tool on the host
+        ## Part 5. Command run on the host
         installHost = pkgs.writeShellApplication {
           name = "install-host";
           runtimeInputs = with pkgs; [
@@ -231,6 +258,7 @@ in
             qemu_kvm
           ];
           text = ''
+            ## Step 1. Define command-line help and failures
             usage() {
               cat <<'USAGE'
             Usage:
@@ -247,6 +275,7 @@ in
               exit 1
             }
 
+            ## Step 2. Select an allowed host and its built scripts
             [ "$#" -ge 2 ] || usage
             command=$1
             host=$2
@@ -256,10 +285,12 @@ in
               *) fail "unknown host $host; known hosts: ${lib.concatStringsSep ", " hosts}" ;;
             esac
 
+            ## Step 3. Prepare the host's persistent installer handover folder
             state=''${XDG_STATE_HOME:-$HOME/.local/state}/nixos-install/$host
             share=$state/share
             mkdir -p "$share"
 
+            ## Step 4. Read either a real disk or rehearsal image option
             target=
             kind=
             while [ "$#" -gt 0 ]; do
@@ -274,8 +305,10 @@ in
               esac
             done
 
+            ## Step 5. Run the chosen workflow command
             case "$command" in
               start)
+                # Refuse an unconfirmed target before starting the destructive installer VM
                 [ -n "$target" ] || usage
                 if [ "$kind" = disk ]; then
                   [ -b "$target" ] || fail "$target is not a block device"
@@ -299,19 +332,22 @@ in
                       [ "$answer" = erase ] || fail "not confirmed; nothing was changed"
                     fi
                   fi
-                  # A sparse file: it only takes the space that is written
-                  # As large as the laptop's 2 TB disk, so that the layout's reservation for /home fits as it must on the real disk
+                  # Use a sparse rehearsal image that consumes only written space
+                  # Match the physical disk size so the real /home reservation still fits
                   rm -f "$target"
                   truncate -s 2000G "$target"
                   device=$(realpath "$target")
                 fi
 
+                # Hand the selected host's scripts to the isolated VM
                 echo "$host" > "$share/host"
                 echo "$formatScript" > "$share/format-script"
                 echo "$mountScript" > "$share/mount-script"
                 echo "$unmountScript" > "$share/unmount-script"
                 rm -f "$share/payload"
 
+                # Attach only the confirmed target and handover folder
+                # Then replace this process with QEMU
                 echo "Starting the installer. Leave it with install-finish (or Ctrl-a x to abort)."
                 export INSTALL_SHARE=$share
                 export QEMU_OPTS="-drive file=$device,format=raw,if=none,id=target,discard=unmap,detect-zeroes=unmap -device virtio-blk-pci,drive=target,serial=target ''${INSTALL_QEMU_OPTS:-}"
@@ -319,7 +355,7 @@ in
                 ;;
 
               system)
-                # The folder the system is built from: the commit that `config install` exported, or this folder
+                # Build from the commit exported by config install, or from this checkout when run directly
                 flake=''${INSTALL_FLAKE:-$PWD}
                 [ -e "$flake/flake.nix" ] || fail "run this in the nixos-config checkout"
                 [ -e "$share/format-script" ] || fail "no installer was started for $host"
@@ -332,20 +368,22 @@ in
 
               boot)
                 [ "$kind" = image ] && [ -f "$target" ] || fail "boot needs --image <file> of an installed system"
-                # The disk is attached as on a physical machine, whose first boot stage has no drivers for virtual disks:
-                # through USB by default, or as an NVMe device with INSTALL_DISK_BUS=nvme
+                # Attach the image like physical hardware
+                # The first boot stage lacks virtual-disk drivers
+                # Use USB by default or NVMe when INSTALL_DISK_BUS=nvme
                 case "''${INSTALL_DISK_BUS:-usb}" in
                   usb) disk="-device usb-storage,drive=disk,bus=xhci.0" ;;
                   nvme) disk="-device nvme,drive=disk,serial=rehearsal" ;;
                   *) fail "INSTALL_DISK_BUS must be usb or nvme" ;;
                 esac
-                # The firmware's variables persist between boots, like on a real machine; they start without keys (setup mode)
+                # Persist firmware variables between rehearsals and begin without keys in setup mode
                 variables=$state/rehearsal-efi-vars.fd
                 if [ ! -e "$variables" ]; then
                   cp ${ovmf.variables} "$variables"
                   chmod u+w "$variables"
                 fi
-                # INSTALL_NETWORK=1 connects the guest; without it the host's single-use Tailscale key is not spent in a rehearsal
+                # Keep the rehearsal offline unless requested
+                # This avoids spending the host's single-use VPN key
                 network="-nic none"
                 if [ "''${INSTALL_NETWORK:-0}" = 1 ]; then network="-nic user,model=virtio-net-pci"; fi
                 # shellcheck disable=SC2086
@@ -366,18 +404,22 @@ in
         };
       in
       {
+        ## Part 6. Flake outputs and validation
+        # Publish the host command under packages.install
         packages = {
           install = installHost;
         }
         // lib.genAttrs' hosts (host: lib.nameValuePair "install-payload-${host}" (payloadOf host));
 
-        # The disk validation refuses everything but a free, whole, writable, large enough disk with a serial number
+        # Refuse every target except a free, whole, writable, large enough disk with a serial number
         checks.install-disk-validation =
           pkgs.runCommand "install-disk-validation-check" { nativeBuildInputs = [ pkgs.jq ]; }
             ''
+              ## Step 1. Evaluate one independent disk-description fixture
               verdict() {
                 jq -r --arg minBytes ${toString minimumBytes} -f ${../../install/validate-disk.jq} ${../../install/fixtures}/$1.json
               }
+              ## Step 2. Compare each verdict with its pre-declared pattern
               expect() {
                 actual=$(verdict "$1")
                 case "$actual" in
@@ -385,6 +427,7 @@ in
                   *) echo "FAIL $1: expected $2, got: $actual"; exit 1 ;;
                 esac
               }
+              ## Step 3. Cover the accepted disk and every refusal reason
               expect free-disk "ok"
               expect system-disk "refused: * is in use (*"
               expect mounted-partition "refused: * is in use (*"
@@ -396,7 +439,7 @@ in
               touch "$out"
             '';
 
-        # The tool and the installer build
+        # Build the command and all installer dependencies as a flake check
         checks.install-tool = installHost;
       }
     );

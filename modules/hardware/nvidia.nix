@@ -1,30 +1,34 @@
-# NVIDIA graphics next to an integrated GPU, used on demand; hosts opt in by importing nixos.nvidia-offload
-# and set hardware.nvidia.prime.intelBusId and nvidiaBusId (from lspci)
+# On-demand NVIDIA graphics
+#
+# What it is    PRIME offload, suspend handling and container access for NVIDIA beside an integrated GPU
+# Who uses it   A NixOS host by importing nixos.nvidia-offload
+# A host adds   The integrated and NVIDIA PCI bus identifiers reported by lspci
+# Protected     No: the module enables graphics hardware but does not control boot, disks or accounts
 {
   flake.modules.nixos.nvidia-offload = {
-    # Loads the NVIDIA driver, also on Wayland; it provides CUDA in /run/opengl-driver/lib
+    # Load the NVIDIA driver on Wayland and expose its CUDA libraries through the system graphics path
     services.xserver.videoDrivers = [ "nvidia" ];
 
     hardware.nvidia = {
-      # The open kernel modules, which NVIDIA recommends from the RTX 20 series on; the user-space driver stays unfree
+      # Use NVIDIA's recommended open kernel module while retaining its proprietary user-space driver
       open = true;
 
-      # The integrated GPU drives the desktop; a program uses the NVIDIA GPU when asked (nvidia-offload <program>) or through CUDA
+      # Let the integrated GPU drive the desktop and use NVIDIA only through nvidia-offload or CUDA
       prime.offload = {
         enable = true;
         enableOffloadCmd = true;
       };
 
       powerManagement = {
-        # Saves and restores the GPU's state around suspend
+        # Save and restore GPU state across suspend
         enable = true;
-        # Powers the GPU down while nothing uses it
+        # Power the GPU down while no program uses it
         finegrained = true;
       };
     };
 
-    # Containers can use the GPU: the toolkit describes it as a device, and rootless Docker is told to accept such descriptions
-    # A container asks for it with `--device nvidia.com/gpu=all`
+    # Describe the GPU as a CDI device and let rootless Docker accept that description
+    # A container requests it with --device nvidia.com/gpu=all
     hardware.nvidia-container-toolkit.enable = true;
     virtualisation.docker.rootless.daemon.settings.features.cdi = true;
   };

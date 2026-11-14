@@ -1,29 +1,39 @@
-# Terminal editor, network, disk and system tools; users opt in by importing homeManager.cli
+# Command-line tools
+#
+# What it is    A terminal editor plus tools for sessions, networks, disks and system information
+# Who uses it   A Home Manager user by importing homeManager.cli; the workstation account imports it
+# A user adds   Nothing; the module supplies the programs and packages together
+# Protected     No: these are user tools and do not define privileged services or safeguards
 {
   flake.modules.homeManager.cli =
     { pkgs, ... }:
     {
-      # Sets EDITOR through Home Manager's session variables, loaded by the extraInit in modules/flake/host-machines.nix
+      ## Part 1. Interactive terminal programs
+      # Set EDITOR through the session variables loaded by modules/flake/host-machines.nix
       programs.vim = {
         enable = true;
         defaultEditor = true;
       };
+      # Provide a readable interactive view of running processes and resource use
       programs.btop.enable = true;
 
-      # Keeps shells and long runs alive when a terminal closes or an SSH connection drops; Ctrl+b d detaches, tmux attach returns
+      # Keep shells and long jobs alive when a terminal closes or an SSH connection drops
+      # Ctrl+b d detaches from a session, and tmux attach returns to it
       programs.tmux = {
         enable = true;
         mouse = true;
         historyLimit = 50000;
       };
 
+      ## Part 2. Small system tools
+      # Cover routine directory, network, disk-recovery, disk-health and machine-inspection tasks
       home.packages = with pkgs; [
         tree
         nmap
         testdisk
         smartmontools
         fastfetch
-        # Shows what takes space in a folder, such as ~/scratch; deletes only on request
+        # Show what takes space in a folder and delete only when explicitly asked
         ncdu
       ];
     };

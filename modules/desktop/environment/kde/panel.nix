@@ -1,9 +1,14 @@
-# The panel: pinned programs, system monitors, battery percentage and week numbers; the touchpad and the mouse
-# Part of homeManager.desktop-kde, next to settings.nix and keyboard.nix
+# Plasma panel and pointing devices
+#
+# What it is    The panel layout, pinned programs, system monitors, clock, touchpad and mouse behaviour
+# Who uses it   The Home Manager desktop-kde module beside settings.nix and keyboard.nix
+# A user adds   Nothing; device identifiers already match the workstation hardware
+# Protected     No: these settings only arrange the desktop and its input devices
 {
   flake.modules.homeManager.desktop-kde = {
     programs.plasma = {
-      # Plasma's own panel with its usual parts, plus what is declared below; one on every screen
+      ## Part 1. Panel on every screen
+      # Build one bottom panel per screen from Plasma's usual controls and the additions below
       panels = [
         {
           location = "bottom";
@@ -13,7 +18,7 @@
             "org.kde.plasma.pager"
             {
               iconTasks = {
-                # Pinned programs, in this order; each is the name of its launcher file
+                # Keep the most-used applications pinned in this order by their launcher file names
                 launchers = map (name: "applications:${name}.desktop") [
                   "brave-browser"
                   "thunderbird"
@@ -24,7 +29,7 @@
                   "org.kde.kate"
                   "codium"
                 ];
-                # A screen's panel lists the windows of that screen and of the desktop in view
+                # Show only windows on the panel's screen and the desktop currently in view
                 behavior.showTasks = {
                   onlyInCurrentScreen = true;
                   onlyInCurrentDesktop = true;
@@ -32,7 +37,8 @@
               };
             }
             "org.kde.plasma.marginsseparator"
-            # Processor, memory, network and disk activity as small line charts
+            ## Part 2. Compact system monitors
+            # Show processor, memory, network and disk activity as small line charts
             {
               systemMonitor = {
                 title = "Processor";
@@ -103,8 +109,9 @@
                 ];
               };
             }
-            # The battery with its percentage, as a part of its own: plasma-manager cannot set up the one inside the system tray,
-            # which therefore moves into the tray's pop-up
+            # Keep a visible battery percentage outside the tray
+            # plasma-manager cannot configure the tray's built-in battery item
+            # Hide that second item in the tray pop-up to avoid showing the battery twice
             {
               battery.showPercentage = true;
             }
@@ -112,6 +119,7 @@
               systemTray.items.hidden = [ "org.kde.plasma.battery" ];
             }
             {
+              # Show ISO week numbers used when planning dates
               digitalClock.calendar.showWeekNumbers = true;
             }
             "org.kde.plasma.showdesktop"
@@ -119,21 +127,26 @@
         }
       ];
 
+      ## Part 3. Pointing devices
       input = {
-        # The laptop's own touchpad; Plasma keeps these settings per device
+        # Apply the preferred touchpad behaviour to the laptop's exact device
         touchpads = [
           {
             name = "VEN_0488:00 0488:1064 Touchpad";
             vendorId = "0488";
             productId = "1064";
+            # Match touch movement to direct manipulation and allow light taps to click
             naturalScroll = true;
             tapToClick = true;
+
+            # Prevent accidental pointer movement while typing
             disableWhileTyping = true;
-            # A click in the bottom-right corner is a right click
+
+            # Reserve the bottom-right corner for a right click
             rightClickMethod = "bottomRight";
           }
         ];
-        # The mouse on the 3Dconnexion receiver: no acceleration, a little slower than the default
+        # Keep the receiver mouse predictable with no acceleration and a slightly slower speed
         mice = [
           {
             name = "3Dconnexion 3Dconnexion Universal Receiver Mouse";

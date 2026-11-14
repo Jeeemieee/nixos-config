@@ -1,4 +1,9 @@
-# Brave with managed policies; hosts opt in by importing nixos.browser
+# Web browser
+#
+# What it is    Brave with fixed privacy, search, extension and session settings
+# Who uses it   A NixOS host by importing nixos.browser; the workstation profile imports it
+# A host adds   nixos.search when the address bar should use the local SearXNG service
+# Protected     No: browser choices do not control access, data recovery or the agent safeguards
 {
   flake.modules.nixos.browser =
     {
@@ -8,15 +13,20 @@
       ...
     }:
     let
-      # The address bar searches through this machine's SearXNG where nixos.search runs it, and through Brave Search elsewhere
-      # Brave Search: its own index, no tracking; the user prefers it to Startpage
+      ## Part 1. Search addresses
+      # Brave Search has its own index and no tracking, and is preferred to Startpage
       braveSearch = "https://search.brave.com/search?q={searchTerms}";
+      # Read the local service once so its address and enabled state stay together
       searx = config.services.searx;
+
+      # Send address-bar searches to this machine when its private SearXNG service is enabled
       localSearch = "http://${searx.settings.server.bind_address}:${toString searx.settings.server.port}/search?q={searchTerms}";
 
-      # Starts Brave; the application menu, the task bar and links from other programs all go through it (braveLaunchers below)
-      # After a crash or a power loss Brave only offers "Restore pages?" in one empty window, whatever RestoreOnStartup says
-      # Marking the last exit as normal makes it open the saved windows and tabs unasked; that is done only while Brave is not running, so nothing else writes the file
+      ## Part 2. Session recovery launcher
+      # Route the application menu, task bar and links from other programs through one recovery-aware launcher
+      # After a crash or power loss Brave otherwise opens one empty window and asks whether to restore pages
+      # Change the saved exit to normal only while Brave is closed
+      # This restores the saved windows without a prompt
       braveSession = pkgs.writeShellApplication {
         name = "brave-session";
         runtimeInputs = [
@@ -40,8 +50,8 @@
         '';
       };
 
-      # Brave's own launchers, with brave-session in place of the browser's program; they take precedence over the package's
-      # Brave is not started at login: the windows and tabs of the last session come back when the user opens it
+      # Replace Brave's menu launchers with the recovery-aware launcher and give these copies priority
+      # Do not start Brave at login; the saved session returns when the user chooses to open it
       braveLaunchers = lib.hiPrio (
         pkgs.runCommand "brave-launchers" { } ''
           mkdir -p "$out/share/applications"
@@ -57,32 +67,40 @@
       );
     in
     {
+      ## Part 3. Installed browser and launchers
+      # Install Brave together with the higher-priority launchers that restore its session
       environment.systemPackages = [
         pkgs.brave
         braveLaunchers
       ];
 
-      # programs.chromium writes the same managed policies for Chromium, Chrome and Brave (/etc/brave/policies/managed/)
-      # Names follow Brave's policy templates: brave-core components/policy/resources/templates/policy_definitions
+      ## Part 4. Managed browser policy
+      # Use Chromium's module because it writes Brave's managed policy directory too
+      # Policy names follow Brave's policy templates under brave-core components/policy/resources/templates
       programs.chromium = {
+        # Enable the module so the policy and extensions below are written for Brave
         enable = true;
 
-        # Force-installed extensions are installed on first start and cannot be removed
+        # Install the required extensions on first start and prevent accidental removal
         extensions = [
           "nngceckbapebfimnlniiiahkandclblb" # Bitwarden
           "ekhagklcjbdpajgpjgmbionohlpdbjgc" # Zotero Connector
-          # KRunner lists the open tabs and selects one; its host program comes with Plasma (programs.chromium.enablePlasmaBrowserIntegration)
+          # Let KRunner list and select open tabs through Plasma's browser integration host
           "cimiefiiaegbelhefglklhhakcgmhkai" # Plasma Integration
         ];
 
-        # No search suggestions are requested while typing
+        # Set a search address explicitly without enabling suggestions while typing
         defaultSearchProviderEnabled = true;
+
+        # Prefer the private local search service and fall back to Brave Search on hosts without it
         defaultSearchProviderSearchURL = if searx.enable then localSearch else braveSearch;
 
         extraOpts = {
+          # Show the name of the provider selected by the host's SearXNG setting
           DefaultSearchProviderName = if searx.enable then "SearXNG" else "Brave Search";
-          # Keywords in the address bar: the keyword, a space, then the query; each searches that site directly, without SearXNG
-          # A search that starts with one of these words and a space goes to that site as well
+
+          # Keep direct site searches available as a keyword, a space and the query
+          # These bypass SearXNG, and matching ordinary searches use the same shortcut
           SiteSearchSettings =
             lib.mapAttrsToList
               (shortcut: site: {
@@ -90,7 +108,7 @@
                 inherit (site) name url;
               })
               {
-                # Also the way to search while SearXNG is down or returns little
+                # Keep an independent search available when SearXNG is down or finds too little
                 brave = {
                   name = "Brave Search";
                   url = braveSearch;
@@ -145,40 +163,43 @@
                   name = "PyPI";
                   url = "https://pypi.org/search/?q={searchTerms}";
                 };
-                # Takes a DOI or a paper's address; Sci-Hub changes its address now and then, so update it here when the keyword stops working
+                # Accept a DOI or paper address; update this address when Sci-Hub moves and the shortcut stops
                 scihub = {
                   name = "Sci-Hub";
                   url = "https://sci-hub.ru/{searchTerms}";
                 };
               };
-          # Spell checking in British English and Dutch
+          # Check spelling in the two languages used on the workstation
           SpellcheckEnabled = true;
           SpellcheckLanguage = [
             "en-GB"
             "nl"
           ];
-          # Bitwarden is the only password manager
+          # Prevent Brave from competing with Bitwarden for saved passwords
           PasswordManagerEnabled = false;
+          # Keep bookmarks and the home action visible without opening their settings manually
           BookmarkBarEnabled = true;
           ShowHomeButton = true;
-          # Standard protection against phishing and malware downloads
+
+          # Use Brave's standard protection against phishing and malware downloads
           SafeBrowsingProtectionLevel = 1;
+          # Remove cryptocurrency features that are not used
           BraveRewardsDisabled = true;
           BraveWalletDisabled = true;
           # Brave VPN is not built for Linux; the policy is accepted and keeps it off should that change
           BraveVPNDisabled = true;
-          # Leo AI assistant
+          # Keep the unused Leo assistant out of the browser
           BraveAIChatEnabled = false;
-          # Brave's privacy-preserving usage statistics (P3A)
+          # Send no Brave usage statistics or discovery reports
           BraveP3AEnabled = false;
           BraveStatsPingEnabled = false;
           BraveWebDiscoveryEnabled = false;
-          # Chromium's usage statistics and crash reports
+          # Send no Chromium usage statistics or crash reports
           MetricsReportingEnabled = false;
 
-          # Open the windows and tabs of the last session at every start ("Continue where you left off")
+          # Reopen the last windows and tabs at every normal start
           RestoreOnStartup = 1;
-          # Memory Saver: tabs that have not been used for a while are unloaded and reload when selected
+          # Unload tabs that have not been used for a while and reload them when selected
           HighEfficiencyModeEnabled = true;
           MemorySaverModeSavings = 1;
         };

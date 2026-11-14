@@ -1,17 +1,24 @@
-# Bitwarden desktop and command-line clients; users opt in by importing homeManager.passwords
-# The desktop app also holds the SSH key for GitHub and hands it to git while the vault is unlocked (modules/dev/git/github.nix)
+# Password manager
+#
+# What it is    Bitwarden's desktop and command-line clients, with the desktop app started at login
+# Who uses it   A Home Manager user by importing homeManager.passwords; the workstation account imports it
+# A user adds   A vault and, for GitHub, the SSH key used by modules/dev/git/github.nix
+# Protected     No: the module installs the client but stores no vault data or key
 {
   flake.modules.homeManager.passwords =
     { pkgs, ... }:
     {
+      ## Part 1. Applications
+      # Provide both the graphical client and the command used in a terminal
       home.packages = with pkgs; [
         bitwarden-desktop
         bitwarden-cli
       ];
 
-      # The app starts with the desktop session, in the task bar: its SSH agent only exists while it runs
-      # Bitwarden writes a file of this name itself when its own "Start automatically on login" is on; without force, that file would
-      # stop every later Home Manager activation ("would be clobbered"). The declared one points at the installed version after every rebuild
+      ## Part 2. Login start
+      # Start Bitwarden with the desktop because its SSH agent only exists while the app runs
+      # Replace Bitwarden's own autostart file so it cannot block a later Home Manager activation
+      # Point at the installed package again after every rebuild
       xdg.configFile."autostart/bitwarden.desktop" = {
         force = true;
         text = ''

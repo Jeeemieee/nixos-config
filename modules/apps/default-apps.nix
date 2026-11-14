@@ -1,9 +1,17 @@
-# Default applications for links and file types; users opt in by importing homeManager.default-apps
+# Default applications
+#
+# What it is    The programs that open web links, documents, email links and TeX files
+# Who uses it   A Home Manager user by importing homeManager.default-apps; the workstation account imports it
+# A user adds   The matching Brave, Okular, Thunderbird and VSCodium modules
+# Protected     No: these choices only decide which desktop application opens a file or link
 {
   flake.modules.homeManager.default-apps = {
-    # Desktop file names as installed by brave, okular, thunderbird and vscodium
+    # Use the desktop file names installed by Brave, Okular, Thunderbird and VSCodium
     xdg.mimeApps = {
+      # Ask the desktop to honour the declared application choices
       enable = true;
+
+      # Keep each commonly used link or document type tied to its intended program
       defaultApplications = {
         "x-scheme-handler/http" = "brave-browser.desktop";
         "x-scheme-handler/https" = "brave-browser.desktop";
@@ -15,7 +23,7 @@
       };
     };
 
-    # Plasma and other programs rewrite mimeapps.list; replacing it makes the declared defaults win at every activation
+    # Replace changes made by Plasma or applications so these defaults win at every activation
     xdg.configFile."mimeapps.list".force = true;
   };
 }

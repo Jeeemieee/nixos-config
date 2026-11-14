@@ -1,24 +1,34 @@
-# KDE Plasma settings for the user, declared with plasma-manager; users opt in by importing homeManager.desktop-kde
-# Declared settings are applied at every login; settings that are not declared here keep what was chosen in System Settings
+# Plasma user settings
+#
+# What it is    The Plasma choices reapplied at login while undeclared choices remain user-controlled
+# Who uses it   A Home Manager user by importing homeManager.desktop-kde; the workstation account imports it
+# A user adds   Nothing; private desktop names come separately from keyboard.nix
+# Protected     No: these settings only control the user's desktop session
 { inputs, ... }:
 {
   flake.modules.homeManager.desktop-kde =
     { lib, ... }:
     {
+      # Use plasma-manager so Home Manager can maintain Plasma's settings
       imports = [ inputs.plasma-manager.homeModules.plasma-manager ];
 
       programs.plasma = {
+        # Apply the declared choices whenever the Home Manager generation activates
         enable = true;
 
+        ## Part 1. Appearance and keyboard
+        # Use Plasma's dark Breeze theme throughout the desktop
         workspace.lookAndFeel = "org.kde.breezedark.desktop";
 
+        # Make the numeric keypad enter numbers immediately after login
         input.keyboard.numlockOnStartup = "on";
 
-        # Plasma keeps its own copy of the language and formats per user, which overrides the system's when it differs
+        ## Part 2. Language and formats
+        # Match Plasma's per-user locale to the system choices so it does not override them differently
         configFile.plasma-localerc = {
           Formats = {
             LANG = "en_GB.UTF-8";
-            # Named explicitly, so that a machine that had Dutch dates returns to English ones
+            # Restore British dates on a machine that had previously saved Dutch dates
             LC_TIME = "en_GB.UTF-8";
           }
           // lib.genAttrs [
@@ -30,13 +40,15 @@
             "LC_TELEPHONE"
             "LC_MEASUREMENT"
           ] (_: "nl_NL.UTF-8");
+          # Keep Plasma's translated interface in British English
           Translations.LANGUAGE = "en_GB";
         };
 
-        # No overview when the pointer hits the top-left corner (9 is "no screen edge")
+        ## Part 3. Locking and screen edges
+        # Use 9, Plasma's value for no edge, so the top-left corner does not open Overview
         configFile.kwinrc."Effect-overview".BorderActivate = 9;
 
-        # The screen turns off after ten minutes without input and is locked at once; waking up asks for the password
+        # Turn the screen off after ten idle minutes and require the password immediately on return
         kscreenlocker = {
           autoLock = true;
           timeout = 10;
@@ -44,8 +56,10 @@
           lockOnResume = true;
         };
 
-        # On mains power the machine never suspends by itself (simulations run for hours); on battery after twenty minutes
-        # Closing the lid suspends; there is no hibernation (docs/DISK.md)
+        ## Part 4. Power
+        # Never suspend long-running work on mains power, but suspend after twenty idle minutes on battery
+        # Turn the display off after ten minutes and suspend when the lid closes
+        # Hibernation is unavailable (docs/DISK.md)
         powerdevil = {
           AC = {
             autoSuspend.action = "nothing";

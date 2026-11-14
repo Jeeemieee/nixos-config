@@ -1,13 +1,20 @@
+# Package set and overlays
+#
+# What it is    The pinned package set, narrow proprietary-package allowlist and two package overrides
+# Who uses it   Every per-system package, check, shell and NixOS host built by this flake
+# A maintainer adds An unfree package to both allowlists and docs/APPS.md, or a reviewed overlay here
+# Protected     Yes: the package set changes every program and can add executable code (docs/UPKEEP.md)
 { inputs, ... }:
 {
   perSystem =
     { system, ... }:
     {
+      ## Part 1. Shared package set
       _module.args.pkgs = import inputs.nixpkgs {
         inherit system;
         config = {
-          # Unfree software is limited to this allowlist
-          # Every new unfree package needs an explicit entry here and in unfreeAllowed in modules/flake/checks.nix, plus a row in docs/APPS.md
+          # Limit proprietary software to the reviewed applications and hardware drivers below
+          # Additions also belong in checks.nix and docs/APPS.md
           allowUnfreePredicate =
             pkg:
             builtins.elem (inputs.nixpkgs.lib.getName pkg) [
@@ -15,17 +22,18 @@
               "discord"
               "spotify"
               "zoom"
-              # Laptop hardware: the NVIDIA user-space driver with its settings program, and the DisplayLink dock driver
+              # Allow the proprietary graphics and dock drivers required by the laptop hardware
               "nvidia-x11"
               "nvidia-settings"
               "displaylink"
             ];
         };
+        ## Part 2. Reviewed package overrides
         overlays = [
-          # pi from its own nixos-unstable pin: 26.05 ships 0.75.4, while the user works with the current 1.x
-          # pi takes a value that starts with "!" in its files as a command to run for a key. The login file is shared by all pi
-          # sessions and each can write it, so one session could make every other run a command: here pi never runs such a command
-          # The build fails when a new version has no such function in both places; the pi-login-commands check tests the behaviour
+          # Take current pi from its separate unstable pin because NixOS 26.05 still carries an old release
+          # Disable pi's feature that treats a value beginning with "!" as a command for obtaining a key
+          # Its shared writable login file would otherwise let one session make another session run a command
+          # Fail the build if the patch no longer reaches both copies; pi-login-commands checks the behaviour
           (_final: _prev: {
             pi-coding-agent = inputs.nixpkgs-pi.legacyPackages.${system}.pi-coding-agent.overrideAttrs (old: {
               postInstall = (old.postInstall or "") + ''
@@ -39,7 +47,7 @@
               '';
             });
           })
-          # SearXNG from its own nixos-unstable pin: with the version of 26.05 only one of the default search engines still answered
+          # Take SearXNG from its own unstable pin because almost no default engines work in the 26.05 version
           (_final: _prev: {
             inherit (inputs.nixpkgs-search.legacyPackages.${system}) searxng;
           })

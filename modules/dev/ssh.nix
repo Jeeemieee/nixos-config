@@ -1,13 +1,18 @@
-# The user's own list of SSH hosts (clusters, servers); users opt in by importing homeManager.ssh
-# The list names hosts, addresses and user names: private, not secret. It comes from ssh/config in nixos-secrets (plain, not encrypted)
-# Keys are not declared here: they stay files in ~/.ssh or live in Bitwarden
+# Private SSH host list
+#
+# What it is    A safe include of the private host names, addresses and account names from nixos-secrets
+# Who uses it   A Home Manager user by importing homeManager.ssh; the workstation account imports it
+# A user adds   ssh/config in nixos-secrets, while keys stay in ~/.ssh or Bitwarden
+# Protected     Yes: SSH settings can execute code whenever a connection starts (docs/UPKEEP.md)
 { inputs, ... }@topLevel:
 let
+  # Keep private host details in the unencrypted private repository rather than publishing them here
   hostsFile = "${inputs.nixos-secrets}/ssh/config";
 in
 {
+  ## Part 1. User configuration
   flake.modules.homeManager.ssh = {
-    # Without this, a nixos-secrets pin from before the file existed would quietly give an SSH client without the hosts
+    # Refuse an old secrets pin instead of quietly omitting every private host
     assertions = [
       {
         assertion = builtins.pathExists hostsFile;
@@ -16,21 +21,27 @@ in
     ];
 
     programs.ssh = {
+      # Ask Home Manager to write the user's SSH configuration
       enable = true;
-      # Home Manager's former defaults for every host are not wanted; only what is declared applies
+
+      # Avoid inherited defaults so only reviewed settings apply to every host
       enableDefaultConfig = false;
-      # Read after every declared host: ssh keeps the first value it finds for a setting, so the list cannot change what is declared, such as GitHub's pinned keys
-      # What the list may hold is limited by the ssh-settings check below: ssh has settings that run a program or load a library
+      # Read the private list after declared hosts because SSH keeps the first value found for each setting
+      # This prevents the include from replacing protected choices such as GitHub's pinned keys
+      # The check below also limits the include because some SSH settings run programs or load libraries
       settings."*".Include = hostsFile;
     };
   };
 
+  ## Part 2. Safety check
   perSystem =
     { pkgs, ... }:
     let
+      # Inspect the exact SSH text produced for the test machine's user
       user = topLevel.config.flake.nixosConfigurations.mimir-vm.config.home-manager.users.jeeemieee;
       declared = user.home.file.".ssh/config".text;
-      # A list that tries to change what is declared for GitHub
+
+      # Model a private list that tries to weaken the declared GitHub settings
       standIn = pkgs.writeText "ssh-hosts-stand-in" ''
         Host github.com
           User someone-else
@@ -40,7 +51,7 @@ in
           HostName cluster.example.org
           User researcher
       '';
-      # A list with settings that run a program, or load a library, on this machine whenever ssh is used
+      # Model settings that could run a program or load a library whenever SSH is used
       runsPrograms = pkgs.writeText "ssh-hosts-running-programs" ''
         Host cluster
           HostName cluster.example.org
@@ -50,12 +61,14 @@ in
         Host other
           PKCS11Provider=/tmp/library.so
       '';
-      # The settings a list of hosts may hold: where a host is, who logs in, with which key, and through which other host;
-      # and the two more that the user's own list uses, keys kept in the agent and windows of a remote program shown here
+      # Allow only connection details, identity selection, keepalives and compression
+      # The real list also uses agent key storage and remote windows
+      # Those last features keep keys in the agent and show windows from a remote program locally
       allowedSettings = "host hostname user port identityfile identitiesonly proxyjump serveraliveinterval serveralivecountmax compression addkeystoagent forwardx11";
     in
     {
-      # The declared settings for GitHub hold whatever the private list of hosts says, and the list's own hosts work
+      # Prove declared GitHub safeguards win and ordinary private hosts work
+      # Unsafe settings must be reported by name only
       checks.ssh-settings =
         pkgs.runCommand "ssh-settings-check"
           {
@@ -65,19 +78,22 @@ in
             ];
           }
           ''
+            ## Step 1. Prepare helpers and an isolated SSH home
             export HOME=$TMPDIR
             failed=0
             expect() { if [ "$2" = "$3" ]; then echo "ok   $1: $2"; else echo "FAIL $1: $2 (expected $3)"; failed=1; fi; }
             value() { ssh -F "$1" -G "$2" | sed -n "s/^$3 //p" | head -n 1; }
 
-            # The declared file, with the stand-in list in place of the private one; it must have named the private list
-            # ssh refuses a settings file that belongs to someone else, as store files do inside a build, so the stand-in is copied here
+            ## Step 2. Replace the private include with the safe stand-in
+            # Copy it because SSH refuses configuration owned by another account
+            # Store files have that ownership inside a build
             cp ${standIn} "$PWD/list" && chmod 600 "$PWD/list"
             sed "s|${hostsFile}|$PWD/list|" ${pkgs.writeText "ssh-config-declared" declared} > declared
             grep -q "Include $PWD/list" declared || { echo "FAIL: the declared settings do not include the list of hosts"; exit 1; }
-            # ssh must be able to read the file at all; its own message is shown if it cannot
+            # Let SSH show its own error if the completed configuration cannot be read
             ssh -F declared -G github.com > /dev/null || { echo "FAIL: ssh cannot read the declared settings"; exit 1; }
 
+            ## Step 3. Prove the declared GitHub values win and a private host still works
             expect "GitHub's user" "$(value declared github.com user)" git
             expect "GitHub's host key check" "$(value declared github.com stricthostkeychecking)" true
             # ssh prints the path with ~ replaced by the home folder
@@ -86,14 +102,15 @@ in
             expect "a host of the list: address" "$(value declared cluster hostname)" cluster.example.org
             expect "a host of the list: user" "$(value declared cluster user)" researcher
 
-            # Control: read before the declared hosts, the same list does change GitHub's settings
+            ## Step 4. Control that include order is the safeguard
+            # Reading the same list first must change GitHub's settings
             { echo "Include $PWD/list"; grep -v "Include $PWD/list" declared; } > list-first
             expect "control: the list read first changes GitHub's user" "$(value list-first github.com user)" someone-else
             expect "control: and switches the host key check off" "$(value list-first github.com stricthostkeychecking)" false
 
-            # The list may only hold settings from an agreed set: ssh's other settings include ones that run a program
-            # (ProxyCommand, LocalCommand, Match exec, KnownHostsCommand) or load a library (PKCS11Provider), at every use of ssh
-            # Only the line's number and the setting's name are printed: the list is private
+            ## Step 5. Refuse private-list settings outside the agreed set
+            # Other SSH settings can run programs or load libraries whenever a connection starts
+            # Print only the line number and setting name because the list itself is private
             notAllowed() {
               awk -v allowed="${allowedSettings}" '
                 BEGIN { count = split(allowed, names, " "); for (i = 1; i <= count; i++) agreed[names[i]] = 1 }
@@ -105,6 +122,7 @@ in
             expect "control: a list with two other settings" "$(notAllowed ${standIn})" "line 3: stricthostkeychecking;line 4: userknownhostsfile;"
             expect "a list with settings that run programs" "$(notAllowed ${runsPrograms})" "line 3: proxycommand;line 4: match;line 7: pkcs11provider;"
 
+            ## Step 6. Fail after showing every mismatch
             [ "$failed" = 0 ] || exit 1
             touch "$out"
           '';

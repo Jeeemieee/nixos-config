@@ -1,48 +1,63 @@
-# The files that decide what an agent may do, per repository below ~/repos; paths are relative to the repository
-# A pi session sees them read-only unless it was started with --unlock, and a commit that touches one asks for a typed yes
-# Read by the pi launcher (modules/dev/pi.nix) and by the config command (modules/flake/config-tool.nix): one list, two uses
+# Protected paths
+#
+# What it is    The shared list of files and folders that an agent must not change without --unlock
+# Who uses it   The pi launcher and the config command, with paths relative to each repository
+# A caller adds A repository name below ~/repos and checks its paths against the matching list
+# Protected     Yes: changing this list would change which safeguards apply (docs/UPKEEP.md)
 {
+  ## Part 1. Public system configuration
+  # Protect the files that define the sandbox and its instructions
   nixos-config = [
-    # What an agent's sandbox is, and the instructions it gets
     "modules/dev/pi.nix"
     "AGENTS.md"
-    # This list and the commit guard
+
+    # Protect the policy itself and the command that enforces it
     "config-tool"
-    # How the flake is put together: the checks, the package set, the hosts, the admin shell, the config command
+
+    # Protect the flake wiring, checks, package set, hosts, admin shell and config command
     "modules/flake"
-    # The development environments, their checks and the checks' scripts
+
+    # Protect the development environments and the tests that define their supported behaviour
     "dev-env"
-    # Secrets, backup, disk, installer and boot: a wrong change loses data or access
+
+    # Protect settings where a wrong change can lose data or access
     "modules/security"
     "modules/services/backup.nix"
     "modules/storage"
     "modules/install"
     "install"
     "modules/boot"
-    # The accounts, sudo, the firewall and the Nix settings; and what each host is made of
+
+    # Protect the accounts, sudo, firewall, Nix settings and each host's composition
     "modules/profiles"
     "modules/hosts"
     "modules/users"
-    # Where git and ssh run programs, and modules that carry a check of their own
+
+    # Protect places where Git and SSH run programs, and modules that carry their own checks
     "modules/dev/git"
     "modules/dev/ssh.nix"
     "modules/services/search.nix"
-    # Which versions of everything are used
+
+    # Protect version pins so an agent cannot replace the software sources
     "flake.nix"
     "flake.lock"
-    # Which files git leaves out of every status and commit
+
+    # Protect ignored paths so changes cannot be hidden from status and commits
     ".gitignore"
-    # What direnv evaluates in the user's own shell: its settings and this repository's .envrc
+
+    # Protect everything direnv evaluates in the user's own shell
     "modules/dev/direnv.nix"
     ".envrc"
   ];
+
+  ## Part 2. Private configuration
+  # Protect the instructions, decryption policy and encrypted values
   nixos-secrets = [
     "AGENTS.md"
-    # Who may decrypt, and the encrypted values
     ".sops.yaml"
     "secrets"
-    # The instructions every agent gets, the list of hosts that ssh reads, and the desktops' names: plain files that become
-    # part of the system
+
+    # Protect plain instructions and settings that become part of the system
     "pi"
     "ssh"
     "desktop"

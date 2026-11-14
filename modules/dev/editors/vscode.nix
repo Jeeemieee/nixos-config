@@ -1,13 +1,20 @@
-# Reusable, fully declarative VSCodium with free extensions only; hosts and users opt in by importing homeManager.vscode
+# VSCodium editor
+#
+# What it is    A fully declared editor with free extensions, fixed settings and a corrected Jupyter package
+# Who uses it   A Home Manager user by importing homeManager.vscode; the workstation account imports it
+# A user adds   Project language tools through each development shell, not through editor downloads
+# Protected     No: this is an ordinary user application and its extensions
 {
   flake.modules.homeManager.vscode =
     { pkgs, ... }:
     let
-      # nixpkgs downloads ms-toolsai.jupyter without a target platform, and that VSIX only contains linux-arm64 ZeroMQ libraries
-      # Without x86-64 ZeroMQ the extension cannot talk to kernels directly and falls back to a Jupyter server that needs pip and notebook
-      # This local override uses the linux-x64 VSIX, keeps only its glibc ZeroMQ libraries, and patches them against the Nix store
-      # Bump: when mimir-vm-config reports a version mismatch with nixpkgs, set jupyterVersion to the nixpkgs version and refresh the hash
-      # Remove: once nixpkgs downloads the linux-x64 VSIX itself, return to pkgs.vscode-extensions.ms-toolsai.jupyter
+      ## Part 1. Jupyter extension correction
+      # nixpkgs currently fetches a VSIX whose bundled ZeroMQ library is only for Linux on ARM
+      # Without an x86-64 library, direct kernels fail
+      # The extension then falls back to a separate Jupyter server
+      # Fetch the Linux x86-64 VSIX, keep its glibc library and patch that library for the Nix store
+      # When mimir-vm-config reports a mismatch, copy nixpkgs' new version here and refresh the hash
+      # Remove this override when nixpkgs itself fetches the Linux x86-64 VSIX
       jupyterVersion = "2025.9.1";
       jupyter = pkgs.vscode-extensions.ms-toolsai.jupyter.overrideAttrs (old: {
         version = jupyterVersion;
@@ -19,11 +26,11 @@
           hash = "sha256-v5WsVVbz23Dy+Bb7r3NerlUBNDWElL0yOH/oZjYicRk=";
         };
 
-        # Patch the remaining native libraries so they find libstdc++ and glibc in the Nix store
+        # Make the remaining native library find libstdc++ and glibc in the Nix store
         nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoPatchelfHook ];
         buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.stdenv.cc.cc.lib ];
 
-        # Keep only the linux-x64 glibc ZeroMQ builds; musl and other architectures cannot be patched or loaded here
+        # Remove ZeroMQ builds for other architectures and musl because this workstation cannot load them
         postPatch = old.postPatch + ''
           find dist/node_modules/zeromq*/prebuilds -type f ! -path '*/prebuilds/linux-x64/node.napi.glibc.node' -delete
           find dist/node_modules/zeromq*/prebuilds -mindepth 1 -type d -empty -delete
@@ -31,15 +38,17 @@
       });
     in
     {
-      # VSCodium's own module writes to VSCodium's paths (~/.config/VSCodium, ~/.vscode-oss); programs.vscode would write to VS Code's
+      ## Part 2. Editor and extensions
+      # Use VSCodium's module so settings go to its own paths rather than those of Microsoft VS Code
       programs.vscodium = {
+        # Install VSCodium and let Home Manager maintain its profile
         enable = true;
 
-        # Extensions come only from Nix; the extension directory is read-only
+        # Keep the extension directory read-only so every extension comes from Nix
         mutableExtensionsDir = false;
 
         profiles.default = {
-          # Nix provides every version, so VSCodium must not update itself or its extensions
+          # Let Nix provide every editor and extension update instead of VSCodium
           enableUpdateCheck = false;
           enableExtensionUpdateCheck = false;
 
@@ -56,12 +65,12 @@
             llvm-vs-code-extensions.vscode-clangd
             vadimcn.vscode-lldb
             mkhl.direnv
-            # Writing: LaTeX with latexmk from the TeX Live of homeManager.tex, and spell checking
-            # LaTeX Workshop brings its own PDF viewer and reports other PDF extensions as incompatible
+            # Use latexmk from homeManager.tex and LaTeX Workshop's own compatible PDF viewer
+            # Add spell checking for prose and source files
             james-yu.latex-workshop
             streetsidesoftware.code-spell-checker
             ms-vscode.cmake-tools
-            # Shows CadQuery models live from Python; the project needs the matching package: uv add ocp-vscode==4.2.0
+            # Show CadQuery models live when the project supplies the matching ocp-vscode 4.2.0 package
             (pkgs.vscode-utils.buildVscodeMarketplaceExtension {
               mktplcRef = {
                 publisher = "bernhard-42";
@@ -73,14 +82,15 @@
             })
           ];
 
-          # Read-only settings.json: changes made in the settings UI do not persist
+          ## Part 3. Fixed editor settings
+          # Keep settings.json read-only so changes made in the settings screen do not drift from this file
           userSettings = {
             "telemetry.telemetryLevel" = "off";
             "chat.disableAIFeatures" = true;
-            # The theme's current name: VSCodium rewrites the older "Default Dark Modern" at every start, which fails on read-only settings
+            # Use the current theme name because VSCodium cannot rewrite the older name in read-only settings
             "workbench.colorTheme" = "Dark Modern";
 
-            # Carried over from the VS Code setup on Ubuntu
+            # Preserve the familiar editing behaviour from the previous editor setup
             "security.workspace.trust.untrustedFiles" = "open";
             "git.openRepositoryInParentFolders" = "always";
             "git.enableSmartCommit" = true;

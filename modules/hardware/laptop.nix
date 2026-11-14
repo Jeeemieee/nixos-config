@@ -1,17 +1,26 @@
-# Laptop hardware services; hosts opt in by importing nixos.laptop
+# Common laptop hardware
+#
+# What it is    Firmware, Bluetooth, Thunderbolt authorisation and disk-health monitoring
+# Who uses it   A NixOS host by importing nixos.laptop
+# A host adds   Its machine-specific hardware configuration beside this shared module
+# Protected     No: these services support hardware but do not define disk layout, boot or accounts
 {
   flake.modules.nixos.laptop = {
     # Firmware for Wi-Fi, Bluetooth, audio and graphics
     hardware.enableRedistributableFirmware = true;
 
+    # Enable the Bluetooth controller for peripherals and audio devices
     hardware.bluetooth.enable = true;
 
-    # Authorises Thunderbolt docks; Plasma's settings page talks to this daemon
+    # Authorise Thunderbolt docks through the daemon used by Plasma's settings page
     services.hardware.bolt.enable = true;
 
-    # Watches the disks' health (SMART) and warns on the desktop when a disk starts to fail
+    # Watch SMART disk health and send a desktop warning when a disk starts to fail
     services.smartd = {
+      # Start the disk-health monitor
       enable = true;
+
+      # Deliver its warnings through the desktop notification bus
       notifications.systembus-notify.enable = true;
     };
   };
