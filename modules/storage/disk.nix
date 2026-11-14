@@ -183,6 +183,14 @@ in
         # Never force-import a root pool that appears to belong to another active system
         boot.zfs.forceImportRoot = false;
 
+        # Import the pool only after the encrypted container is open: the pool lies inside it
+        # NixOS starts the import at once and lets it retry for one minute. A passphrase typed later than that
+        # found the import given up, and the boot ended in the emergency mode, with root locked
+        boot.initrd.systemd.services.zfs-import-rpool = {
+          after = [ "systemd-cryptsetup@crypt.service" ];
+          requires = [ "systemd-cryptsetup@crypt.service" ];
+        };
+
         # Cap ZFS's slowly released cache at 4 GiB so simulations and agent workers retain memory
         boot.kernelParams = [ "zfs.zfs_arc_max=${toString (4 * 1024 * 1024 * 1024)}" ];
 
@@ -283,8 +291,13 @@ in
 
             disko.tests = {
               # Unlock the encrypted root disk at the boot prompt
+              # Type the passphrase later than the minute for which the pool's import retries by itself:
+              # someone who switches the machine on and walks away must still get a system, not the emergency mode
               bootCommands = ''
                 machine.wait_for_console_text("Please enter passphrase for disk")
+                # Waited here, outside the machine: it cannot run a command before it has booted
+                import time
+                time.sleep(75)
                 machine.send_console("secretsecret\n")
               '';
               extraChecks = ''

@@ -25,7 +25,7 @@ The two workers datasets are empty until the workers' tools arrive. Their top fo
 
 All datasets use zstd compression and no access-time updates. ZFS's cache is capped at 4 GiB. The pool is scrubbed monthly (every block is read and its checksum verified) and trimmed weekly.
 
-The disk passphrase is typed at every boot. It is not in nixos-secrets, which live on the encrypted disk. `hostSpec.disk.device` has no default and the formatting script cannot be built without it; the installer sets it to the one disk it can see (see [INSTALL.md](INSTALL.md)). The installed system finds its partitions by label, not by device name.
+The disk passphrase is typed at every boot. It is not in nixos-secrets, which live on the encrypted disk. The boot waits for it as long as it takes: the pool is imported only after the encrypted container is open. (Without that order NixOS lets the import retry for one minute beside the prompt, and a passphrase typed later ended in the emergency mode; the `disk-layout` check types it after 75 seconds.) `hostSpec.disk.device` has no default and the formatting script cannot be built without it; the installer sets it to the one disk it can see (see [INSTALL.md](INSTALL.md)). The installed system finds its partitions by label, not by device name.
 
 ## Snapshots are not backups
 

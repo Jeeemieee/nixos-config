@@ -146,8 +146,15 @@ in
 
             ## Step 3. Register the host-built system in the installer's view of the shared store
             nix-store --load-db < "$payload/registration"
-            ## Step 4. Install only from the shared host store without contacting a binary cache
-            nixos-install --root /mnt --system "$(cat "$payload/system")" --no-root-passwd --no-channel-copy --option substituters ""
+            ## Step 4. Copy the system from the shared host store to the target
+            # A step of its own, with Nix's copy command, which passes every path on as it reads it and stays below
+            # 100 MiB. Left to nixos-install, the same copy is made by Nix's substitution, which held up to 7 GiB of it
+            # in memory in two dry runs: the installer was stopped for memory and the system half copied
+            system=$(cat "$payload/system")
+            nix --extra-experimental-features nix-command copy --no-check-sigs --to 'local?root=/mnt' "$system"
+
+            ## Step 5. Install what is now on the target, without contacting a binary cache
+            nixos-install --root /mnt --system "$system" --no-root-passwd --no-channel-copy --option substituters ""
             echo
             echo "Installed. Run install-finish to unmount the target and power off."
           '';
