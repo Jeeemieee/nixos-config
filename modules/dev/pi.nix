@@ -204,13 +204,28 @@ let
             deny "--unlock: $project has no protected files"
           fi
         else
+          # A mount protects the path itself. A folder above it could still be renamed and another put in its place, so each of those
+          # folders is mounted onto itself as well, still writable: a mount can be neither renamed nor removed
+          declare -A above=()
+          guarded=()
           for path in "''${protectedPaths[@]}"; do
             if [ -L "$project/$path" ]; then
               deny "refusing $project: its protected $path is a link, which cannot be protected"
             elif [ -e "$project/$path" ]; then
-              protect+=(--ro-bind "$project/$path" "$project/$path")
+              guarded+=(--ro-bind "$project/$path" "$project/$path")
+              parent=$(dirname "$path")
+              while [ "$parent" != . ]; do
+                [ ! -L "$project/$parent" ] || deny "refusing $project: $parent, above its protected $path, is a link, which cannot be protected"
+                above[$parent]=1
+                parent=$(dirname "$parent")
+              done
             fi
           done
+          # Outer folders first and the protected paths last, so that no later mount covers an earlier one
+          while IFS= read -r parent; do
+            [ -z "$parent" ] || protect+=(--bind "$project/$parent" "$project/$parent")
+          done < <(printf '%s\n' "''${!above[@]}" | LC_ALL=C sort)
+          protect+=("''${guarded[@]}")
           # pi reads this file instead of the repository's AGENTS.md when it exists; it cannot be protected before it exists
           if [ "''${#protectedPaths[@]}" -gt 0 ] && [ -e "$project/AGENTS.override.md" ]; then
             deny "refusing $project: it holds an AGENTS.override.md, which would replace the repository's instructions; remove it, or start with --unlock to work on it"
@@ -586,6 +601,10 @@ in
             if rm -f single 2>/dev/null && [ ! -e single ]; then report single-remove accepted; else report single-remove refused; fi
             if echo replaced > single.new 2>/dev/null && mv single.new single 2>/dev/null; then report single-replace accepted; else report single-replace refused; fi
             if echo change >> ordinary 2>/dev/null; then report ordinary-change accepted; else report ordinary-change refused; fi
+            # Protected files two folders deep: changed directly, and the folder above them renamed with another put in its place
+            if echo change >> nested/deep/file 2>/dev/null || echo change >> nested/deep/second 2>/dev/null; then report nested-change accepted; else report nested-change refused; fi
+            if mv nested nested-away 2>/dev/null && mkdir -p nested/deep && echo replaced > nested/deep/file 2>/dev/null; then report parent-replace accepted; else report parent-replace refused; fi
+            if echo change >> nested/beside 2>/dev/null; then report beside-change accepted; else report beside-change refused; fi
           '';
           sandboxedProtectedProbe = mkSandbox pkgs {
             name = "pi";
@@ -595,6 +614,8 @@ in
               "guarded"
               "single"
               "not-there"
+              "nested/deep/file"
+              "nested/deep/second"
             ];
           };
         in
@@ -605,8 +626,9 @@ in
           failed=0
           expect() { if [ "$2" = "$3" ]; then echo "ok   $1: $2"; else echo "FAIL $1: $2 (expected $3)"; failed=1; fi; }
           fresh() {
-            rm -rf "$1" && mkdir -p "$1/guarded"
+            rm -rf "$1" && mkdir -p "$1/guarded" "$1/nested/deep"
             echo content > "$1/guarded/file" && echo content > "$1/single" && echo content > "$1/ordinary"
+            echo content > "$1/nested/deep/file" && echo content > "$1/nested/deep/second" && echo content > "$1/nested/beside"
           }
           state() { (cd "$1" && cat guarded/file single ordinary 2> /dev/null | tr '\n' ' '; ls -A | tr '\n' ' '); }
 
@@ -615,18 +637,21 @@ in
           fresh "$project"
           (cd "$project" && PROJECT=$project ${sandboxedProtectedProbe}/bin/pi) > actual
           cat actual
-          for probe in file-change folder-new-file folder-rename single-change single-remove single-replace; do
+          for probe in file-change folder-new-file folder-rename single-change single-remove single-replace nested-change parent-replace; do
             expect "protected, $probe" "$(grep -x "$probe=.*" actual)" "$probe=refused"
           done
           expect "an ordinary file" "$(grep -x 'ordinary-change=.*' actual)" "ordinary-change=accepted"
+          expect "an ordinary file beside a protected one" "$(grep -x 'beside-change=.*' actual)" "beside-change=accepted"
           # single.new is the probe's own ordinary file, left over from its refused attempt to put it in place of the protected one
-          expect "afterwards, on the host" "$(state "$project")" "content content content change guarded ordinary single single.new "
+          expect "afterwards, on the host" "$(state "$project")" "content content content change guarded nested ordinary single single.new "
+          # Two protected files share the folders above them: both hold, so the second file's mounts did not cover the first's
+          expect "the nested protected files, on the host" "$(cat "$project/nested/deep/file" "$project/nested/deep/second" | tr '\n' ' ')" "content content "
 
           ## Step 2. Control: the same session with --unlock can change them
           fresh "$project"
           (cd "$project" && PROJECT=$project ${sandboxedProtectedProbe}/bin/pi --unlock) > actual 2> message
           cat actual message
-          for probe in file-change folder-new-file folder-rename single-change single-remove single-replace; do
+          for probe in file-change folder-new-file folder-rename single-change single-remove single-replace nested-change parent-replace; do
             expect "unlocked, $probe" "$(grep -x "$probe=.*" actual)" "$probe=accepted"
           done
           grep -q "unlocked for this session" message || { echo "FAIL: --unlock did not say what it unlocked"; failed=1; }
