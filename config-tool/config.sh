@@ -62,7 +62,7 @@ check() {
 
 # The two gates of a commit
 guard() {
-  local tree status path extra sensitive=() protectedPath
+  local tree status path extra sensitive=() sensitivePaths=() protectedPath
   tree=$(stagedTree)
 
   ## Gate 1. Changes to protected files, and files added to or removed from a folder whose files are all loaded, need a typed yes
@@ -72,16 +72,32 @@ guard() {
     case "$status" in R* | C*) IFS= read -r -d "" extra ;; esac
     for candidate in "$path" $extra; do
       while IFS= read -r protectedPath; do
-        case "$candidate" in "$protectedPath" | "$protectedPath"/*) sensitive+=("$status $candidate") ;; esac
+        case "$candidate" in
+          "$protectedPath" | "$protectedPath"/*)
+            sensitive+=("$status $candidate")
+            sensitivePaths+=("$candidate")
+            ;;
+        esac
       done < <(jq -r --arg name "$name" '.[$name][]' "$PROTECTED")
       case "$status:$candidate" in
-        [ADRC]*:modules/*) sensitive+=("$status $candidate (a module added, removed or renamed: every file below modules/ is loaded)") ;;
+        [ADRC]*:modules/*)
+          sensitive+=("$status $candidate (a module added, removed or renamed: every file below modules/ is loaded)")
+          sensitivePaths+=("$candidate")
+          ;;
       esac
     done
   done < <(git diff --cached --name-status -z)
   if [ "${#sensitive[@]}" -gt 0 ]; then
     echo "config: this commit changes protected files of $name:"
     printf '  %s\n' "${sensitive[@]}" | sort -u
+    # What changes in them, shown by git itself before the question: on a terminal in git's own viewer (q closes it)
+    echo
+    git --no-pager diff --cached --stat -- "${sensitivePaths[@]}"
+    if [ -t 1 ]; then
+      git diff --cached -- "${sensitivePaths[@]}"
+    else
+      git --no-pager diff --cached -- "${sensitivePaths[@]}"
+    fi
     local answer=
     read -r -p "Type yes to commit these changes: " answer < "${CONFIG_GUARD_TTY:-/dev/tty}" \
       || die "no terminal to ask on, so the changes to protected files are not committed"

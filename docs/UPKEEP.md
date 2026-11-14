@@ -29,7 +29,7 @@ Three things hold on NixOS whatever an agent is told or decides:
    As mounts they can neither be changed nor renamed, removed or replaced. `pi --unlock` says which files it opens, for that one session. A repository that holds an `AGENTS.override.md`, which pi would read instead of `AGENTS.md`, is refused.
 3. **A commit passes two gates**, in `config commit` and, for a plain `git commit`, in a hook that the user's own git settings name for the two repositories (an agent only reads those settings):
    - the checks passed on exactly the staged content: a change after the check, or a failed check, stops the commit;
-   - every change of a protected file, and every file added to, removed from or renamed below `modules/`, is listed and needs a typed `yes`. Without a terminal to ask on, the commit is refused.
+   - every change of a protected file, and every file added to, removed from or renamed below `modules/`, is listed and needs a typed `yes`. Before the question git itself shows what changes in those files: a summary, then the changes in its own viewer (`q` closes it). Without a terminal to ask on, the commit is refused.
 
 Limits, stated plainly:
 - **On a machine where pi runs without the sandbox** (Ubuntu before the move) none of this is enforced against an agent; `config commit` still applies the two gates to the user's own commits.

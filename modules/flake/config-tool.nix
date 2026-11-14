@@ -90,6 +90,8 @@
             echo weaker >> modules/dev/pi.nix
             expect "a protected file, answer no" "$(outcome no $config commit 'protected')" refused
             said "modules/dev/pi.nix"
+            # The change itself is shown before the question, by git
+            said "^+weaker"
             expect "nothing was committed" "$(git log --format=%s -1)" ordinary
             expect "a protected file, no terminal" "$(CONFIG_GUARD_TTY=/nonexistent $config commit 'protected' > /dev/null 2>&1 && echo accepted || echo refused)" refused
             expect "a protected file, answer yes" "$(outcome yes $config commit 'protected')" accepted
