@@ -73,7 +73,7 @@ Docker is rootless because membership of a `docker` group is equivalent to root:
 
 `homeManager.git` (`modules/dev/git/github.nix`) reaches GitHub over SSH with a key that lives in the Bitwarden vault. There is no key file and no token on the disk.
 
-- The Bitwarden desktop app runs an SSH agent (socket `~/.bitwarden-ssh-agent.sock`) and answers while the vault is unlocked. `ssh` is told to use it for `github.com` only.
+- The Bitwarden desktop app runs an SSH agent (socket `~/.bitwarden-ssh-agent.sock`) and answers while the vault is unlocked. `ssh` is told to use it for every host (see SSH hosts below).
 - GitHub's host keys are pinned (from `https://api.github.com/meta`): a server with another key is refused without a question. The check `github-host-key` tests that against a stand-in server, with a control.
 - The user's own repositories go over SSH whatever address they were cloned with (`https://github.com/Jeeemieee/…` is rewritten), the private `nixos-secrets` input included. Other GitHub repositories keep HTTPS, so public ones can be fetched without a key.
 - The pi sandbox sees neither the socket nor `~/.ssh` (`pi-sandbox` checks both), so an agent cannot push or fetch private repositories.
@@ -92,7 +92,7 @@ After every login the vault has to be unlocked once before git can reach GitHub.
 `homeManager.ssh` (`modules/dev/ssh.nix`) gives the SSH client the user's own list of hosts: clusters and servers with their addresses and user names. The list is private, not secret, and comes from `ssh/config` in nixos-secrets; it is an ordinary OpenSSH settings file.
 
 - It is read **after** every declared host. ssh keeps the first value it finds for a setting, so the list cannot change what is declared, such as GitHub's pinned host keys. The check `ssh-settings` shows that with a stand-in list that tries to, and with a control in which the same list, read first, succeeds.
-- Keys are not declared: a key named in the list must exist as a file in `~/.ssh` on the machine, or live in Bitwarden.
+- Keys are not declared. For every host `ssh` asks Bitwarden's agent first, so a key that lives in the vault needs no line in the list and no file on a new machine: create an "SSH key" item in Bitwarden and add its public key to the server's `~/.ssh/authorized_keys`. A key file that the list names (`IdentityFile`) is still tried and must exist in `~/.ssh`. A host with `IdentitiesOnly yes` uses only its named files and never the vault's key: remove that line and the `IdentityFile` line for a host whose key is in Bitwarden. Verified on Ubuntu on 2026-11-14 with a key in the vault and the user's server; not verified yet on NixOS.
 - To change the list: edit `ssh/config` in nixos-secrets, commit, `nix flake update nixos-secrets`, rebuild.
 - Test a host without connecting: `ssh -G <name>` prints the address and user that would be used.
 

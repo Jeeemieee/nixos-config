@@ -30,6 +30,11 @@ in
       # This prevents the include from replacing protected choices such as GitHub's pinned keys
       # The check below also limits the include because some SSH settings run programs or load libraries
       settings."*".Include = hostsFile;
+
+      # Ask Bitwarden's agent for a key for every host, so a server's key is no file that a new machine lacks
+      # The agent answers only while the desktop app runs and the vault is unlocked, and is not shared with a sandbox
+      # A key file that the list names for a host is still tried
+      settings."*".IdentityAgent = "~/.bitwarden-ssh-agent.sock";
     };
   };
 
@@ -101,6 +106,8 @@ in
             expect "GitHub's known hosts" "$(value declared github.com userknownhostsfile | grep -c github-known-hosts)" 1
             expect "a host of the list: address" "$(value declared cluster hostname)" cluster.example.org
             expect "a host of the list: user" "$(value declared cluster user)" researcher
+            # A key in Bitwarden serves every host, so no key file has to exist on a new machine
+            expect "a host of the list: key service" "$(value declared cluster identityagent)" "$HOME/.bitwarden-ssh-agent.sock"
 
             ## Step 4. Control that include order is the safeguard
             # Reading the same list first must change GitHub's settings
