@@ -25,6 +25,7 @@ Three things hold on NixOS whatever an agent is told or decides:
    | Repository | Protected | Why |
    | --- | --- | --- |
    | `nixos-config` | `modules/dev/pi.nix`, `AGENTS.md` | What an agent's sandbox is, and its instructions |
+   | | `modules/dev/workers.nix`, `workers/`, `workers-dashboard/` | The worker setup: its limits, the root helper with its sudo rule, the queue's broker, the live overview that you run on what agents wrote, and their checks |
    | | `config-tool/` | This list and the guard |
    | | `modules/flake/` | How the flake is put together: the checks, the package set, the hosts, the admin shell, the `config` command |
    | | `dev-env/` | The development environments, their checks and the checks' scripts |

@@ -7,7 +7,17 @@
         "${inputs.nixpkgs}/nixos/modules/virtualisation/qemu-vm.nix"
         topLevel.config.flake.modules.nixos.workstation
         topLevel.config.flake.modules.nixos.secrets-test
+        topLevel.config.flake.modules.nixos.workers
       ];
+
+      # Agent workers with plain folders: this machine has no ZFS
+      hostSpec.workers = {
+        user = "jeeemieee";
+        # Of the VM's 8 GiB
+        totalMemory = "5G";
+        agentsMemory = "3G";
+        agentMemory = "2G";
+      };
 
       # A test VM, removed once the laptop has migrated; everything shared with the laptop is in nixos.workstation
       # The existing VM disk's public recipient is in the pinned ciphertext

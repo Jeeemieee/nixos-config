@@ -11,6 +11,12 @@
     "modules/dev/pi.nix"
     "AGENTS.md"
 
+    # Protect the worker setup: its limits, the queue's broker, the root helper with its sudo rule, and its checks
+    "modules/dev/workers.nix"
+    "workers"
+    # The live overview is a program that the user runs on what agents wrote
+    "workers-dashboard"
+
     # Protect the policy itself and the command that enforces it
     "config-tool"
 

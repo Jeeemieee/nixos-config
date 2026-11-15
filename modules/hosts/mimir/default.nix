@@ -15,6 +15,7 @@ in
       modules.nixos.nvidia-offload
       modules.nixos.displaylink
       modules.nixos.backup
+      modules.nixos.workers
     ];
 
     networking.hostName = "mimir";
@@ -31,6 +32,19 @@ in
       nixQuota = "250G";
       scratchQuota = "600G";
       workersQuota = "200G";
+    };
+
+    # Agent workers get their folders and scratch areas in the two datasets that nixos.disk declares for them (docs/WORKERS.md)
+    hostSpec.workers = {
+      user = "jeeemieee";
+      # 31 GiB: 4 for ZFS's cache, 8 for the desktop, 1 for the kernel leave 18 for the workers
+      totalMemory = "18G";
+      # The user's numbers: every pi session counts as an agent, and jobs keep at least 12 GiB
+      agentsMemory = "6G";
+      agentMemory = "3G";
+      # Performance cores 0 and 1 with both threads for timing jobs; the other six performance cores and the twelve efficiency cores for the rest
+      timingCpus = "0-3";
+      workCpus = "4-27";
     };
 
     hardware.cpu.intel.updateMicrocode = true;

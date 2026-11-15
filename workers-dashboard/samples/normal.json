@@ -1,0 +1,1236 @@
+{
+ "version": 1,
+ "generated": 1794650000,
+ "machine": {
+  "memory": {
+   "used": 6106906624,
+   "limit": 19327352832,
+   "peak": 7938978611
+  },
+  "agentsMemory": {
+   "used": 5110759424,
+   "limit": 6442450944,
+   "peak": 6132911308
+  },
+  "agentsCpu": {
+   "share": 2.7,
+   "limit": 4.0
+  },
+  "memoryStops": {
+   "count": 2,
+   "last": [
+    {
+     "time": 1794640000,
+     "worker": "alpha/solver/w1",
+     "what": "job"
+    }
+   ]
+  },
+  "cpus": {
+   "count": 28,
+   "timing": "0-3",
+   "timingReserved": false
+  },
+  "queue": {
+   "slots": {
+    "taken": 1,
+    "total": 5
+   },
+   "parallel": {
+    "taken": 0,
+    "total": 1
+   },
+   "timing": {
+    "taken": 0,
+    "total": 1
+   },
+   "exclusive": false,
+   "waiting": 1
+  },
+  "disk": {
+   "workers": {
+    "used": 6608125952,
+    "limit": 214748364800
+   },
+   "scratch": {
+    "used": 153097338880,
+    "limit": 644245094400
+   }
+  }
+ },
+ "workers": [
+  {
+   "project": "alpha",
+   "branch": "solver",
+   "name": "w1",
+   "role": "implementer",
+   "state": {
+    "value": "implementing",
+    "source": "derived"
+   },
+   "running": {
+    "value": true,
+    "since": 1794574794
+   },
+   "lastRun": 1794574794,
+   "memory": {
+    "used": 300941312,
+    "limit": 3221225472,
+    "peak": 2037383168
+   },
+   "cpu": {
+    "share": 0.5,
+    "seconds": 2099
+   },
+   "gpuMemory": {
+    "used": 0
+   },
+   "folder": {
+    "used": 146800640,
+    "limit": 10737418240
+   },
+   "scratch": {
+    "used": 17022582784,
+    "limit": 53687091200
+   },
+   "jobs": [
+    {
+     "mode": "run",
+     "since": 1794649000,
+     "state": "running",
+     "memory": {
+      "used": 996147200,
+      "peak": 996147200
+     },
+     "cpu": {
+      "share": 6.5
+     },
+     "command": "make check"
+    }
+   ],
+   "runs": [],
+   "removable": {
+    "value": false,
+    "source": "derived"
+   },
+   "steps": {
+    "done": 4,
+    "total": 7,
+    "changed": 1794643721,
+    "source": "claimed",
+    "items": [
+     {
+      "text": "Read the residual assembly",
+      "state": "done"
+     },
+     {
+      "text": "Write the test that fails",
+      "state": "done"
+     },
+     {
+      "text": "Add the boundary term to the residual",
+      "state": "done"
+     },
+     {
+      "text": "Extend the test of the residual",
+      "state": "done"
+     },
+     {
+      "text": "Run the tests of the solver",
+      "state": "in work"
+     },
+     {
+      "text": "Update the documentation of the solver",
+      "state": "open"
+     },
+     {
+      "text": "Record the validation run",
+      "state": "open"
+     }
+    ],
+    "current": "Run the tests of the solver"
+   },
+   "claim": {
+    "value": "Working on: Run the tests of the solver",
+    "source": "claimed"
+   },
+   "commits": {
+    "ahead": 8,
+    "behind": 0,
+    "uncommitted": {
+     "value": true,
+     "source": "self-reported"
+    },
+    "source": "derived"
+   },
+   "reviews": {
+    "count": 0,
+    "outdated": 0,
+    "verdicts": [],
+    "source": "derived"
+   },
+   "intent": {
+    "approved": true,
+    "source": "recorded",
+    "approach": 1,
+    "approvedAt": 1794633698,
+    "changedSinceApproval": false
+   },
+   "acceptance": {
+    "value": "never run",
+    "source": "recorded"
+   },
+   "memoryStops": {
+    "count": 2
+   }
+  },
+  {
+   "project": "alpha",
+   "branch": "solver",
+   "name": "w2",
+   "role": "implementer",
+   "state": {
+    "value": "ready for review",
+    "source": "derived"
+   },
+   "running": {
+    "value": false
+   },
+   "lastRun": 1794598307,
+   "memory": {
+    "used": 0,
+    "limit": 3221225472,
+    "peak": 2995739688
+   },
+   "cpu": {
+    "share": 0.0,
+    "seconds": 4986
+   },
+   "gpuMemory": {
+    "used": 0
+   },
+   "folder": {
+    "used": 838860800,
+    "limit": 10737418240
+   },
+   "scratch": {
+    "used": 72351744,
+    "limit": 53687091200
+   },
+   "jobs": [],
+   "runs": [
+    {
+     "mode": "run",
+     "time": 1794649609,
+     "exit": 0,
+     "duration": 31,
+     "onCurrentCommit": true,
+     "command": "pytest tests/solver"
+    }
+   ],
+   "removable": {
+    "value": false,
+    "source": "derived"
+   },
+   "steps": {
+    "done": 9,
+    "total": 9,
+    "changed": 1794642643,
+    "source": "claimed",
+    "items": [
+     {
+      "text": "Read the residual assembly",
+      "state": "done"
+     },
+     {
+      "text": "Write the test that fails",
+      "state": "done"
+     },
+     {
+      "text": "Add the boundary term to the residual",
+      "state": "done"
+     },
+     {
+      "text": "Extend the test of the residual",
+      "state": "done"
+     },
+     {
+      "text": "Run the tests of the solver",
+      "state": "done"
+     },
+     {
+      "text": "Update the documentation of the solver",
+      "state": "done"
+     },
+     {
+      "text": "Record the validation run",
+      "state": "done"
+     },
+     {
+      "text": "Compare the result with the reference",
+      "state": "done"
+     },
+     {
+      "text": "Remove the duplicated helper",
+      "state": "done"
+     }
+    ]
+   },
+   "claim": {
+    "value": "Working on: everything is done",
+    "source": "claimed"
+   },
+   "commits": {
+    "ahead": 2,
+    "behind": 1,
+    "uncommitted": {
+     "value": false,
+     "source": "self-reported"
+    },
+    "source": "derived"
+   },
+   "reviews": {
+    "count": 0,
+    "outdated": 0,
+    "verdicts": [],
+    "source": "derived"
+   },
+   "intent": {
+    "approved": true,
+    "source": "recorded",
+    "approach": 2,
+    "approvedAt": 1794616016,
+    "changedSinceApproval": false
+   },
+   "acceptance": {
+    "value": "passed",
+    "onCurrentCommit": true,
+    "time": 1794649609,
+    "source": "recorded"
+   },
+   "lastQueuedRun": {
+    "mode": "run",
+    "time": 1794649609,
+    "exit": 0,
+    "duration": 31,
+    "onCurrentCommit": true,
+    "source": "recorded"
+   }
+  },
+  {
+   "project": "alpha",
+   "branch": "solver",
+   "name": "r1",
+   "role": "reviewer",
+   "state": {
+    "value": "idle",
+    "source": "derived"
+   },
+   "running": {
+    "value": true,
+    "since": 1794578436
+   },
+   "lastRun": 1794578436,
+   "memory": {
+    "used": 854589440,
+    "limit": 3221225472,
+    "peak": 854589440
+   },
+   "cpu": {
+    "share": 0.6,
+    "seconds": 3132
+   },
+   "gpuMemory": {
+    "used": 0
+   },
+   "folder": {
+    "used": 757071872,
+    "limit": 10737418240
+   },
+   "scratch": {
+    "used": 7441743872,
+    "limit": 53687091200
+   },
+   "jobs": [],
+   "runs": [],
+   "removable": {
+    "value": false,
+    "source": "derived"
+   },
+   "steps": {
+    "done": 0,
+    "total": 4,
+    "changed": 1794641296,
+    "source": "claimed",
+    "items": [
+     {
+      "text": "Read the diff against the branch",
+      "state": "in work"
+     },
+     {
+      "text": "Rerun the reproduction test",
+      "state": "open"
+     },
+     {
+      "text": "Check the edge cases of the change",
+      "state": "open"
+     },
+     {
+      "text": "Write the findings",
+      "state": "open"
+     }
+    ],
+    "current": "Read the diff against the branch"
+   },
+   "claim": {
+    "value": "Working on: Read the diff against the branch",
+    "source": "claimed"
+   }
+  },
+  {
+   "project": "alpha",
+   "branch": "mesh",
+   "name": "w1",
+   "role": "implementer",
+   "state": {
+    "value": "planned",
+    "source": "derived"
+   },
+   "running": {
+    "value": false
+   },
+   "lastRun": 1794592006,
+   "memory": {
+    "used": 0,
+    "limit": 3221225472,
+    "peak": 1378877440
+   },
+   "cpu": {
+    "share": 0.0,
+    "seconds": 4539
+   },
+   "gpuMemory": {
+    "used": 0
+   },
+   "folder": {
+    "used": 270532608,
+    "limit": 10737418240
+   },
+   "scratch": {
+    "used": 11877220352,
+    "limit": 53687091200
+   },
+   "jobs": [],
+   "runs": [],
+   "removable": {
+    "value": false,
+    "source": "derived"
+   },
+   "commits": {
+    "ahead": 0,
+    "behind": 0,
+    "uncommitted": {
+     "value": false,
+     "source": "self-reported"
+    },
+    "source": "derived"
+   },
+   "reviews": {
+    "count": 0,
+    "outdated": 0,
+    "verdicts": [],
+    "source": "derived"
+   },
+   "intent": {
+    "approved": false,
+    "source": "recorded"
+   },
+   "acceptance": {
+    "value": "never run",
+    "source": "recorded"
+   }
+  },
+  {
+   "project": "alpha",
+   "branch": "mesh",
+   "name": "w2",
+   "role": "implementer",
+   "state": {
+    "value": "approved",
+    "source": "derived"
+   },
+   "running": {
+    "value": false
+   },
+   "lastRun": 1794589159,
+   "memory": {
+    "used": 0,
+    "limit": 3221225472,
+    "peak": 936378368
+   },
+   "cpu": {
+    "share": 0.0,
+    "seconds": 186
+   },
+   "gpuMemory": {
+    "used": 0
+   },
+   "folder": {
+    "used": 467664896,
+    "limit": 10737418240
+   },
+   "scratch": {
+    "used": 19118686208,
+    "limit": 53687091200
+   },
+   "jobs": [],
+   "runs": [],
+   "removable": {
+    "value": false,
+    "source": "derived"
+   },
+   "steps": {
+    "done": 0,
+    "total": 9,
+    "changed": 1794648302,
+    "source": "claimed",
+    "items": [
+     {
+      "text": "Read the residual assembly",
+      "state": "in work"
+     },
+     {
+      "text": "Write the test that fails",
+      "state": "open"
+     },
+     {
+      "text": "Add the boundary term to the residual",
+      "state": "open"
+     },
+     {
+      "text": "Extend the test of the residual",
+      "state": "open"
+     },
+     {
+      "text": "Run the tests of the solver",
+      "state": "open"
+     },
+     {
+      "text": "Update the documentation of the solver",
+      "state": "open"
+     },
+     {
+      "text": "Record the validation run",
+      "state": "open"
+     },
+     {
+      "text": "Compare the result with the reference",
+      "state": "open"
+     },
+     {
+      "text": "Remove the duplicated helper",
+      "state": "open"
+     }
+    ],
+    "current": "Read the residual assembly"
+   },
+   "claim": {
+    "value": "Working on: Read the residual assembly",
+    "source": "claimed"
+   },
+   "commits": {
+    "ahead": 0,
+    "behind": 0,
+    "uncommitted": {
+     "value": false,
+     "source": "self-reported"
+    },
+    "source": "derived"
+   },
+   "reviews": {
+    "count": 0,
+    "outdated": 0,
+    "verdicts": [],
+    "source": "derived"
+   },
+   "intent": {
+    "approved": true,
+    "source": "recorded",
+    "approach": 1,
+    "approvedAt": 1794563510,
+    "changedSinceApproval": false
+   },
+   "acceptance": {
+    "value": "never run",
+    "source": "recorded"
+   }
+  },
+  {
+   "project": "alpha",
+   "branch": "mesh",
+   "name": "d1",
+   "role": "deep-reviewer",
+   "state": {
+    "value": "idle",
+    "source": "derived"
+   },
+   "running": {
+    "value": true,
+    "since": 1794610552
+   },
+   "lastRun": 1794610552,
+   "memory": {
+    "used": 934281216,
+    "limit": 3221225472,
+    "peak": 934281216
+   },
+   "cpu": {
+    "share": 0.4,
+    "seconds": 4112
+   },
+   "gpuMemory": {
+    "used": 0
+   },
+   "folder": {
+    "used": 473956352,
+    "limit": 10737418240
+   },
+   "scratch": {
+    "used": 17444110336,
+    "limit": 53687091200
+   },
+   "jobs": [],
+   "runs": [],
+   "removable": {
+    "value": false,
+    "source": "derived"
+   },
+   "steps": {
+    "done": 2,
+    "total": 4,
+    "changed": 1794645285,
+    "source": "claimed",
+    "items": [
+     {
+      "text": "Read the diff against the branch",
+      "state": "done"
+     },
+     {
+      "text": "Rerun the reproduction test",
+      "state": "done"
+     },
+     {
+      "text": "Check the edge cases of the change",
+      "state": "in work"
+     },
+     {
+      "text": "Write the findings",
+      "state": "open"
+     }
+    ],
+    "current": "Check the edge cases of the change"
+   },
+   "claim": {
+    "value": "Working on: Check the edge cases of the change",
+    "source": "claimed"
+   }
+  },
+  {
+   "project": "beta",
+   "branch": "main",
+   "name": "m1",
+   "role": "manager",
+   "state": {
+    "value": "idle",
+    "source": "derived"
+   },
+   "running": {
+    "value": true,
+    "since": 1794583948
+   },
+   "lastRun": 1794583948,
+   "memory": {
+    "used": 787480576,
+    "limit": 3221225472,
+    "peak": 1398800384
+   },
+   "cpu": {
+    "share": 0.2,
+    "seconds": 292
+   },
+   "gpuMemory": {
+    "used": 0
+   },
+   "folder": {
+    "used": 535822336,
+    "limit": 10737418240
+   },
+   "scratch": {
+    "used": 8340373504,
+    "limit": 53687091200
+   },
+   "jobs": [],
+   "runs": [],
+   "removable": {
+    "value": false,
+    "source": "derived"
+   }
+  },
+  {
+   "project": "beta",
+   "branch": "main",
+   "name": "w1",
+   "role": "implementer",
+   "state": {
+    "value": "reviewed",
+    "source": "derived"
+   },
+   "running": {
+    "value": false
+   },
+   "lastRun": 1794626724,
+   "memory": {
+    "used": 0,
+    "limit": 3221225472,
+    "peak": 1102053376
+   },
+   "cpu": {
+    "share": 0.0,
+    "seconds": 4505
+   },
+   "gpuMemory": {
+    "used": 0
+   },
+   "folder": {
+    "used": 774897664,
+    "limit": 10737418240
+   },
+   "scratch": {
+    "used": 12874416128,
+    "limit": 53687091200
+   },
+   "jobs": [],
+   "runs": [
+    {
+     "mode": "run",
+     "time": 1794648183,
+     "exit": 0,
+     "duration": 506,
+     "onCurrentCommit": true,
+     "command": "pytest tests/io -k roundtrip"
+    }
+   ],
+   "removable": {
+    "value": false,
+    "source": "derived"
+   },
+   "steps": {
+    "done": 4,
+    "total": 4,
+    "changed": 1794642749,
+    "source": "claimed",
+    "items": [
+     {
+      "text": "Read the residual assembly",
+      "state": "done"
+     },
+     {
+      "text": "Write the test that fails",
+      "state": "done"
+     },
+     {
+      "text": "Add the boundary term to the residual",
+      "state": "done"
+     },
+     {
+      "text": "Extend the test of the residual",
+      "state": "done"
+     }
+    ]
+   },
+   "claim": {
+    "value": "Working on: everything is done",
+    "source": "claimed"
+   },
+   "commits": {
+    "ahead": 2,
+    "behind": 0,
+    "uncommitted": {
+     "value": false,
+     "source": "self-reported"
+    },
+    "source": "derived"
+   },
+   "reviews": {
+    "count": 2,
+    "outdated": 1,
+    "verdicts": [
+     {
+      "by": "r1",
+      "value": "needs changes",
+      "source": "claimed"
+     },
+     {
+      "by": "d1",
+      "value": "ready",
+      "source": "claimed"
+     }
+    ],
+    "source": "derived"
+   },
+   "intent": {
+    "approved": true,
+    "source": "recorded",
+    "approach": 3,
+    "approvedAt": 1794579360,
+    "changedSinceApproval": false
+   },
+   "acceptance": {
+    "value": "passed",
+    "onCurrentCommit": true,
+    "time": 1794648183,
+    "source": "recorded"
+   },
+   "lastQueuedRun": {
+    "mode": "run",
+    "time": 1794648183,
+    "exit": 0,
+    "duration": 506,
+    "onCurrentCommit": true,
+    "source": "recorded"
+   }
+  },
+  {
+   "project": "beta",
+   "branch": "main",
+   "name": "w2",
+   "role": "implementer",
+   "state": {
+    "value": "merged",
+    "source": "derived"
+   },
+   "running": {
+    "value": false
+   },
+   "lastRun": 1794587886,
+   "memory": {
+    "used": 0,
+    "limit": 3221225472,
+    "peak": 407896064
+   },
+   "cpu": {
+    "share": 0.0,
+    "seconds": 2537
+   },
+   "gpuMemory": {
+    "used": 0
+   },
+   "folder": {
+    "used": 775946240,
+    "limit": 10737418240
+   },
+   "scratch": {
+    "used": 20381171712,
+    "limit": 53687091200
+   },
+   "jobs": [],
+   "runs": [
+    {
+     "mode": "run",
+     "time": 1794649650,
+     "exit": 0,
+     "duration": 794,
+     "onCurrentCommit": true,
+     "command": "ctest -R mesh"
+    }
+   ],
+   "removable": {
+    "value": false,
+    "source": "derived"
+   },
+   "steps": {
+    "done": 8,
+    "total": 8,
+    "changed": 1794643492,
+    "source": "claimed",
+    "items": [
+     {
+      "text": "Read the residual assembly",
+      "state": "done"
+     },
+     {
+      "text": "Write the test that fails",
+      "state": "done"
+     },
+     {
+      "text": "Add the boundary term to the residual",
+      "state": "done"
+     },
+     {
+      "text": "Extend the test of the residual",
+      "state": "done"
+     },
+     {
+      "text": "Run the tests of the solver",
+      "state": "done"
+     },
+     {
+      "text": "Update the documentation of the solver",
+      "state": "done"
+     },
+     {
+      "text": "Record the validation run",
+      "state": "done"
+     },
+     {
+      "text": "Compare the result with the reference",
+      "state": "done"
+     }
+    ]
+   },
+   "claim": {
+    "value": "Working on: everything is done",
+    "source": "claimed"
+   },
+   "commits": {
+    "ahead": 0,
+    "behind": 0,
+    "uncommitted": {
+     "value": false,
+     "source": "self-reported"
+    },
+    "source": "derived"
+   },
+   "reviews": {
+    "count": 2,
+    "outdated": 1,
+    "verdicts": [
+     {
+      "by": "r1",
+      "value": "needs changes",
+      "source": "claimed"
+     },
+     {
+      "by": "d1",
+      "value": "ready",
+      "source": "claimed"
+     }
+    ],
+    "source": "derived"
+   },
+   "intent": {
+    "approved": true,
+    "source": "recorded",
+    "approach": 3,
+    "approvedAt": 1794623672,
+    "changedSinceApproval": false
+   },
+   "acceptance": {
+    "value": "passed",
+    "onCurrentCommit": true,
+    "time": 1794649650,
+    "source": "recorded"
+   },
+   "lastQueuedRun": {
+    "mode": "run",
+    "time": 1794649650,
+    "exit": 0,
+    "duration": 794,
+    "onCurrentCommit": true,
+    "source": "recorded"
+   }
+  },
+  {
+   "project": "beta",
+   "branch": "io",
+   "name": "w1",
+   "role": "implementer",
+   "state": {
+    "value": "removable",
+    "source": "derived"
+   },
+   "running": {
+    "value": true,
+    "since": 1794618969
+   },
+   "lastRun": 1794618969,
+   "memory": {
+    "used": 745537536,
+    "limit": 3221225472,
+    "peak": 1182793728
+   },
+   "cpu": {
+    "share": 0.3,
+    "seconds": 4743
+   },
+   "gpuMemory": {
+    "used": 0
+   },
+   "folder": {
+    "used": 399507456,
+    "limit": 10737418240
+   },
+   "scratch": {
+    "used": 15774777344,
+    "limit": 53687091200
+   },
+   "jobs": [],
+   "runs": [
+    {
+     "mode": "run",
+     "time": 1794647955,
+     "exit": 0,
+     "duration": 62,
+     "onCurrentCommit": true,
+     "command": "ctest -R mesh"
+    }
+   ],
+   "removable": {
+    "value": true,
+    "source": "derived"
+   },
+   "steps": {
+    "done": 6,
+    "total": 6,
+    "changed": 1794649847,
+    "source": "claimed",
+    "items": [
+     {
+      "text": "Read the residual assembly",
+      "state": "done"
+     },
+     {
+      "text": "Write the test that fails",
+      "state": "done"
+     },
+     {
+      "text": "Add the boundary term to the residual",
+      "state": "done"
+     },
+     {
+      "text": "Extend the test of the residual",
+      "state": "done"
+     },
+     {
+      "text": "Run the tests of the solver",
+      "state": "done"
+     },
+     {
+      "text": "Update the documentation of the solver",
+      "state": "done"
+     }
+    ]
+   },
+   "claim": {
+    "value": "Working on: everything is done",
+    "source": "claimed"
+   },
+   "commits": {
+    "ahead": 0,
+    "behind": 0,
+    "uncommitted": {
+     "value": false,
+     "source": "self-reported"
+    },
+    "source": "derived"
+   },
+   "reviews": {
+    "count": 2,
+    "outdated": 1,
+    "verdicts": [
+     {
+      "by": "r1",
+      "value": "needs changes",
+      "source": "claimed"
+     },
+     {
+      "by": "d1",
+      "value": "ready",
+      "source": "claimed"
+     }
+    ],
+    "source": "derived"
+   },
+   "intent": {
+    "approved": true,
+    "source": "recorded",
+    "approach": 2,
+    "approvedAt": 1794578826,
+    "changedSinceApproval": false
+   },
+   "acceptance": {
+    "value": "passed",
+    "onCurrentCommit": true,
+    "time": 1794647955,
+    "source": "recorded"
+   },
+   "lastQueuedRun": {
+    "mode": "run",
+    "time": 1794647955,
+    "exit": 0,
+    "duration": 62,
+    "onCurrentCommit": true,
+    "source": "recorded"
+   }
+  },
+  {
+   "project": "gamma",
+   "branch": "docs",
+   "name": "w1",
+   "role": "implementer",
+   "state": {
+    "value": "implementing",
+    "source": "derived"
+   },
+   "running": {
+    "value": true,
+    "since": 1794601594
+   },
+   "lastRun": 1794601594,
+   "memory": {
+    "used": 673185792,
+    "limit": 3221225472,
+    "peak": 1538260992
+   },
+   "cpu": {
+    "share": 0.3,
+    "seconds": 4144
+   },
+   "gpuMemory": {
+    "used": 0
+   },
+   "folder": {
+    "used": 464519168,
+    "limit": 10737418240
+   },
+   "scratch": {
+    "used": 16661872640,
+    "limit": 53687091200
+   },
+   "jobs": [
+    {
+     "mode": "run",
+     "since": 1794649880,
+     "state": "waiting",
+     "memory": {
+      "used": 487587840,
+      "peak": 487587840
+     },
+     "cpu": {
+      "share": 6.8
+     },
+     "command": "pytest tests/solver"
+    }
+   ],
+   "runs": [],
+   "removable": {
+    "value": false,
+    "source": "derived"
+   },
+   "steps": {
+    "done": 4,
+    "total": 6,
+    "changed": 1794644270,
+    "source": "claimed",
+    "items": [
+     {
+      "text": "Read the residual assembly",
+      "state": "done"
+     },
+     {
+      "text": "Write the test that fails",
+      "state": "done"
+     },
+     {
+      "text": "Add the boundary term to the residual",
+      "state": "done"
+     },
+     {
+      "text": "Extend the test of the residual",
+      "state": "done"
+     },
+     {
+      "text": "Run the tests of the solver",
+      "state": "in work"
+     },
+     {
+      "text": "Update the documentation of the solver",
+      "state": "open"
+     }
+    ],
+    "current": "Run the tests of the solver"
+   },
+   "claim": {
+    "value": "Working on: Run the tests of the solver",
+    "source": "claimed"
+   },
+   "commits": {
+    "ahead": 9,
+    "behind": 2,
+    "uncommitted": {
+     "value": true,
+     "source": "self-reported"
+    },
+    "source": "derived"
+   },
+   "reviews": {
+    "count": 0,
+    "outdated": 0,
+    "verdicts": [],
+    "source": "derived"
+   },
+   "intent": {
+    "approved": true,
+    "source": "recorded",
+    "approach": 1,
+    "approvedAt": 1794575421,
+    "changedSinceApproval": false
+   },
+   "acceptance": {
+    "value": "never run",
+    "source": "recorded"
+   }
+  },
+  {
+   "project": "gamma",
+   "branch": "docs",
+   "name": "p1",
+   "role": "plain",
+   "state": {
+    "value": "idle",
+    "source": "derived"
+   },
+   "running": {
+    "value": true,
+    "since": 1794605998
+   },
+   "lastRun": 1794605998,
+   "memory": {
+    "used": 814743552,
+    "limit": 3221225472,
+    "peak": 1298137088
+   },
+   "cpu": {
+    "share": 0.4,
+    "seconds": 1890
+   },
+   "gpuMemory": {
+    "used": 0
+   },
+   "folder": {
+    "used": 702545920,
+    "limit": 10737418240
+   },
+   "scratch": {
+    "used": 6088032256,
+    "limit": 53687091200
+   },
+   "jobs": [],
+   "runs": [],
+   "removable": {
+    "value": false,
+    "source": "derived"
+   }
+  }
+ ]
+}

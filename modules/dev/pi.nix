@@ -102,8 +102,26 @@ let
       # Repositories below ~/repos with files that decide what an agent may do: { <repository> = [ <path in it> ... ]; }
       # They are read-only in the sandbox unless it is started with --unlock
       protected ? { },
+      # Several agents on one machine (see docs/WORKERS.md): null, or what nixos.workers sets in hostSpec.workers.sandbox
+      #   helper: the command that creates and mounts a worker's datasets (ZFS), or null for plain folders
+      #   tmpfsBytes: the sizes of the sandbox's folders in memory, { tmp, home, run, shm }
+      #   agentMemory: the memory limit of the agent's own scope
+      #   start: the program that starts the sandbox's broker and then the sandbox
+      #   prepare: the program that makes a worker's copy of the project, inside its sandbox
+      #   readChecked: the program that copies a file an agent may have written, opened once and without following links
+      #   lockState: the program that says whether an implementer's copy is writable: open, no approval, or no baseline
+      #   roleFiles: per role, the file with that role's instructions
+      #   maxTaskBytes: the largest task file that is accepted
+      workers ? null,
+      # The option by which the command takes a file of instructions (pi: --append-system-prompt); null for a command that takes none
+      # With it, a worker gets its role's file and its task file, and does not start without the task file
+      promptOption ? null,
     }:
     let
+      # Starts bwrap. Every mount that the view names as "checked" (--ro-bind-checked, --bind-checked) is opened by it first,
+      # without following a link at any level, and bwrap mounts what was opened. The agent's sandbox and, through the broker,
+      # every queued job get their protected mounts by this one program, each time from the paths
+      openChecked = "${pkgs.python3}/bin/python3 -I ${../../workers/open-checked.py}";
       # The sandbox has no desktop session, so the system's xdg-open (kde-open) crashes there; this one fails quietly instead
       # pi shows login links itself and treats opening the browser as best effort: Ctrl+click the link in the terminal
       noBrowser = pkgs.writeTextFile {
@@ -118,11 +136,17 @@ let
     in
     pkgs.writeShellApplication {
       inherit name;
-      runtimeInputs = with pkgs; [
-        bubblewrap
-        coreutils
-        git
-      ];
+      runtimeInputs =
+        with pkgs;
+        [
+          bubblewrap
+          coreutils
+          git
+        ]
+        ++ lib.optionals (workers != null) [
+          systemd
+          util-linux
+        ];
       text = ''
         deny() {
           echo "${name}: $1" >&2
@@ -149,8 +173,33 @@ let
         roots=()
         writable=()
         unlock=0
+        unlocked=()
+        branch=
+        workerName=
+        role=
+        reviewed=
+        scratchAction=
+        scratchLabel=
+        # The workers' folders and scratch areas: shared by the launcher itself, per role, and never by hand
+        workersRoot=$HOME/workers
+        areasRoot=$HOME/scratch/workers
         while [ "$#" -gt 0 ]; do
           case "$1" in
+            --branch | --name | --role | --of | --snapshot | --rollback)
+              [ "$#" -ge 2 ] || deny "$1 needs a value"
+              case "$1" in
+                --branch) branch=$2 ;;
+                --name) workerName=$2 ;;
+                --role) role=$2 ;;
+                --of) reviewed=$2 ;;
+                *) scratchAction=''${1#--} scratchLabel=$2 ;;
+              esac
+              shift 2
+              ;;
+            --snapshots)
+              scratchAction=list
+              shift
+              ;;
             --unlock)
               unlock=1
               shift
@@ -159,6 +208,12 @@ let
               [ "$#" -ge 2 ] || deny "$1 needs a folder"
               allowed=$(realpath -e -- "$2") || deny "$1: $2 does not exist"
               checkPath "$allowed"
+              case "$allowed/" in
+                "$workersRoot"/* | "$areasRoot"/*) deny "refusing $allowed: the workers' folders are shared by role (--role), not with $1" ;;
+              esac
+              case "$workersRoot/ $areasRoot/" in
+                "$allowed"/* | *" $allowed"/*) deny "refusing $allowed: it contains the workers' folders; share a folder inside it" ;;
+              esac
               roots+=("$allowed")
               if [ "$1" = --allow ]; then writable+=(1); else writable+=(0); fi
               shift 2
@@ -219,44 +274,372 @@ let
           done
         done
 
-        # What is mounted read-only, or kept in place, inside a folder an agent can write is opened here, once, and that is what
-        # gets mounted: a session that runs at the same time cannot put a link in its place between this check and the mount
-        protect=()
-        mountChecked() {
-          local option=$1 path=$2 descriptor
-          [ ! -L "$path" ] || deny "refusing: $path is a link, which cannot be protected"
-          [ -d "$path" ] || [ -f "$path" ] || deny "refusing: $path is neither a folder nor a regular file, so it cannot be protected"
-          exec {descriptor}< "$path"
-          [ "$(readlink "/proc/$$/fd/$descriptor")" = "$path" ] || deny "refusing: $path is reached through a link, which cannot be protected"
-          protect+=("$option" "$descriptor" "$path")
+        # What a worker gets in place of the project and besides it, and where its pi sessions are kept
+        projectBinds=()
+        workerBinds=()
+        workerSessions=
+        tmpfs=()
+        tmpfsHome=()
+        tmpfsRun=()
+        devShm=()
+        topReadOnly=()
+        ${
+          pkgs.lib.optionalString (workers == null) ''
+            if [ -n "$branch$workerName$role$reviewed$scratchAction$scratchLabel" ]; then
+              deny "--branch, --name, --role, --of and the snapshot options need the worker setup, which this machine does not have"
+            fi
+          ''
+        }${
+          pkgs.lib.optionalString (workers != null) ''
+            promptArguments=()
+            managerCopies=()
+            # What only the preparation step sees, the copies it fetches from, and what only a queued job gets on top of the agent's view
+            prepareOnly=()
+            reviewedCopies=()
+            reviewedCommits=()
+            jobOnly=()
+            # The worker's own copy of the project, if its role has one, and whether it is still locked
+            repo=
+            locked=0
+            # A full folder in memory returns an error to the writer; without a size, the memory limit would stop a process instead
+            tmpfs=(--size ${toString workers.tmpfsBytes.tmp})
+            tmpfsHome=(--size ${toString workers.tmpfsBytes.home})
+            tmpfsRun=(--size ${toString workers.tmpfsBytes.run})
+            # /dev is a folder in memory too: its shared-memory folder gets a size, and the rest of it takes no files
+            devShm=(--size ${toString workers.tmpfsBytes.shm} --tmpfs /dev/shm --remount-ro /dev)
+            # So is the sandbox's top folder, which holds only the places where the others are mounted
+            topReadOnly=(--remount-ro /)
+            helper=(${pkgs.lib.optionalString (workers.helper != null) workers.helper})
+            validName() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$ ]]; }
+            roleInstructions() {
+              case "$1" in
+                ${pkgs.lib.concatStrings (
+                  pkgs.lib.mapAttrsToList (role: file: "${role}) echo ${file} ;;\n              ") workers.roleFiles
+                )}
+              esac
+            }
+            state=$HOME/.local/state/workers
+            runtime=$XDG_RUNTIME_DIR/workers
+            [ -S "''${XDG_RUNTIME_DIR:-}/bus" ] || deny "no user session bus at ''${XDG_RUNTIME_DIR:-<XDG_RUNTIME_DIR unset>}/bus: the limits cannot be set, so ${name} does not start"
+            # A project that contains the workers' folders would bring every worker's folder or scratch area into this sandbox
+            case "$workersRoot/ $areasRoot/" in
+              "$project"/* | *" $project"/*) deny "refusing $project: it contains the workers' folders; start ${name} in a folder inside it" ;;
+            esac
+
+            if [ -z "$branch$workerName$role$reviewed$scratchAction" ]; then
+              ## An ordinary session: the project as it is, without a worker's folder
+              case "$workdir/" in
+                "$workersRoot"/* | "$areasRoot"/*) deny "refusing $workdir: a worker's folder is entered through its worker; start ${name} in the project with --branch and --name" ;;
+              esac
+              # Its unit, its records and its scratch area carry the project's folder name and a digest of its path: two projects with
+              # the same folder name never meet, and neither is refused
+              key=$(basename "$project" | tr -c 'A-Za-z0-9._\n-' _ | cut -c1-40)-$(printf %s "$project" | sha256sum | cut -c1-6)
+              validName "$key" || key=project-$(printf %s "$project" | sha256sum | cut -c1-6)
+              unit=pi-$key-$$
+              records=$HOME/.local/state/workers-plain/$key/records.jsonl
+              recordsLimit=${toString workers.maxPlainRecordBytes}
+              # A scratch area of its own, for what would otherwise fill the home in memory: uv's downloads and other caches
+              area=$areasRoot/$key/plain/session
+              if [ "''${#helper[@]}" -gt 0 ]; then
+                "''${helper[@]}" ensure-area "$key" plain session || deny "could not prepare $area"
+              else
+                mkdir -p "$area"
+              fi
+              fixedEnvironment=(WORKER_SCRATCH "$area")
+              identity="{\"project\": \"$key\", \"role\": \"plain\"}"
+            else
+              ## A worker: who it is comes from the command line alone, since the environment and the project's files are within an agent's reach
+              [ -n "$role" ] || role=implementer
+              projectName=$(basename "$project")
+              validName "$projectName" || deny "the project folder's name '$projectName' must be 1 to 48 letters, digits, '.', '_' or '-'"
+
+              # The project of that name is the one that was started first; another repository with the same folder name is refused
+              if [ -e "$state/$projectName/main" ]; then
+                [ "$(cat "$state/$projectName/main")" = "$project" ] \
+                  || deny "the workers of '$projectName' belong to $(cat "$state/$projectName/main"); $project has the same folder name, so it cannot have workers"
+              else
+                mkdir -p "$state/$projectName"
+                printf '%s\n' "$project" > "$state/$projectName/main"
+              fi
+              # The branch that only the user commits on; another name goes into this file
+              [ -e "$state/$projectName/main-branch" ] || echo main > "$state/$projectName/main-branch"
+              mainBranch=$(cat "$state/$projectName/main-branch")
+
+              case "$role" in
+                implementer | reviewer | deep-reviewer)
+                  [ -n "$branch" ] || deny "the role $role needs --branch <branch>"
+                  case "$branch" in manager | archive | instructions | plain) deny "'$branch' cannot be a branch name: the project's folder of that name is in its place" ;; esac
+                  ;;
+                manager)
+                  [ -z "$branch" ] || deny "a manager belongs to no branch: leave --branch out"
+                  branch=manager
+                  [ -n "$workerName" ] || workerName=manager
+                  ;;
+                *) deny "unknown role $role; the roles are implementer, reviewer, deep-reviewer and manager" ;;
+              esac
+              [ -n "$workerName" ] || deny "a worker needs --name <name>"
+              validName "$branch" || deny "the branch name '$branch' must be 1 to 48 letters, digits, '.', '_' or '-'"
+              validName "$workerName" || deny "the worker name '$workerName' must be 1 to 48 letters, digits, '.', '_' or '-'"
+              if [ "$role" = reviewer ]; then
+                validName "$reviewed" || deny "a reviewer needs --of <name>: the implementer of its branch that it reviews"
+              else
+                [ -z "$reviewed" ] || deny "--of belongs to the role reviewer"
+              fi
+              folders=$workersRoot/$projectName
+              areas=$areasRoot/$projectName
+              folder=$folders/$branch/$workerName
+              area=$areas/$branch/$workerName
+
+              # Snapshots of this worker's scratch area: taken, listed and rolled back here, outside the sandbox
+              if [ -n "$scratchAction" ]; then
+                [ "''${#helper[@]}" -gt 0 ] || deny "scratch areas are plain folders on this machine: there are no snapshots"
+                exec "''${helper[@]}" "$scratchAction" "$projectName" "$branch" "$workerName" ''${scratchLabel:+"$scratchLabel"}
+              fi
+
+              # A name keeps the role it was first started with: what others may see of a worker depends on its role
+              roleFile=$state/$projectName/roles/$branch/$workerName
+              roleOf() { cat "$state/$projectName/roles/$1/$2" 2> /dev/null || true; }
+              if [ -e "$roleFile" ] && [ "$(cat "$roleFile")" != "$role" ]; then
+                deny "the worker $branch/$workerName is a $(cat "$roleFile"), not a $role: choose another name"
+              fi
+              if [ "$role" = reviewer ] && [ "$(roleOf "$branch" "$reviewed")" != implementer ]; then
+                deny "there is no implementer $branch/$reviewed to review"
+              fi
+              if [ "$role" != manager ]; then
+                # Workers commit on side branches only; the branch must exist in the project, which is what allows workers on it
+                # git is asked from outside every repository, with the project as the remote: nothing in the project runs for that
+                [ "$branch" != "$mainBranch" ] || [ "$role" != implementer ] || deny "'$branch' is the project's main branch, on which only you commit: implementers work on side branches"
+                (cd / && git ls-remote --exit-code --heads "$project" "refs/heads/$branch" > /dev/null 2>&1) \
+                  || deny "the project $project has no branch '$branch': create it first"
+              fi
+              # ':' cannot be part of a name, so two workers never share a unit name
+              unit=worker:$projectName:$branch:$workerName
+              # The unit's name is the worker's: a second sandbox under a name that runs is refused, before anything is written, since
+              # what is written would reach the one that runs. The lock holds from here until the scope exists (descriptor 9, which
+              # ${workers.start} closes), so two starts of one name cannot pass this check together
+              (umask 077 && mkdir -p "$runtime")
+              exec 9> "$runtime/$unit.lock"
+              flock -n 9 || deny "another start of the worker $branch/$workerName is under way"
+              if systemctl --user is-active --quiet "$unit.scope"; then
+                deny "the worker $branch/$workerName is already running: choose another name with --name <name>"
+              fi
+              # The broker of this worker's last sandbox ends with that sandbox and then clears its folder of the runtime state. A
+              # start that comes at that moment waits until it has, so that nothing of the new sandbox is cleared away
+              for _ in $(seq 100); do
+                if [ "$(systemctl --user show -p ActiveState --value "broker-$unit.service")" = inactive ]; then break; fi
+                sleep 0.1
+              done
+              [ "$(systemctl --user show -p ActiveState --value "broker-$unit.service")" = inactive ] \
+                || deny "the last sandbox of the worker $branch/$workerName is still ending: start it again in a moment"
+
+              ${pkgs.lib.optionalString (promptOption != null) ''
+                # The task, which the manager wrote, and for a reviewer the project's own rules. Each file is found here, not named by
+                # anyone, opened once without following a link, checked, and copied to where no agent writes: a change to it does not
+                # reach a worker that runs. Without its task file nothing is created and the worker does not start
+                taskCopy=
+                rulesCopy=
+                if [ "$role" != manager ]; then
+                  taskCopy=$runtime/$unit.task
+                  ${workers.readChecked} "$folders/instructions" "$branch/$workerName.md" ${toString workers.maxTaskBytes} "$taskCopy" \
+                    "branch: $branch" "name: $workerName" "role: $role" \
+                    || deny "the worker does not start without its task file $folders/instructions/$branch/$workerName.md: the manager writes it, as a regular file that starts with the lines 'branch: $branch', 'name: $workerName' and 'role: $role'"
+                fi
+                # A reviewer starts in a folder of its own, so the project's rules do not reach it from a starting folder. It gets
+                # them from the project itself, which no agent writes, and never from the copy it reviews
+                if [ "$role" = reviewer ] && [ -e "$project/AGENTS.md" ]; then
+                  rulesCopy=$runtime/$unit.rules
+                  ${workers.readChecked} "$project" AGENTS.md ${toString workers.maxTaskBytes} "$rulesCopy" \
+                    || deny "the project's AGENTS.md could not be taken for the reviewer"
+                fi
+              ''}
+
+              # The worker's folder and scratch area exist before the sandbox starts; with ZFS each is a dataset with its own limit
+              if [ "''${#helper[@]}" -gt 0 ]; then
+                "''${helper[@]}" ensure "$projectName" "$branch" "$workerName" || deny "could not prepare $folder and $area"
+              else
+                mkdir -p "$folder" "$area" "$folders/instructions" "$folders/archive"
+              fi
+              mkdir -p "$folder/records" "$folder/reports" "$folder/sessions" "$(dirname "$roleFile")" "$state/$projectName/starts/$branch"
+              echo "$role" > "$roleFile"
+              # When this worker was last started, for `workers status`
+              date +%s > "$state/$projectName/starts/$branch/$workerName"
+              workerSessions=$folder/sessions
+              records=$folder/records/runs.jsonl
+              recordsLimit=0
+              fixedEnvironment=(WORKER_PROJECT "$projectName" WORKER_BRANCH "$branch" WORKER_NAME "$workerName" WORKER_ROLE "$role" WORKER_SCRATCH "$area")
+              identity="{\"project\": \"$projectName\", \"branch\": \"$branch\", \"name\": \"$workerName\", \"role\": \"$role\"}"
+              workerBinds=(--bind "$folder/reports" "$folder/reports" --ro-bind "$folder/records" "$folder/records")
+
+              # Of another worker's folder, read-only: its records and its reports, each by itself. A bind of a folder above them would
+              # also show, writable, whatever is mounted there later
+              readOnly() {
+                local other=$1 part
+                for part in records reports; do
+                  if [ -d "$other/$part" ] && [ ! -L "$other/$part" ]; then workerBinds+=(--ro-bind "$other/$part" "$other/$part"); fi
+                done
+              }
+              # A worker is not given the project itself: by its role it gets a copy of its own, the project's history, or the
+              # project read-only. What it is given of a repository with protected files is protected below, in its copy
+              roots=("''${roots[@]:1}")
+              writable=("''${writable[@]:1}")
+              protectedPathsOf "$project"
+              copyProtected=("''${protectedPaths[@]}")
+              # No agent writes the project itself. Its history is there to read and to fetch from; so is the history of each
+              # manager's copy, where the merged and the published work is
+              history=()
+              # (the project's folder itself is an empty, read-only folder in memory, so that a write there fails instead of vanishing)
+              if [ -d "$project/.git" ]; then history+=(--tmpfs "$project" --ro-bind "$project/.git" "$project/.git" --remount-ro "$project"); fi
+              # A manager's copy is shown as a whole, by a path that no agent can exchange: the folder above it is in no sandbox's view,
+              # and the copy itself is a mount in its manager's. Its .git inside is the manager's to write, so it is never mounted by
+              # itself: put a link in its place, and the link is read in the reader's own view, where it leads nowhere
+              copies=()
+              for copy in "$folders"/manager/*/repo; do
+                if [ "$copy" != "$folder/repo" ] && [ -d "$copy" ] && [ ! -L "$copy" ]; then
+                  managerCopies+=("$copy")
+                  copies+=(--ro-bind "$copy" "$copy")
+                fi
+              done
+              # A reviewer's own copy is a clean one: the project's history, and of the copies of other workers what they committed,
+              # taken by fetching, which runs nothing of theirs. Only the preparation step sees those copies; the reviewer and its
+              # jobs get the clean copy read-only, so git in it never meets a file that another agent wrote. What the reviewer runs
+              # of the reviewed work it runs through the queue, and a job cannot write the reviewer's reports
+              reviewerCopy() {
+                repo=$folder/repo
+                mkdir -p "$repo"
+                prepareOnly=("''${copies[@]}" --remount-ro "$folder/reports")
+                jobOnly=(--remount-ro "$folder/reports")
+              }
+              reviews() {
+                local other=$1 commit
+                if [ -d "$other/repo" ] && [ ! -L "$other/repo" ]; then
+                  reviewedCopies+=(--reviewed "$other/repo")
+                  prepareOnly+=(--ro-bind "$other/repo" "$other/repo")
+                  # The commit of that implementer's own branch which this reviewer starts from, for `workers status`: asked from
+                  # outside, with the copy as the remote
+                  commit=$(cd / && git ls-remote "file://$other/repo" "refs/heads/worker/$branch/$(basename "$other")" 2> /dev/null | cut -f1) || commit=
+                  reviewedCommits+=("$(basename "$other")" "$commit")
+                fi
+              }
+              case "$role" in
+                implementer)
+                  # Its own copy, on a branch of its own
+                  repo=$folder/repo
+                  mkdir -p "$repo"
+                  projectBinds=(--bind "$repo" "$repo" "''${history[@]}" "''${copies[@]}")
+                  # The reports of the reviewers that were started against it, read-only: the reviews' way back. Which reviewers
+                  # these are is this launcher's own record of their starts, so a round of corrections is a new start of the implementer
+                  for noted in "$state/$projectName/reviews/$branch/$workerName"/*; do
+                    reviewer=$(basename "$noted")
+                    if [ -f "$noted" ] && validName "$reviewer" && [ -d "$folders/$branch/$reviewer/reports" ] && [ ! -L "$folders/$branch/$reviewer/reports" ]; then
+                      workerBinds+=(--ro-bind "$folders/$branch/$reviewer/reports" "$folders/$branch/$reviewer/reports")
+                    fi
+                  done
+                  workdir=$repo
+                  ;;
+                manager)
+                  # Its own copy with every branch, where it merges and prepares what the user takes; the task files; and every worker, read-only
+                  repo=$folder/repo
+                  mkdir -p "$repo"
+                  projectBinds=(--bind "$repo" "$repo" "''${history[@]}" "''${copies[@]}")
+                  workerBinds+=(--bind "$folders/instructions" "$folders/instructions")
+                  for other in "$folders"/*/*/ "$areas"/*/*/; do
+                    other=''${other%/}
+                    case "$other" in
+                      "$folder" | "$area" | "$folders"/instructions/* | "$folders"/archive/*) ;;
+                      *) if [ -d "$other" ] && [ ! -L "$other" ]; then workerBinds+=(--ro-bind "$other" "$other"); fi ;;
+                    esac
+                  done
+                  workdir=$repo
+                  ;;
+                reviewer)
+                  # The one implementer it reviews: what it committed, in the clean copy, and its records, reports and scratch area as data.
+                  # It starts in its own folder, where nothing of the reviewed work is read as instructions
+                  [ -d "$folders/$branch/$reviewed/repo" ] || deny "the implementer $branch/$reviewed has no copy of the project yet"
+                  reviewerCopy
+                  reviews "$folders/$branch/$reviewed"
+                  projectBinds=(--bind "$repo" "$repo" "''${history[@]}")
+                  readOnly "$folders/$branch/$reviewed"
+                  workerBinds+=(--ro-bind "$areas/$branch/$reviewed" "$areas/$branch/$reviewed")
+                  workdir=$folder/reports
+                  ;;
+                deep-reviewer)
+                  # The project, where it starts and whose rules are the user's; what the managers and the implementers of its branch
+                  # committed, in the clean copy; their records, reports and scratch areas as data: never another reviewer
+                  reviewerCopy
+                  projectBinds=(--ro-bind "$project" "$project" --bind "$repo" "$repo")
+                  for copy in "''${managerCopies[@]}"; do readOnly "$(dirname "$copy")"; done
+                  for other in "$folders/$branch"/*/; do
+                    other=''${other%/}
+                    if [ "$(roleOf "$branch" "$(basename "$other")")" = implementer ]; then
+                      reviews "$other"
+                      readOnly "$other"
+                      workerBinds+=(--ro-bind "$areas/$branch/$(basename "$other")" "$areas/$branch/$(basename "$other")")
+                    fi
+                  done
+                  ;;
+              esac
+
+              # An implementer's copy is read-only until the user has approved its intent (workers approve) and, if tests were
+              # approved with it, until they have run on the copy as it is (the baseline). Both are records outside every sandbox,
+              # the approval in the tools' state and the run in the broker's records: nothing that a worker writes stands in for them
+              if [ "$role" = implementer ]; then
+                lock=$(${workers.lockState} "$projectName/$branch/$workerName") || deny "the approval of the worker $branch/$workerName could not be read, so it does not start"
+                case "$lock" in
+                  open) ;;
+                  "no approval")
+                    locked=1
+                    echo "${name}: the worker $branch/$workerName is not approved: its copy of the project is read-only. It writes its intent to $folder/reports/intent.md ('intent check' says what is missing). To approve it: workers approve $projectName/$branch/$workerName" >&2
+                    ;;
+                  "no baseline")
+                    locked=1
+                    echo "${name}: the worker $branch/$workerName is approved, but the approved tests have not run on its copy as it is: the copy stays read-only until they have. Inside: queue acceptance; then start the worker again" >&2
+                    ;;
+                  *) deny "the approval of the worker $branch/$workerName could not be judged ($lock), so it does not start" ;;
+                esac
+              fi
+              # --unlock is for a copy that the worker writes
+              if [ "$unlock" = 1 ] && [ -n "$repo" ] && [ "''${#jobOnly[@]}" = 0 ] && [ "''${#copyProtected[@]}" -gt 0 ]; then unlocked+=("$repo"); fi
+
+              ${pkgs.lib.optionalString (promptOption != null) ''
+                # The role's instructions, declared; then the project's rules for a reviewer, and the task, as they were copied above
+                promptArguments=(${promptOption} "$(roleInstructions "$role")")
+                if [ -n "$rulesCopy" ]; then
+                  workerBinds+=(--ro-bind "$rulesCopy" /run/project-rules.md)
+                  promptArguments+=(${promptOption} /run/project-rules.md)
+                fi
+                if [ -n "$taskCopy" ]; then
+                  workerBinds+=(--ro-bind "$taskCopy" /run/task.md)
+                  promptArguments+=(${promptOption} /run/task.md)
+                fi
+              ''}
+            fi
+            # Every sandbox has its scratch area; uv's project environment and all caches go there, not into the home in memory
+            workerBinds+=(--bind "$area" "$area" --setenv UV_PROJECT_ENVIRONMENT "$area/venv" --setenv UV_CACHE_DIR "$area/uv-cache" --setenv XDG_CACHE_HOME "$area/cache")
+            for ((index = 0; index < ''${#fixedEnvironment[@]}; index += 2)); do
+              workerBinds+=(--setenv "''${fixedEnvironment[index]}" "''${fixedEnvironment[index + 1]}")
+            done
+          ''
         }
 
-        unlocked=()
-        for index in "''${!roots[@]}"; do
-          root=''${roots[index]}
-          # Every .git in a shared folder is read-only in the sandbox, the project's and those of repositories below it: git's settings
-          # and hooks run programs when the user next uses git outside. As a mount it can also not be renamed, removed or replaced.
-          # Reading works (status, log, diff); staging and committing do not
-          if [ -L "$root/.git" ]; then
-            deny "refusing $root: its .git is a link, which cannot be protected; start ${name} in the repository it points to"
-          fi
-          while IFS= read -r -d "" found; do
-            mountChecked --ro-bind-fd "$found"
-          done < <(find "$root" -xdev -name .git -prune -print0)
-
-          # Files that decide what an agent may do (the sandbox itself, the checks, secrets, disk, installer, version pins) are read-only as well
-          # As mounts they can neither be changed nor renamed, removed or replaced. --unlock leaves them writable for this one session
-          protectedPathsOf "$root"
-          if [ "''${#protectedPaths[@]}" = 0 ] || [ "''${writable[index]}" = 0 ]; then continue; fi
-          if [ "$unlock" = 1 ]; then
-            unlocked+=("$root")
-            echo "${name}: unlocked for this session: the protected files of $root can be changed (''${protectedPaths[*]})" >&2
-            continue
-          fi
+        # What is mounted read-only, or kept in place, inside a folder an agent can write is named here by its path and opened
+        # when a sandbox starts, once and without following a link at any level from the top folder down, and that is what gets
+        # mounted (see openChecked): a session that runs at the same time cannot put a link in its place between the check and
+        # the mount. The same list is opened again for every queued job
+        protect=()
+        mountChecked() {
+          local option=$1 path=$2
+          [ ! -L "$path" ] || deny "refusing: $path is a link, which cannot be protected"
+          [ -d "$path" ] || [ -f "$path" ] || deny "refusing: $path is neither a folder nor a regular file, so it cannot be protected"
+          protect+=("$option" / "''${path#/}" "$path")
+        }
+        # Keeps the protected paths of a repository read-only inside a folder, which is the repository itself or a worker's copy
+        # of it; protectedPathsOf has set which paths
+        protectPaths() {
+          local root=$1 path parent
+          local guarded=()
           # A mount protects the path itself. A folder above it could still be renamed and another put in its place, so each of those
           # folders is mounted onto itself as well, still writable: a mount can be neither renamed nor removed
           declare -A above=()
-          guarded=()
           for path in "''${protectedPaths[@]}"; do
             if [ -L "$root/$path" ]; then
               deny "refusing $root: its protected $path is a link, which cannot be protected"
@@ -271,13 +654,37 @@ let
           done
           # Outer folders first and the protected paths last, so that no later mount covers an earlier one
           while IFS= read -r parent; do
-            [ -z "$parent" ] || mountChecked --bind-fd "$root/$parent"
+            [ -z "$parent" ] || mountChecked --bind-checked "$root/$parent"
           done < <(printf '%s\n' "''${!above[@]}" | LC_ALL=C sort)
-          for path in "''${guarded[@]}"; do mountChecked --ro-bind-fd "$path"; done
+          for path in "''${guarded[@]}"; do mountChecked --ro-bind-checked "$path"; done
           # pi reads this file instead of the repository's AGENTS.md when it exists; it cannot be protected before it exists
           if [ -e "$root/AGENTS.override.md" ]; then
             deny "refusing $root: it holds an AGENTS.override.md, which would replace the repository's instructions; remove it, or start with --unlock to work on it"
           fi
+        }
+
+        for index in "''${!roots[@]}"; do
+          root=''${roots[index]}
+          # Every .git in a shared folder is read-only in the sandbox, the project's and those of repositories below it: git's settings
+          # and hooks run programs when the user next uses git outside. As a mount it can also not be renamed, removed or replaced.
+          # Reading works (status, log, diff); staging and committing do not
+          if [ -L "$root/.git" ]; then
+            deny "refusing $root: its .git is a link, which cannot be protected; start ${name} in the repository it points to"
+          fi
+          while IFS= read -r -d "" found; do
+            mountChecked --ro-bind-checked "$found"
+          done < <(find "$root" -xdev -name .git -prune -print0)
+
+          # Files that decide what an agent may do (the sandbox itself, the checks, secrets, disk, installer, version pins) are read-only as well
+          # As mounts they can neither be changed nor renamed, removed or replaced. --unlock leaves them writable for this one session
+          protectedPathsOf "$root"
+          if [ "''${#protectedPaths[@]}" = 0 ] || [ "''${writable[index]}" = 0 ]; then continue; fi
+          if [ "$unlock" = 1 ]; then
+            unlocked+=("$root")
+            echo "${name}: unlocked for this session: the protected files of $root can be changed (''${protectedPaths[*]})" >&2
+            continue
+          fi
+          protectPaths "$root"
         done
         if [ "$unlock" = 1 ] && [ "''${#unlocked[@]}" = 0 ]; then
           deny "--unlock: $project has no protected files, and no folder shared with --allow has any"
@@ -296,7 +703,7 @@ let
         agent=$HOME/.pi/agent
         # Every project has its own folder of sessions, named by the project's folder and a digest of its path: a session holds
         # file contents and command output, and pi reads an earlier one as the user's own words when it is continued
-        sessions=$agent/sessions/$(basename "$project" | tr -c 'A-Za-z0-9._\n-' _ | cut -c1-40)-$(printf %s "$project" | sha256sum | cut -c1-12)
+        if [ -n "$workerSessions" ]; then sessions=$workerSessions; else sessions=$agent/sessions/$(basename "$project" | tr -c 'A-Za-z0-9._\n-' _ | cut -c1-40)-$(printf %s "$project" | sha256sum | cut -c1-12); fi
         mkdir -p "$sessions" "$agent/login"
         chmod 700 "$agent/login"
         # Every session can write the login folder. A link or anything else in the login file's place is not written through
@@ -324,49 +731,122 @@ let
           declaredBinds+=(--ro-bind "$target" "$HOME/$path")
         done
 
-        exec bwrap \
-          --unshare-all --unshare-user --share-net --die-with-parent \
-          --disable-userns \
-          --ro-bind /nix/store /nix/store \
-          --bind-try /nix/var/nix/daemon-socket /nix/var/nix/daemon-socket \
-          --ro-bind /etc /etc \
-          --ro-bind-try /bin /bin \
-          --ro-bind-try /usr /usr \
-          --proc /proc \
-          --dev /dev \
-          --tmpfs /tmp \
-          --tmpfs /run \
-          --ro-bind-try /run/current-system /run/current-system \
-          --ro-bind-try /run/opengl-driver /run/opengl-driver \
-          --tmpfs "$HOME" \
-          --dir "$agent" \
-          "''${declaredBinds[@]}" \
-          --bind "$agent/login" "$agent/login" \
-          --symlink login/auth.json "$agent/auth.json" \
-          --bind "$sessions" "$agent/sessions" \
-          --ro-bind-try "$HOME/.config/git" "$HOME/.config/git" \
-          "''${shared[@]}" \
-          "''${protect[@]}" \
-          --chdir "$workdir" \
-          --unsetenv SSH_AUTH_SOCK \
-          --unsetenv DBUS_SESSION_BUS_ADDRESS \
-          --unsetenv DOCKER_HOST \
-          --unsetenv XDG_RUNTIME_DIR \
-          --unsetenv WAYLAND_DISPLAY \
-          --unsetenv DISPLAY \
-          --setenv PATH "${noBrowser}/bin:$PATH" \
-          ${
-            pkgs.lib.concatStringsSep " " (
-              pkgs.lib.mapAttrsToList (key: value: "--setenv ${key} ${pkgs.lib.escapeShellArg value}") environment
-            )
-          } \
-          -- ${command} "$@"
+        # nix in the sandbox asks the system's daemon, whose socket is the one thing of /nix/var/nix that is shared
+        # Left to choose, nix takes the folders above the socket for a store of its own where they are writable, and then fails on the read-only /nix/store
+        nixDaemon=()
+        if [ -e /nix/var/nix/daemon-socket ]; then nixDaemon=(--setenv NIX_REMOTE daemon); fi
+
+        # The sandbox's view, in one place: what the agent gets, and what every queued job of this sandbox gets from its broker
+        view=(
+          --unshare-all --unshare-user --share-net --die-with-parent
+          --disable-userns
+          --ro-bind /nix/store /nix/store
+          --bind-try /nix/var/nix/daemon-socket /nix/var/nix/daemon-socket
+          "''${nixDaemon[@]}"
+          --ro-bind /etc /etc
+          --ro-bind-try /bin /bin
+          --ro-bind-try /usr /usr
+          --proc /proc
+          --dev /dev
+          "''${devShm[@]}"
+          "''${tmpfs[@]}" --tmpfs /tmp
+          "''${tmpfsRun[@]}" --tmpfs /run
+          --ro-bind-try /run/current-system /run/current-system
+          --ro-bind-try /run/opengl-driver /run/opengl-driver
+          "''${tmpfsHome[@]}" --tmpfs "$HOME"
+          --dir "$agent"
+          "''${declaredBinds[@]}"
+          --bind "$agent/login" "$agent/login"
+          --symlink login/auth.json "$agent/auth.json"
+          --bind "$sessions" "$agent/sessions"
+          --ro-bind-try "$HOME/.config/git" "$HOME/.config/git"
+          "''${projectBinds[@]}"
+          "''${workerBinds[@]}"
+          "''${shared[@]}"
+          "''${protect[@]}"
+          --unsetenv SSH_AUTH_SOCK
+          --unsetenv DBUS_SESSION_BUS_ADDRESS
+          --unsetenv DOCKER_HOST
+          --unsetenv XDG_RUNTIME_DIR
+          --unsetenv WAYLAND_DISPLAY
+          --unsetenv DISPLAY
+          --setenv PATH "${noBrowser}/bin:$PATH"
+          ${pkgs.lib.concatStringsSep " " (
+            pkgs.lib.mapAttrsToList (key: value: "--setenv ${key} ${pkgs.lib.escapeShellArg value}") environment
+          )}
+          "''${topReadOnly[@]}"
+        )
+        ${
+          pkgs.lib.optionalString (workers == null) ''
+            exec ${openChecked} bwrap "''${view[@]}" --chdir "$workdir" -- ${command} "$@"
+          ''
+        }${
+          pkgs.lib.optionalString (workers != null) ''
+            if [ -n "$repo" ]; then
+              # The worker's copy is made inside its own view, before the agent: git never runs outside a sandbox in a folder an agent writes
+              # It runs within the agents' limits, like the agent after it
+              systemd-run --user --scope --quiet --collect --expand-environment=no --unit="prepare-$unit" --slice=workers-agents.slice \
+                --description="Preparation of $unit" -p MemoryMax=${workers.agentMemory} -p MemorySwapMax=0 \
+                -- ${openChecked} bwrap "''${view[@]}" "''${prepareOnly[@]}" --chdir "$folder" \
+                -- ${workers.prepare} "$role" "$project" "$branch" "$workerName" "''${reviewedCopies[@]}" "''${managerCopies[@]}" 9>&- \
+                || deny "the worker's copy of $project could not be made in $repo"
+              # A reviewer whose clean copy was made: which implementer it reviews, at which commit and when, outside every sandbox
+              for ((index = 0; index < ''${#reviewedCommits[@]}; index += 2)); do
+                mkdir -p "$state/$projectName/reviews/$branch/''${reviewedCommits[index]}"
+                printf '%s %s\n' "''${reviewedCommits[index + 1]}" "$(date +%s)" > "$state/$projectName/reviews/$branch/''${reviewedCommits[index]}/$workerName"
+              done
+              if [ "''${#jobOnly[@]}" -gt 0 ] || [ "$locked" = 1 ]; then
+                # A reviewer's clean copy, and an implementer's copy that is not approved: nothing writes it but the preparation
+                view+=(--remount-ro "$repo")
+              elif [ "''${#copyProtected[@]}" -gt 0 ]; then
+                # A copy of a repository with protected files keeps them read-only and the folders above them in place, like the
+                # repository itself and by the same steps; --unlock leaves them writable for this one session
+                if [ "$unlock" = 1 ]; then
+                  echo "${name}: unlocked for this session: the protected files of $repo can be changed (''${copyProtected[*]})" >&2
+                else
+                  protectedPaths=("''${copyProtected[@]}")
+                  mounted=''${#protect[@]}
+                  protectPaths "$repo"
+                  view+=("''${protect[@]:mounted}")
+                fi
+              fi
+            fi
+
+            # What the broker of this sandbox needs: the view of its jobs, and the variables that no request may change
+            runtimeState=$runtime/$unit
+            rm -rf "$runtimeState"
+            (umask 077 && mkdir -p "$runtimeState/socket")
+            printf '%s\0' "''${view[@]}" "''${jobOnly[@]}" > "$runtimeState/view"
+            printf '%s\0' "''${fixedEnvironment[@]}" > "$runtimeState/fixed-env"
+            export WORKER_UNIT=$unit WORKER_STATE=$runtimeState WORKER_RECORDS=$records WORKER_RECORDS_LIMIT=$recordsLimit WORKER_AREA=$area WORKER_REPO=$repo WORKER_IDENTITY=$identity
+
+            # The agent runs in a scope of the user's systemd, which the sandbox cannot reach (no session bus, no /sys): its memory limit
+            # and its share of the cores are set from outside
+            # ${workers.start} starts the broker, bound to this scope, and then the sandbox; only the agent's sandbox sees the broker's socket,
+            # read-only, since its folder is a piece of the user's runtime folder: connecting needs no write access to it
+            # --expand-environment=no: systemd-run would otherwise rewrite $NAME in the command line that follows, the user's own arguments in it
+            exec systemd-run --user --scope --quiet --collect --expand-environment=no --unit="$unit" --slice=workers-agents.slice \
+              --description="Sandbox of ${name}: $unit" \
+              -p MemoryMax=${workers.agentMemory} -p MemorySwapMax=0 -p OOMPolicy=continue \
+              -- ${workers.start} ${openChecked} bwrap "''${view[@]}" --chdir "$workdir" \
+              --ro-bind "$runtimeState/socket" /run/worker --setenv WORKER_QUEUE_SOCKET /run/worker/queue.sock \
+              -- ${command} "''${promptArguments[@]}" "$@"
+          ''
+        }
       '';
     };
 in
 {
+  # The worker setup's checks build stand-in workers from the same launcher
+  flake.lib.mkSandbox = mkSandbox;
+
   flake.modules.homeManager.pi =
-    { config, pkgs, ... }:
+    {
+      config,
+      pkgs,
+      osConfig,
+      ...
+    }:
     let
       # Nix owns pi's version; `pi update` explains that instead of installing over the store
       noSelfUpdate = pkgs.writeShellScript "pi-no-self-update" ''
@@ -387,8 +867,21 @@ in
           declared = builtins.filter (pkgs.lib.hasPrefix ".pi/agent/") (builtins.attrNames config.home.file);
           # The configuration's own repositories: what decides an agent's limits is read-only for agents
           protected = import ../../config-tool/protected.nix;
+          # Set by nixos.workers on hosts that import it; null elsewhere
+          workers = osConfig.hostSpec.workers.sandbox or null;
+          # A worker's role and task reach pi as additions to its system prompt
+          promptOption = "--append-system-prompt";
         })
-      ];
+      ]
+      # The same sandbox with a shell instead of pi, for the user's own runs; a shell takes no instructions
+      ++ pkgs.lib.optional ((osConfig.hostSpec.workers.sandbox or null) != null) (
+        mkSandbox pkgs {
+          name = "worker-shell";
+          command = "${pkgs.bashInteractive}/bin/bash";
+          protected = import ../../config-tool/protected.nix;
+          workers = osConfig.hostSpec.workers.sandbox;
+        }
+      );
 
       # Without this, a nixos-secrets pin from before the file existed gives a dangling link, and pi starts without instructions
       assertions = [

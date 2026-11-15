@@ -6,6 +6,7 @@ NixOS configuration for `jeeemieee`. Two hosts share one workstation profile: `m
 - **[Mimir VM](docs/MIMIR-VM.md)**: build, launch, change and validate the VM
 - **[Applications](docs/APPS.md)**: installed programs and how to add more
 - **[Development environments](docs/DEV-ENVIRONMENTS.md)**: per-project Python, C/C++/Fortran, PETSc and CUDA from building blocks
+- **[Several agents on one machine](docs/WORKERS.md)**: a copy, a folder and a scratch area per pi worker, a job queue that runs each job in its worker's view, roles, and limits on memory and cores
 - **[Disk layout and snapshots](docs/DISK.md)**: the encrypted ZFS disk for physical machines, and how to restore files
 - **[Backup](docs/BACKUP.md)**: the hourly restic backup of `/home` to the home server, and how to restore
 - **[Installation](docs/INSTALL.md)**: installing a host from another Linux system through a virtual machine that only sees the target disk
@@ -30,6 +31,8 @@ Every file under `modules/` is a [flake-parts](https://flake.parts) module, disc
 | `modules/security/` | Machine age identity and sops-nix secrets |
 | `modules/install/`, `install/` | The installer and the `install` tool; the disk validation and its test cases |
 | `config-tool/` | The `config` command and the list of protected files (plain files, not modules) |
+| `workers/` | The worker setup's programs (the helper for the datasets, the queue's broker and command, the `workers` command) and its test scripts (plain files, not modules) |
+| `workers-dashboard/` | The live overview of the workers (`workers watch`): a terminal program in C++ with its tests, and the form of the status document it reads (plain files, not modules) |
 | `dev-env/` | Building blocks for project development environments, their tests and the project template (plain Nix, not modules) |
 | `modules/flake/` | Flake wiring: hosts, package set and unfree allowlist, the policy checks, dev shell, formatter. Other checks sit beside the module they test (`modules/dev/pi.nix`, `modules/services/backup.nix` and others); `nix flake check` runs them all |
 

@@ -21,7 +21,16 @@
 
 The sizes are options of `hostSpec.disk` without defaults, because they depend on the disk. On `mimir` (2 TB, 1863 GiB; about 1770 GiB usable after the boot partition, swap and ZFS's own reserve of a thirty-second of the pool): 600 GiB reserved for `/home`, at most 250 GiB for the Nix store, 600 GiB for scratch and 200 GiB for `~/workers`. If every limit were reached while `/home` is at its reservation, about 120 GiB would be left. The disk is not split: a limit is the most a dataset may grow to, and unused space stays available to the others; the reservation is a minimum, and `/home` can grow beyond it.
 
-The two workers datasets are empty until the workers' tools arrive. Their top folders belong to root, so that nothing running as the user can rename or replace what is mounted below them; the user cannot create folders there by hand. `~/workers` is in the backup with every file system mounted below it ([BACKUP.md](BACKUP.md)); `~/scratch/workers` is not.
+The two workers datasets hold what the worker tools create ([WORKERS.md](WORKERS.md)): below `rpool/workers` a dataset per worker with its own limit, and below `rpool/scratch/workers` a scratch area per worker with its own limit. Their top folders belong to root, so that nothing running as the user can rename or replace what is mounted below them; the user cannot create folders there without `sudo`.
+
+What agents write outside those datasets, and what limits it:
+
+| Place | Dataset | Limit |
+| --- | --- | --- |
+| The project of an ordinary `pi` session, which the session writes directly | `rpool/home` | None of its own: it is your own folder |
+| pi's session files of ordinary sessions, `~/.pi/agent/sessions/` | `rpool/home` | None |
+| The tools' own records, `~/.local/state/workers/` and `~/.local/state/workers-plain/` | `rpool/home` | None by the disk. An ordinary session's run records are kept within about 2 MiB; the tools' copy of the workers' commits holds what the workers' branches hold and no more |
+| All workers' scratch areas together | `rpool/scratch/workers` | Each area has its own limit. Together they count against `scratchQuota`, so they can use up what your own `~/scratch` output would need; a limit of their own for the whole is not set | `~/workers` is in the backup with every file system mounted below it ([BACKUP.md](BACKUP.md)); `~/scratch/workers` is not.
 
 All datasets use zstd compression and no access-time updates. ZFS's cache is capped at 4 GiB. The pool is scrubbed monthly (every block is read and its checksum verified) and trimmed weekly.
 

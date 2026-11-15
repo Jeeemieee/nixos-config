@@ -14,6 +14,7 @@
 | `nixos.nvidia-offload` | The NVIDIA driver with the open kernel modules, used on demand | Machines with a second GPU |
 | `nixos.displaylink` | The Dell D3100 dock (DisplayLink) | Machines using such a dock |
 | `nixos.backup` | The hourly backup of `/home` to the home server; see [BACKUP.md](BACKUP.md) | Machines with their own backup credentials |
+| `nixos.workers` | Several pi agents at once: a copy, a folder and a scratch area per worker, the job queue, roles, and the limits on memory and cores; see [WORKERS.md](WORKERS.md) | Machines with the two workers datasets of `nixos.disk` |
 
 The host itself only adds its name, its ZFS host ID, the GPU bus addresses, Intel microcode and thermal daemon, the 3Dconnexion SpaceMouse driver (`spacenavd`), the USB storage drivers for the first boot stage (the system disk starts out in a USB enclosure) and its state versions. `hostSpec.disk.device` is deliberately unset: the disk is chosen, and confirmed by its serial number, when the laptop is installed (see [INSTALL.md](INSTALL.md)); the installed system finds its partitions by label.
 
@@ -61,6 +62,7 @@ One row per check of the three paragraphs above, added when the user ran it on t
 | 2026-11-15 | The first `config switch` on the laptop | Passed on the second try, with the kernel's messages watched (`sudo dmesg -w`): no message about the disk. The first try is the freeze below |
 | 2026-11-15 | GitHub through the key in Bitwarden | Passed: `git push` reached GitHub once Bitwarden was open, unlocked and its "Enable SSH agent" switch was on. That switch is off on a new machine; until then git answers `Permission denied (publickey)` |
 | 2026-11-15 | The backup ([BACKUP.md](BACKUP.md)) | Passed: a run started by hand saved snapshot `adf62626` in 9 seconds (23 906 files, 1.157 GiB), on top of an earlier snapshot of this laptop, so the secret values are right. The restore of one file with a byte-for-byte comparison: reported as passed by the user; its output was not recorded |
+| 2026-11-15 | `~/workers` in the backup | Passed: snapshot `c3377001` is of `/home` and `/home/jeeemieee/workers`, and lists a folder made by hand below `~/workers` |
 | 2026-11-15 | Starting without F12 | Reported by the user: the USB disk is first in the firmware's boot order, set from Ubuntu. To be looked at again when the disk moves into the laptop. A firmware password is not set yet; without one Secure Boot means little |
 
 ### Open: the freeze of 2026-11-15

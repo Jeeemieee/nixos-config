@@ -1,0 +1,11 @@
+#pragma once
+
+// Whether the build was given a status command; without one, the code that starts a process is not compiled at all
+#define WORKERS_WATCH_STATUS_COMMAND @statusCommandGiven@
+
+namespace watch {
+
+// The command that prints the status document, fixed when the program is built
+inline constexpr const char* statusCommand[] = {@statusCommandItems@nullptr};
+
+}  // namespace watch
