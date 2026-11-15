@@ -17,7 +17,7 @@ Snapshots on the disk ([DISK.md](DISK.md)) undo mistakes within days; the backup
   | `.direnv`, `.venv`, `node_modules` | Development environments, rebuilt from their definition files |
   | `__pycache__`, `.pytest_cache`, `.ipynb_checkpoints` | Python and Jupyter by-products |
   | Folders with a `CACHEDIR.TAG` file | They mark themselves as a cache |
-  | Other file systems under `/home` | Network drives, a mounted backup. On the laptop this also leaves out `~/workers`, which is a dataset of its own ([DISK.md](DISK.md)): the agent workers' copies, reports and sessions are not in the backup until the worker tools add them. Its snapshots on the disk exist |
+  | Other file systems under `/home` | Network drives, a mounted backup, and `~/scratch`. The one exception is `~/workers` ([DISK.md](DISK.md)): before every run the backup lists `~/workers` and every file system mounted below it, which is each agent worker's folder, and backs them up as well. If that list cannot be made, the run fails |
 
   `.pi` folders in projects are kept: they hold unmerged work. Nothing outside `/home` is backed up; the system is rebuilt from this repository.
 - **Where:** the home server's rest-server, reached through Tailscale only. Its address and this machine's credentials are the secrets `restic_env` and `restic_password` in `secrets/mimir.yaml` of nixos-secrets ([SECRETS.md](SECRETS.md)).
@@ -68,6 +68,7 @@ The check `backup` runs the module in two virtual machines, against a throwaway 
 | --- | --- |
 | Backup, then restore of a known file | Byte-identical (SHA-256 fixed beforehand) |
 | Excluded places | Absent from the snapshot; their neighbours present |
+| `~/workers` as a file system of its own, with a folder made by hand and a worker's folder mounted below it | Both in the snapshot. On the module without the list the test fails: missing from the snapshot |
 | No route | Skipped quietly; with a route the next run succeeds; no route and a backup older than 24 hours fails |
 | Wrong repository password; secrets that cannot be decrypted | The unit fails and the notification is sent |
 | Delete with the laptop's login | Refused with 403; the snapshot is still on the server |

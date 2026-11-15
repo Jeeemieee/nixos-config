@@ -82,6 +82,15 @@ in
           ".pytest_cache"
           ".ipynb_checkpoints"
         ];
+        # The agent workers' folders are file systems of their own below ~/workers (nixos.disk, nixos.workers), which the rule below would skip:
+        # every one that is mounted when the backup starts is named here. Their scratch areas are below ~/scratch and stay out
+        # Only "nothing matched" is tolerated: a list that cannot be made fails the backup instead of leaving the workers out of it
+        dynamicFilesFrom = ''
+          #!${pkgs.runtimeShell}
+          set -eu
+          targets=$(${pkgs.util-linux}/bin/findmnt -rn -o TARGET)
+          printf '%s\n' "$targets" | ${pkgs.gnugrep}/bin/grep -E '^/home/[^/]+/workers(/|$)' || [ "$?" = 1 ]
+        '';
         extraBackupArgs = [
           # Stay on /home's own file system: never descend into other datasets, network drives or a mounted backup
           "--one-file-system"
@@ -104,7 +113,11 @@ in
       systemd.services.${unit} = {
         # sops-nix does not order its secrets before regular services; a failed decryption must fail this unit instead of running without credentials
         requires = [ "sops-install-secrets.service" ];
-        after = [ "sops-install-secrets.service" ];
+        # The workers' file systems are mounted by their own unit, on machines that have it; the backup lists them when it starts
+        after = [
+          "sops-install-secrets.service"
+          "worker-datasets-mount.service"
+        ];
 
         onFailure = [ "${unit}-failed.service" ];
 
@@ -206,6 +219,15 @@ in
                 isNormalUser = true;
                 uid = 1000;
               };
+
+              # Stands in for the unit that mounts the workers' folders (nixos.workers), here failing: the backup of /home must still run
+              systemd.services.worker-datasets-mount = {
+                wantedBy = [ "multi-user.target" ];
+                serviceConfig = {
+                  Type = "oneshot";
+                  ExecStart = "${pkgs.coreutils}/bin/false";
+                };
+              };
             };
 
           testScript = ''
@@ -278,15 +300,23 @@ in
                 f"{HOME}/.local/share/keep-share.txt",
                 f"{HOME}/project/keep-project.txt",
                 f"{HOME}/project/.pi/work/keep-agent-work.txt",
+                f"{HOME}/workers/project/old/keep-by-hand.txt",
+                f"{HOME}/workers/project/branch/name/repo/keep-worker.txt",
             ]
             # Another file system inside /home, like the scratch dataset or a mounted backup
             laptop.succeed(f"su tester -c 'mkdir {HOME}/mounted' && mount -t tmpfs tmpfs {HOME}/mounted && chown tester {HOME}/mounted")
+            # ~/workers is a file system of its own, as on the laptop; a folder made in it by hand belongs in the backup
+            laptop.succeed(f"mkdir {HOME}/workers && mount -t tmpfs tmpfs {HOME}/workers && chown tester {HOME}/workers")
+            # A worker's folder: one more file system of its own below ~/workers, which belongs in the backup too
+            laptop.succeed(f"su tester -c 'mkdir -p {HOME}/workers/project/branch/name' && mount -t tmpfs tmpfs {HOME}/workers/project/branch/name && chown tester {HOME}/workers/project/branch/name")
             for path in excluded + kept:
                 laptop.succeed(f"su tester -c 'mkdir -p \"$(dirname {path})\" && echo data > {path}'")
             laptop.succeed(f"su tester -c \"printf 'Signature: 8a477f597d28d172789f06886806bc55\\n' > {HOME}/project/tagged-cache/CACHEDIR.TAG\"")
             laptop.succeed(f"su tester -c \"printf '${knownContent}\\n' > {HOME}/documents/known.txt\"")
 
             with subtest("T1: a backup succeeds and a known file is restored byte-identical"):
+                # Also while the unit that mounts the workers' folders has failed
+                laptop.succeed("systemctl is-failed worker-datasets-mount.service")
                 laptop.succeed(f"systemctl start {UNIT}")
                 assert snapshots_on_server() == 1
                 laptop.succeed("mkdir /root/restore && test -z \"$(ls -A /root/restore)\"")

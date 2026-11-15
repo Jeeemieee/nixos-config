@@ -21,7 +21,7 @@
 
 The sizes are options of `hostSpec.disk` without defaults, because they depend on the disk. On `mimir` (2 TB, 1863 GiB; about 1770 GiB usable after the boot partition, swap and ZFS's own reserve of a thirty-second of the pool): 600 GiB reserved for `/home`, at most 250 GiB for the Nix store, 600 GiB for scratch and 200 GiB for `~/workers`. If every limit were reached while `/home` is at its reservation, about 120 GiB would be left. The disk is not split: a limit is the most a dataset may grow to, and unused space stays available to the others; the reservation is a minimum, and `/home` can grow beyond it.
 
-The two workers datasets are empty until the workers' tools arrive. Their top folders belong to root, so that nothing running as the user can rename or replace what is mounted below them; the user cannot create folders there by hand. `~/workers` is not in the backup yet: the backup stays on `/home`'s own file system, and the worker folders are added to it together with the tools.
+The two workers datasets are empty until the workers' tools arrive. Their top folders belong to root, so that nothing running as the user can rename or replace what is mounted below them; the user cannot create folders there by hand. `~/workers` is in the backup with every file system mounted below it ([BACKUP.md](BACKUP.md)); `~/scratch/workers` is not.
 
 All datasets use zstd compression and no access-time updates. ZFS's cache is capped at 4 GiB. The pool is scrubbed monthly (every block is read and its checksum verified) and trimmed weekly.
 
