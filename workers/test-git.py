@@ -155,6 +155,35 @@ with subtest("V11: the manager merges in its own copy, the workers fetch from it
     assert machine.succeed(asUser("cd ~/alpha && workers take > /dev/null 2>&1; git status --porcelain")).strip() == "M  a"
     machine.succeed(asUser("cd ~/alpha && git commit -q -m 'Settled'"))
 
+with subtest("R12: a taken manager is removable, with a later commit and a sent-back take as controls"):
+    machine.succeed(asUser("git init -q -b main ~/taken && echo base > ~/taken/base && git -C ~/taken add . && git -C ~/taken commit -q -m base && git -C ~/taken branch b1"))
+    takenManager = lambda script: start("--role manager", script, project="~/taken")
+    machine.succeed(
+        takenManager(
+            "git checkout -q main && echo main > main-work && git add main-work && git commit -q -m main-work"
+            " && git checkout -q b1 && echo side > side-work && git add side-work && git commit -q -m side-work && git checkout -q main"
+        )
+    )
+    machine.succeed(
+        asUser("cd ~/taken && workers take > /dev/null && git commit -q -m taken-main && workers take --branch b1 > /dev/null && git commit -q -m taken-side && git switch -q main")
+    )
+    _, taken = machine.execute(asUser("workers remove taken/manager/manager") + " 2>&1")
+    machine.succeed(takenManager("git checkout -q main && echo later > later && git add later && git commit -q -m later"))
+    later = machine.fail(asUser("workers remove taken/manager/manager") + " 2>&1")
+    machine.succeed(asUser("cd ~/taken && workers take > /dev/null && git commit -q -m taken-later && git reset -q --hard HEAD^"))
+    sentBack = machine.fail(asUser("workers remove taken/manager/manager") + " 2>&1")
+    print("R12 taken:", taken.strip(), "| later:", later.strip(), "| sent back:", sentBack.strip())
+    assert "plain folders on this machine" in taken, taken
+    assert "commit(s) that neither the project nor a manager's copy holds" in later, later
+    assert "commit(s) that neither the project nor a manager's copy holds" in sentBack, sentBack
+
+with subtest("Every reserved side-branch name is refused"):
+    reserved = {}
+    for branch in ["manager", "archive", "instructions", "plain", "old"]:
+        _, reserved[branch] = machine.execute(asUser(f"cd ~/alpha && workers take --branch {branch}") + " 2>&1")
+    print("reserved branches for workers take:", reserved)
+    assert all("cannot be a branch name" in reserved[branch] for branch in reserved), reserved
+
 with subtest("workers list, and a removal's checks"):
     out = machine.succeed(asUser("workers list"))
     print("workers list:", out)

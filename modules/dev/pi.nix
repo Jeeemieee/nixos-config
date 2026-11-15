@@ -368,7 +368,7 @@ let
               case "$role" in
                 implementer | reviewer | deep-reviewer)
                   [ -n "$branch" ] || deny "the role $role needs --branch <branch>"
-                  case "$branch" in manager | archive | instructions | plain) deny "'$branch' cannot be a branch name: the project's folder of that name is in its place" ;; esac
+                  case "$branch" in manager | archive | instructions | plain | old) deny "'$branch' cannot be a branch name: the project's folder of that name is in its place" ;; esac
                   ;;
                 manager)
                   [ -z "$branch" ] || deny "a manager belongs to no branch: leave --branch out"

@@ -175,6 +175,8 @@ in
             timingCpus
             workCpus
             maxRequests
+            maxSlots
+            jobProcessors
             maxRunSeconds
             ;
           allCpus = lib.concatStringsSep "," (
@@ -326,6 +328,16 @@ in
           type = lib.types.ints.positive;
           default = 5;
           description = "How many jobs of `queue run` run at once, on the whole machine.";
+        };
+        maxSlots = lib.mkOption {
+          type = lib.types.ints.positive;
+          default = 2;
+          description = "How many queue slots one sandbox may hold at once. More requests wait without holding a slot.";
+        };
+        jobProcessors = lib.mkOption {
+          type = lib.types.ints.positive;
+          default = 2;
+          description = "Processor time of one run job without --parallel, or one acceptance job, in CPUs. Timing and exclusive jobs keep their own rules.";
         };
         parallelTokens = lib.mkOption {
           type = lib.types.ints.positive;
@@ -720,6 +732,8 @@ in
               inherit user;
               roleFiles = standInRoles;
               slots = 2;
+              maxSlots = 1;
+              jobProcessors = 1;
               timingCpus = "0";
               workCpus = "1-3";
               totalMemory = "640M";

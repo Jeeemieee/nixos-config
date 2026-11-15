@@ -70,7 +70,7 @@ machine.wait_for_unit("user@1000.service")
 emulated = machine.succeed("systemd-detect-virt").strip() != "kvm"
 pace = 10 if emulated else 1
 print("emulated:", emulated, "pace:", pace)
-repository = 'git init -q -b main {0} && echo content > {0}/file && echo "rules of the project" > {0}/AGENTS.md && git -C {0} add . && git -C {0} -c user.name=t -c user.email=t@t commit -q -m base && git -C {0} branch b1 && git -C {0} branch b2'
+repository = 'git init -q -b main {0} && echo content > {0}/file && echo "rules of the project" > {0}/AGENTS.md && git -C {0} add . && git -C {0} -c user.name=t -c user.email=t@t commit -q -m base && git -C {0} branch b1 && git -C {0} branch b2 && git -C {0} branch old'
 machine.succeed(
     asUser(
         "mkdir -p ~/.ssh ~/other ~/group/sibling && echo secret > ~/.ssh/id_test && echo beside > ~/group/sibling/file && "
@@ -96,10 +96,15 @@ for path, content in tested.items():
 machine.succeed(
     asUser(
         "cd ~/tested && git add . && git -c user.name=t -c user.email=t@t commit -q -m base && git branch b1"
-        # A branch whose workers.toml says nothing usable
-        " && git checkout -q -b b2 && printf '[tests]\\npaths = \"tests\"\\n' > workers.toml && git -c user.name=t -c user.email=t@t commit -q -a -m broken && git checkout -q main"
+        # A branch whose workers.toml says nothing usable, and one that names a path the project does not have
+        " && git checkout -q -b b2 && printf '[tests]\\npaths = \"tests\"\\n' > workers.toml && git -c user.name=t -c user.email=t@t commit -q -a -m broken"
+        " && git checkout -q -b missing main && printf '[tests]\\npaths = [\"tests\", \"missing-test\"]\\nall = [\"bash\", \"tests/run.sh\"]\\nselected = [\"bash\", \"tests/run.sh\"]\\n' > workers.toml"
+        " && git -c user.name=t -c user.email=t@t commit -q -a -m missing-path && git checkout -q main"
     )
 )
+
+reservedStartProblems = {}
+reservedApproveProblems = {}
 
 with subtest("F1: a project whose git settings name the folder above it is still only itself in the sandbox"):
     machine.succeed(asUser("git -C ~/group/project config core.worktree ~/group"))
@@ -115,7 +120,10 @@ with subtest("V8: what the launcher refuses at the start"):
     refused("--branch b1 --name 'a b'", "must be 1 to 48 letters")
     refused("--branch b1 --name ../x", "must be 1 to 48 letters")
     refused("--branch main --name x", "main branch")
-    refused("--branch archive --name x", "cannot be a branch name")
+    for branch in ["manager", "archive", "instructions", "plain", "old"]:
+        status, out = machine.execute(start(f"--branch {branch} --name reserved-{branch}", "true", locked=True) + " 2>&1")
+        if (status == 0) or ("cannot be a branch name" not in out):
+            reservedStartProblems[branch] = (status, out)
     refused("--branch b1", "needs --name")
     refused("--name x", "needs --branch")
     refused("--role manager --branch b1", "belongs to no branch")
@@ -647,6 +655,11 @@ None.
     assert machine.succeed(locked("lk2", attempt) + " 2>&1").split() == ["accepted"] * 7
 
     ## Only implementers have a lock, and only the user's command writes the record
+    for branch in ["manager", "archive", "instructions", "plain", "old"]:
+        status, out = machine.execute(approve(f"alpha/{branch}/reserved-{branch}", ["", "yes"], "--without-form"))
+        if (status == 0):
+            reservedApproveProblems[branch] = out
+        machine.succeed(f"rm -f {home}/.local/state/workers/alpha/approvals/{branch}/reserved-{branch}")
     for worker, reason in [("alpha/b1/r1", "is a reviewer: only an implementer's copy is locked"), ("alpha/manager/manager", "only an implementer's copy is locked"), ("alpha/b1", "usage: workers approve"), ("alpha/b1/nobody", "there is no implementer alpha/b1/nobody")]:
         assert reason in machine.fail(approve(worker, ["1", "", "yes"])), worker
     assert machine.succeed(f"stat -c '%a %U' {approvals}/lk2").split() == ["600", user]
@@ -775,6 +788,13 @@ with subtest("The tests (W6, W7, W9): the approved tests run from the project's 
     out = machine.fail(approve("tested/b2/te", ["1", "", "yes"]))
     assert "[tests] needs 'paths', a list of words that is not empty" in out, out[-300:]
     machine.succeed(f"test ! -e {home}/.local/state/workers/tested/approvals/b2/te")
+    # A path that is absent from the project's commit: the run still fails, and names that path rather than the whole list
+    machine.succeed(worker("tm", "true", branch="missing") + " 2>/dev/null")
+    form("tm", "- `t-sum`: the sum\n", branch="missing")
+    missing = machine.fail(worker("tm", "queue acceptance", branch="missing") + " 2>&1")
+    print("missing acceptance path:", missing.strip(), "| reserved starts:", reservedStartProblems, "| reserved approvals:", reservedApproveProblems)
+    assert "test path 'missing-test' does not exist" in missing, missing
+    assert reservedStartProblems == {} and reservedApproveProblems == {}, (reservedStartProblems, reservedApproveProblems)
 
     ## The whole suite, in a manager's copy, with that copy's own tests
     out = machine.succeed(start("--role manager", 'queue acceptance --all; echo "exit=$?"', project="~/tested") + " 2>/dev/null")

@@ -54,6 +54,7 @@ class Broker:
         # Connections whose request has not arrived yet, oldest first
         self.waiting = {}
         self.lock = threading.Lock()
+        self.slots = threading.BoundedSemaphore(config["maxSlots"])
         # The worker's view and the variables that no request may change, as the launcher wrote them
         with open(os.path.join(self.directory, "view"), "rb") as _file_:
             self.view = [_part_.decode() for _part_ in _file_.read().split(b"\0")[:-1]]
@@ -257,6 +258,7 @@ class Broker:
         _mode_ = request["mode"]
         _held_ = []
         _reserved_ = False
+        _localSlot_ = False
         _queued_ = time.time()
         try:
             ## Step 1. Wait for the slot, as the mode asks
@@ -272,6 +274,11 @@ class Broker:
                 os.close(_turnstile_)
                 _held_.append(self._lock(connection, ["timing"]))
             else:
+                # Wait for this sandbox's allowance before taking any machine-wide token or slot
+                while not self.slots.acquire(timeout=POLL_SECONDS):
+                    if self._gone(connection):
+                        raise Refused("the client went away while waiting for this sandbox's slot allowance")
+                _localSlot_ = True
                 # A job waiting for the parallel token holds no slot meanwhile
                 if (_mode_ == "run-parallel"):
                     _held_.append(self._lock(connection, self._numbered("parallel")))
@@ -292,6 +299,8 @@ class Broker:
                 self._release()
             for _descriptor_ in _held_:
                 os.close(_descriptor_)
+            if _localSlot_:
+                self.slots.release()
 
     def _job(
         self,
@@ -356,7 +365,11 @@ class Broker:
             _scope_ = [self.config["systemdRun"], "--user", "--scope", "--quiet", "--collect", "--expand-environment=no", f"--unit={_unit_}", f"--slice={_slice_}"]
             # Without a description systemd writes the whole command line into the journal, the request's environment with it
             _scope_ += [f"--description=Queued job {number} of {self.unit}"]
-            _scope_ += ["-p", f"BindsTo={_service_}", "-p", f"After={_service_}", "-p", "OOMPolicy=continue", "--"]
+            _scope_ += ["-p", f"BindsTo={_service_}", "-p", f"After={_service_}", "-p", "OOMPolicy=continue"]
+            # The kernel limits the whole job, including every child; asking for more threads cannot enlarge its share
+            if (_mode_ in ("run", *ACCEPTANCE)):
+                _scope_ += ["-p", f"CPUQuota={100 * self.config['jobProcessors']}%"]
+            _scope_ += ["--"]
 
             # When memory runs out, a job is stopped before an agent: the job's own command line sets that, before bwrap starts
             _priority_ = [self.config["choom"], "-n", str(self.config["jobOomScoreAdjust"]), "--"]

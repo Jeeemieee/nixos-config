@@ -145,6 +145,50 @@ with subtest("V1: two queued jobs from two sandboxes at once, one slot: they do 
     openGate("v1-release", "holder")
     sandboxEnded("holder")
 
+with subtest("B7: one sandbox cannot hold every slot, and a run job without --parallel has one processor in this test"):
+    def heldJob(marker, release):
+        return f"touch $WORKER_SCRATCH/{marker}; {gate(release)}"
+
+    first = heldJob("b7-first", "b7-release-first")
+    second = heldJob("b7-second", "b7-release-second")
+    fair = (
+        f"queue run -- bash -c {shlex.quote(first)} & first=$!; queue run -- bash -c {shlex.quote(second)} & second=$!;"
+        " until queue status | grep -q 'this sandbox: 2 of'; do sleep 0.2; done; touch $WORKER_SCRATCH/b7-ready; wait $first $second"
+    )
+    background(worker("fair", fair), "/tmp/b7-fair")
+    machine.wait_until_succeeds(f"test -e {areas}/alpha/b1/fair/b7-ready", timeout=30 * pace)
+    other = heldJob("b7-other", "b7-release-other")
+    background(worker("other", f"queue run -- bash -c {shlex.quote(other)}"), "/tmp/b7-other")
+    until(lambda: machine.execute(f"test -e {areas}/alpha/b1/other/b7-other")[0] == 0, timeout=3, required=False)
+    otherStarted = machine.execute(f"test -e {areas}/alpha/b1/other/b7-other")[0] == 0
+    fairStarted = len(machine.succeed(f"find {areas}/alpha/b1/fair -maxdepth 1 -name 'b7-first' -o -name 'b7-second'").split())
+    print("B7 slots before release: fair", fairStarted, "other", otherStarted)
+    openGate("b7-release-first", "fair")
+    openGate("b7-release-second", "fair")
+    machine.wait_until_succeeds(f"test -e {areas}/alpha/b1/other/b7-other", timeout=30 * pace)
+    openGate("b7-release-other", "other")
+    sandboxEnded("fair")
+    sandboxEnded("other")
+
+    def jobCores(name, option):
+        body = "pids=''; for n in 1 2 3 4; do bash -c 'while :; do :; done' & pids=\"$pids $!\"; done; touch $WORKER_SCRATCH/b7-cpu-ready; " + gate("b7-cpu-release") + "; kill $pids; wait"
+        background(worker(name, f"queue run {option} -- bash -c {shlex.quote(body)}"), f"/tmp/b7-{name}")
+        machine.wait_until_succeeds(f"test -e {areas}/alpha/b1/{name}/b7-cpu-ready", timeout=30 * pace)
+        unit = machine.succeed(asUser(f"systemctl --user list-units --plain --no-legend 'job-worker:alpha:b1:{name}-*.scope' | awk '{{ print $1 }}'")).strip()
+        group = machine.succeed(asUser(f"systemctl --user show -p ControlGroup --value {unit}")).strip()
+        usage = [int(machine.succeed(f"sleep {pause}; grep usage_usec /sys/fs/cgroup{group}/cpu.stat | cut -d' ' -f2")) for pause in (0, 8)]
+        cores = (usage[1] - usage[0]) / 8e6
+        openGate("b7-cpu-release", name)
+        sandboxEnded(name)
+        return cores
+
+    ordinaryCores = jobCores("cpu", "")
+    parallelCores = jobCores("cpupar", "--parallel")
+    print("B7 processor use: ordinary", ordinaryCores, "parallel control", parallelCores)
+    assert fairStarted == 1 and otherStarted, (fairStarted, otherStarted)
+    assert 0.75 < ordinaryCores < 1.25, ordinaryCores
+    assert parallelCores > 2.0, parallelCores
+
 with subtest("The kept copy: output and errors stay apart for the agent, the kept file holds both, the exit status is the command's"):
     out = machine.succeed(worker("a", 'queue run -- bash -c "echo to-output; echo to-errors >&2; exit 5" > out 2> err; echo "status=$?"; echo "out: $(cat out)"; echo "err: $(cat err)"'))
     print("kept copy:", out, machine.succeed(f"cat {record('a')['output']}"))

@@ -42,6 +42,9 @@ in
       # The user's numbers: every pi session counts as an agent, and jobs keep at least 12 GiB
       agentsMemory = "6G";
       agentMemory = "3G";
+      # Leave queue slots for other sandboxes, and keep an ordinary job within two processors
+      maxSlots = 2;
+      jobProcessors = 2;
       # Performance cores 0 and 1 with both threads for timing jobs; the other six performance cores and the twelve efficiency cores for the rest
       timingCpus = "0-3";
       workCpus = "4-27";

@@ -633,6 +633,27 @@ class Status:
         self.next["commits"][project]["workers"][f"{branch}/{name}"] = _answer_
         return _answer_
 
+    def _taken(
+        self,
+        mirror: Annotated[str, "The tools' own repository"],
+        branch: Annotated[str, "The worker's branch"],
+        name: Annotated[str, "The worker"],
+    ):
+        """References of a manager's copy whose tip tree the project holds in one of its commits"""
+        if (branch != "manager"):
+            return []
+        _projectTrees_ = self._git("--git-dir", mirror, "log", "--format=%T", "--glob=refs/project/*")
+        _references_ = self._git("--git-dir", mirror, "for-each-ref", "--format=%(refname)", f"refs/copies/{branch}/{name}/")
+        if not _projectTrees_ or (_projectTrees_.returncode != 0) or not _references_ or (_references_.returncode != 0):
+            return []
+        _heldTrees_ = set(_projectTrees_.stdout.split())
+        _taken_ = []
+        for _reference_ in _references_.stdout.split():
+            _tree_ = self._git("--git-dir", mirror, "rev-parse", f"{_reference_}^{{tree}}")
+            if _tree_ and (_tree_.returncode == 0) and (_tree_.stdout.strip() in _heldTrees_):
+                _taken_.append(_reference_)
+        return _taken_
+
     def _counted(
         self,
         project: Annotated[str, "The project"],
@@ -662,6 +683,9 @@ class Status:
                 return None
             # Who else holds a commit: the project, and every manager's copy but the worker's own
             _others_ = ["--glob=refs/project/*"] + [f"--glob=refs/managers/{_manager_}/*" for _manager_ in basis["managers"] if (branch, name) != ("manager", _manager_)]
+            # `workers take` squashes. A project commit with the same tree as a manager branch tip holds that branch's work,
+            # although none of the manager's commit names reached the project
+            _others_ += self._taken(_mirror_, branch, name)
             _counts_ = {"unmerged": ["rev-list", "--count", f"--glob=refs/copies/{branch}/{name}/*", "--not", *_others_]}
             if current:
                 _counts_["ahead"] = ["rev-list", "--count", current, "--not", f"refs/project/{branch}"]
@@ -742,7 +766,7 @@ class Status:
         # How its copy stands against the project and the managers' copies: counted for every role, since every role's worker can
         # be removed, and shown for an implementer
         _counted_ = self._commits(project, branch, name, _heads_, _current_ if (_role_ == "implementer") else None) if _heads_ else {}
-        _removable_, _why_ = False, "-"
+        _removable_, _removeWithMerged_, _why_ = False, False, "-"
 
         ## Step 3. An implementer: its approval, the approved tests, its commits, its reviews
         if (_role_ == "implementer"):
@@ -797,6 +821,7 @@ class Status:
             _merged_ = (_ahead_ > 0) and (_counted_.get("unmerged") == 0)
             _removable_ = _merged_ and bool(_said_) and (_said_[-1] == "no") and not _running_
             _worker_["removable"] = {"value": _removable_, "source": "derived"}
+            _removeWithMerged_ = _removable_
             # In words, for `workers remove --merged`, which names the implementers it leaves
             if "unmerged" not in _counted_:
                 _why_ = "its commits could not be counted"
@@ -810,6 +835,27 @@ class Status:
                 _why_ = "its last queued run reported uncommitted changes"
             elif _running_:
                 _why_ = "it runs"
+
+        # A reviewer follows the implementers it was started against. The removal itself asks again whether its copy is clean,
+        # and refuses a reviewer that runs
+        elif (_role_ == "reviewer"):
+            _reviewsRoot_ = os.path.join(self.state, project, "reviews", branch)
+            _reviewed_ = [
+                _implementer_
+                for _implementer_ in self._listed(_reviewsRoot_)
+                if os.path.isfile(os.path.join(_reviewsRoot_, _implementer_, name))
+            ]
+            _present_ = [
+                _implementer_
+                for _implementer_ in _reviewed_
+                if self._word(os.path.join(self.state, project, "roles", branch, _implementer_)) == "implementer"
+            ]
+            if _present_:
+                _why_ = f"reviewed implementer(s) still present: {', '.join(_present_)}"
+            elif _reviewed_:
+                _removeWithMerged_ = True
+            else:
+                _why_ = "it has no recorded implementer"
 
         ## Step 4. Claimed: the agent's to-do list, and its own line on how it stands
         _steps_ = self._steps(_folder_, _full_)
@@ -841,7 +887,7 @@ class Status:
         _worker_["state"] = {"value": _state_, "source": _source_}
         # For `workers list`: - without a copy, ? when the commits could not be counted
         _held_ = "-" if not os.path.lexists(os.path.join(_copy_, ".git")) else str(_counted_.get("unmerged", "?"))
-        self.rows.append((project, branch, name, _held_, "yes" if _removable_ else "no", _why_))
+        self.rows.append((project, branch, name, _held_, "yes" if _removeWithMerged_ else "no", _why_))
         return _worker_
 
     def _sessions(

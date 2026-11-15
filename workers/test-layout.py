@@ -491,12 +491,23 @@ with subtest("V17: removing a worker keeps its folder for a time, and only the s
     machine.fail(f"zfs list rpool/scratch/workers/{session}/plain/session")
     assert session not in machine.succeed(asUser("workers list"))
 
-with subtest("W16: workers remove --merged removes the implementers whose work is merged, and leaves and names the others; the weekly reminder"):
+with subtest("W16: workers remove --merged removes merged implementers and their finished reviewers, and ignores the user's old folder"):
     held = lambda name: f"git fetch -q {folders}/alpha/b1/{name}/repo worker/b1/{name}:refs/workers/b1/{name} && git checkout -q b1 && git merge -q --no-edit refs/workers/b1/{name}"
+    machine.succeed(asUser("git -C ~/alpha branch old"), f"mkdir {folders}/alpha/old && echo kept-by-the-user > {folders}/alpha/old/marker")
+    oldState = lambda: machine.succeed(f"stat -c '%U:%G:%a:%i' {folders}/alpha/old {folders}/alpha/old/marker; sha256sum {folders}/alpha/old/marker; find {folders}/alpha/old -mindepth 1 -maxdepth 1 -printf '%f\\n' | sort")
+    oldBefore = oldState()
+    assert not [line for line in machine.succeed(asUser("workers list")).splitlines() if line.split()[1:2] == ["old"]]
+    assert not [entry for entry in json.loads(machine.succeed(asUser("workers status --json")))["workers"] if entry["branch"] == "old"]
     row = lambda name: [line.split() for line in machine.succeed(asUser("workers list")).splitlines() if line.split()[:3] == ["alpha", "b1", name]][0]
     # m1 and m3: their work is in the manager's copy. m2: a commit that nobody else holds. Each reported a clean copy at its last run
     for name in ["m1", "m2", "m3"]:
         machine.succeed(worker("b1", name, f"echo {name} > {name} && git add {name} && git commit -q -m {name} && queue run -- true && echo report > ../reports/final"))
+    tasks = "mkdir -p ~/workers/alpha/instructions/b1"
+    for name in ["r-gone", "r-stay", "r-both"]:
+        tasks += f" && printf 'branch: b1\\nname: {name}\\nrole: reviewer\\n\\nReview.\\n' > ~/workers/alpha/instructions/b1/{name}.md"
+    machine.succeed(manager(tasks))
+    review = lambda name, of: asUser(f"cd ~/alpha && worker-shell --role reviewer --branch b1 --name {name} --of {of} -c true")
+    machine.succeed(review("r-gone", "m1"), review("r-stay", "m2"), review("r-both", "m1"), review("r-both", "m2"))
     machine.succeed(manager(held("m1") + " && " + held("m3")))
     # m3 has a file since then that is not committed, and has run nothing: the list still calls it removable, on its last word
     machine.succeed(worker("b1", "m3", "echo draft > draft"))
@@ -523,12 +534,24 @@ with subtest("W16: workers remove --merged removes the implementers whose work i
     assert [line for line in lines if line.startswith("removed alpha/b1/m1: records, reports and task are in ")], out
     assert "left alpha/b1/m2: 1 commit(s) that neither the project nor a manager's copy holds" in lines, out
     assert [line for line in lines if line.startswith("left alpha/b1/m3: refusing: the copy of alpha/b1/m3 has uncommitted changes")], out
-    assert [line for line in lines if line.startswith("removed ") and "alpha/b1/m1" not in line] == [] and lines[-1].startswith("1 worker(s) of alpha removed"), out
-    # m1: archived, its folder kept and marked; the other two as they were
+    assert [line for line in lines if line.startswith("removed alpha/b1/r-gone: records, reports and task are in ")], out
+    assert "left alpha/b1/r-stay: reviewed implementer(s) still present: m2" in lines, out
+    assert "left alpha/b1/r-both: reviewed implementer(s) still present: m2" in lines, out
+    removedLines = [line for line in lines if line.startswith("removed ")]
+    assert len(removedLines) == 2 and any("alpha/b1/m1" in line for line in removedLines) and any("alpha/b1/r-gone" in line for line in removedLines), out
+    assert lines[-1].startswith("2 worker(s) of alpha removed"), out
+    # m1 and its finished reviewer: archived, their folders kept and marked; the others as they were
     assert machine.succeed("zfs get -H -o value canmount,mounted rpool/workers/alpha/b1/m1").split() == ["off", "no"] and machine.succeed("zfs get -H -o value workers:retired rpool/workers/alpha/b1/m1").strip().isdigit()
     machine.succeed(f"grep -qx report {folders}/alpha/archive/b1-m1-*/reports/final")
     assert machine.succeed("zfs get -H -o value mounted rpool/workers/alpha/b1/m2 rpool/workers/alpha/b1/m3").split() == before == ["yes", "yes"]
+    assert machine.succeed("zfs get -H -o value canmount,mounted rpool/workers/alpha/b1/r-gone").split() == ["off", "no"]
+    assert machine.succeed("zfs get -H -o value mounted rpool/workers/alpha/b1/r-stay rpool/workers/alpha/b1/r-both").split() == ["yes", "yes"]
     assert "removed, kept to" in " ".join(row("m1")) and row("m2")[4] == "stopped", (row("m1"), row("m2"))
+    assert oldState() == oldBefore, (oldBefore, oldState())
+    oldStatus, oldStart = machine.execute(worker("old", "hand", "true", locked=True) + " 2>&1")
+    helperStatus, helperOld = machine.execute(asUser(f"sudo -n {helper} ensure alpha old helper-probe") + " 2>&1")
+    print("the user's old folder, start on branch old:", oldStatus, oldStart.strip(), "| helper:", helperStatus, helperOld.strip())
+    oldAfter = oldState()
     # It can be undone
     machine.succeed(asUser("workers restore alpha/b1/m1"), worker("b1", "m1", "grep -qx m1 m1 && grep -qx report ../reports/final", locked=True))
     # With nothing removable left, the reminder says nothing (m1 has no scratch area's report since its restore: it ran nothing)
@@ -537,6 +560,11 @@ with subtest("W16: workers remove --merged removes the implementers whose work i
     assert machine.succeed(asUser("workers status --reminder")).strip() == ""
     # Refused for what is not a project with workers
     assert "has no workers" in machine.fail(asUser("workers remove --merged nothing-here") + " 2>&1")
+
+with subtest("A hand-made old folder is untouched, and old cannot be a worker branch"):
+    assert oldStatus != 0 and "cannot be a branch name" in oldStart, oldStart
+    assert helperStatus != 0 and "cannot be a branch name" in helperOld, helperOld
+    assert oldAfter == oldBefore, (oldBefore, oldAfter)
 
 with subtest("W18: workers approve --empty-scratch returns the scratch area to what it was when the worker was made"):
     area = "rpool/scratch/workers/alpha/b1"

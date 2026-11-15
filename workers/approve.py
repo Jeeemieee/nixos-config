@@ -318,7 +318,7 @@ def approve(
     arguments: Annotated[argparse.Namespace, "The command line"],
 ):
     ## Step 1. Only implementers have a lock
-    if (worker.role not in (None, "implementer")) or (worker.branch in ("manager", "archive", "instructions", "plain")):
+    if (worker.role not in (None, "implementer")) or (worker.branch in ("manager", "archive", "instructions", "plain", "old")):
         raise Refused(f"{worker.name} is a {worker.role or 'name no implementer can have'}: only an implementer's copy is locked until it is approved")
     _approval_ = worker.approval()
 

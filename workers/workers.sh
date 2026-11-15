@@ -191,8 +191,10 @@ case "$action" in
       [ -d "$state/$target/roles" ] || die "$target has no workers"
       [ "${#helper[@]}" -gt 0 ] || die "workers are plain folders on this machine: a removal that can be undone needs the datasets"
       count=0
+      # Implementers first. A reviewer can become eligible because one of these removals completed
       while IFS=$'\t' read -r project branch name _ can why <&3; do
         [ "$project" = "$target" ] || continue
+        [ "$(cat "$state/$project/roles/$branch/$name" 2> /dev/null)" = implementer ] || continue
         if [ "$can" = yes ]; then
           # The two questions are asked again, now: what the list says rests on the worker's last report
           if said=$("$0" remove "$project/$branch/$name" 2>&1 < /dev/null); then
@@ -205,7 +207,22 @@ case "$action" in
           echo "left $project/$branch/$name: $why"
         fi
       done 3< <("${status[@]}" --list)
-      echo "$count worker(s) of $target removed; reviewers and managers are not removed by --merged (workers remove <project>/<branch>/<name>)"
+      # Ask again after the implementers: remove a reviewer only when every implementer it reviewed is gone
+      while IFS=$'\t' read -r project branch name _ can why <&3; do
+        [ "$project" = "$target" ] || continue
+        [ "$(cat "$state/$project/roles/$branch/$name" 2> /dev/null)" = reviewer ] || continue
+        if [ "$can" = yes ]; then
+          if said=$("$0" remove "$project/$branch/$name" 2>&1 < /dev/null); then
+            echo "$said"
+            count=$((count + 1))
+          else
+            echo "left $project/$branch/$name: ${said#workers: }"
+          fi
+        else
+          echo "left $project/$branch/$name: $why"
+        fi
+      done 3< <("${status[@]}" --list)
+      echo "$count worker(s) of $target removed; managers and deep reviewers are not removed by --merged (workers remove <project>/<branch>/<name>)"
       exit 0
     fi
     force=0
@@ -299,7 +316,7 @@ case "$action" in
     if [ "${2:-}" = --branch ]; then
       side=${3:-}
       validName "$side" || die "'$side' is not a branch name that workers can have: 1 to 48 letters, digits, '.', '_' or '-'"
-      case "$side" in manager | archive | instructions | plain) die "'$side' cannot be a branch name: the project's folder of that name is in its place" ;; esac
+      case "$side" in manager | archive | instructions | plain | old) die "'$side' cannot be a branch name: the project's folder of that name is in its place" ;; esac
       shift 2
     fi
     manager=${2:-manager}

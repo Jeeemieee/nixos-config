@@ -35,7 +35,14 @@ git --git-dir "$history" archive --format=tar "$commit" | tar -x -C "$tree" || {
 # The project's own tests, from the project's history, which the worker can only read. With no paths (the whole suite in a
 # manager's copy) the tree's own tests are the ones that run
 if [ "$count" -gt 0 ]; then
-  for path in "${paths[@]}"; do rm -rf -- "${tree:?}/$path"; done
+  for path in "${paths[@]}"; do
+    # Name the absent path, not just the failed archive of the whole test list
+    git --git-dir "$projectGit" cat-file -e "$testsCommit:$path" 2> /dev/null || {
+      echo "acceptance: test path '$path' does not exist in the project's commit $testsCommit; every workers.toml path must exist there; nothing was tested" >&2
+      exit 2
+    }
+    rm -rf -- "${tree:?}/$path"
+  done
   git --git-dir "$projectGit" archive --format=tar "$testsCommit" -- "${paths[@]}" | tar -x -C "$tree" || {
     echo "acceptance: the project's tests (${paths[*]}) could not be taken from its history at $testsCommit; nothing was tested" >&2
     exit 2

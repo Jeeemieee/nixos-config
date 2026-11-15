@@ -103,8 +103,12 @@ label=${5:-}
 validName "$project" || die "invalid project name '$project'"
 validName "$branch" || die "invalid branch name '$branch'"
 validName "$name" || die "invalid worker name '$name'"
-# These two are folders of the project itself, beside its branches
-case "$branch" in instructions | archive) die "'$branch' cannot be a branch name: the project's folder of that name is in its place" ;; esac
+# These are folders beside the branches; old is the user's own, never a worker's
+case "$branch" in instructions | archive | old) die "'$branch' cannot be a branch name: the project's folder of that name is in its place" ;; esac
+# The manager and ordinary sessions use these two internal names, not branch names
+if [ "$branch" = plain ] && [ "$action" = ensure ]; then
+  die "'plain' cannot be a branch name: it is reserved for ordinary sessions"
+fi
 area=$SCRATCH_DATASET/$project/$branch/$name
 folder=$WORKERS_DATASET/$project/$branch/$name
 # The time a folder was removed at, or nothing
