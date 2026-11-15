@@ -57,4 +57,19 @@ One row per check of the three paragraphs above, added when the user ran it on t
 
 | Date | Check | Result |
 | --- | --- | --- |
-| 2026-11-15 | `nvidia-smi` | Passed: driver 595.71.05 sees the RTX 3500 Ada with 12 282 MiB. It printed a power draw of 593 W for a 90 W card, which cannot be right; to be looked at again with `nvidia-offload` |
+| 2026-11-15 | `nvidia-smi` | Passed: driver 595.71.05 sees the RTX 3500 Ada with 12 282 MiB. It printed a power draw of 593 W for a 90 W card, which cannot be right; to be looked at again with `nvidia-offload`. Later the kernel log showed `NVRM: _kgspProcessRpcEvent: Attempted to process RPC event from GPU0: 0x101a (PFM_REQ_HNDLR_STATE_SYNC_CALLBACK) during bootup without API lock` with a failed assertion in `kernel_gsp.c:1447`, twice, when the card woke up; whether that matters is open |
+| 2026-11-15 | The first `config switch` on the laptop | Passed on the second try, with the kernel's messages watched (`sudo dmesg -w`): no message about the disk. The first try is the freeze below |
+| 2026-11-15 | GitHub through the key in Bitwarden | Passed: `git push` reached GitHub once Bitwarden was open, unlocked and its "Enable SSH agent" switch was on. That switch is off on a new machine; until then git answers `Permission denied (publickey)` |
+| 2026-11-15 | The backup ([BACKUP.md](BACKUP.md)) | Passed: a run started by hand saved snapshot `adf62626` in 9 seconds (23 906 files, 1.157 GiB), on top of an earlier snapshot of this laptop, so the secret values are right. The restore of one file with a byte-for-byte comparison: reported as passed by the user; its output was not recorded |
+| 2026-11-15 | Starting without F12 | Reported by the user: the USB disk is first in the firmware's boot order, set from Ubuntu. To be looked at again when the disk moves into the laptop. A firmware password is not set yet; without one Secure Boot means little |
+
+### Open: the freeze of 2026-11-15
+
+At about 13:19 the laptop stopped responding, moments after a commit and as `config switch` was started: the pointer moved, programs failed, and it needed the power button. Known so far:
+
+- The log on the disk ends at 13:18:49, although the laptop ran for minutes more. Its last lines are the firmware service (`fwupd`), which failed to open two USB devices on port 2 of the controller that also carries the system disk (port 1).
+- The system disk is the SSD in the USB enclosure (Realtek RTL9210, `0bda:9210`, driver `uas`). At start the kernel reports `enable of device-initiated U1 failed` for it. No reset or I/O error is recorded before the freeze.
+- `config switch` is cleared: repeated with the kernel's messages watched, it finished without a message about the disk.
+- The firmware service is cleared: `fwupd.service` restarted and `fwupd-refresh.service` started by hand, with the kernel's messages watched, caused no freeze and no message about the disk.
+
+The cause is not known. A disk that dropped off USB fits what was seen and is not proven. It happened once.

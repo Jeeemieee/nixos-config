@@ -86,7 +86,7 @@ Once per Bitwarden account, by hand:
 3. On GitHub: Settings, "SSH and GPG keys", "New SSH key", paste it.
 4. Test: `ssh -T git@github.com` greets with the account name.
 
-After every login the vault has to be unlocked once before git can reach GitHub. Not verified yet on NixOS: the agent itself, and whether `nix flake update nixos-secrets` honours the rewrite.
+After every login the vault has to be unlocked once before git can reach GitHub. Verified on the laptop on 2026-11-15: a push through the agent. On a new machine step 1 has to be repeated, because the switch is a setting of the app on that machine. Not verified yet on NixOS: whether `nix flake update nixos-secrets` honours the rewrite.
 
 ## SSH hosts
 
