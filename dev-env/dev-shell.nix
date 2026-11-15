@@ -1,14 +1,19 @@
 # Development shells composed from building blocks
 #
-#   devShell = import ./dev-shell.nix { inherit nixpkgs system; };
-#   devShell { blocks = [ "python" "numerics-cpu" ]; packages = pkgs: [ pkgs.gmsh ]; }
-#
-# Blocks: python, cpp, openfoam, and at most one of numerics-cpu, numerics-cuda
+# What it is    The function that makes a project's shell from named blocks: python, cpp, openfoam, and at most one of
+#               numerics-cpu and numerics-cuda
+# Who uses it   A project's flake.nix through this repository's lib.devShell (modules/flake/dev-env.nix), and the checks
+# A project adds Its blocks and packages of its own, for example
+#               devShell { blocks = [ "python" "numerics-cpu" ]; packages = pkgs: [ pkgs.gmsh ]; }
+# Protected     Yes: a shell's hook runs in the user's own terminal, outside every pi sandbox (docs/UPKEEP.md)
 { nixpkgs, system }:
 let
+  ## Part 1. The package sets that the shells are made from
   lib = import "${nixpkgs}/lib";
+  # The changes that give PETSc and SLEPc the GPU, and the names of the unfree packages they need
   cuda = import ./cuda-overlay.nix;
 
+  # The names a project may ask for; any other name is refused in part 5
   knownBlocks = [
     "python"
     "cpp"
@@ -38,9 +43,14 @@ in
   packages ? (pkgs: [ ]),
 }:
 let
+  ## Part 2. What this project asked for
+  # Whether a block is in the project's list
   has = block: builtins.elem block blocks;
+  # The names in the list that are no block
   unknownBlocks = lib.subtractLists knownBlocks blocks;
+  # Either numerics block brings MPI, PETSc and SLEPc
   hasNumerics = has "numerics-cpu" || has "numerics-cuda";
+  # Only a shell with the GPU block is made from the changed package set
   pkgs = if has "numerics-cuda" then cudaPkgs else plainPkgs;
 
   # One PETSc and one SLEPc per shell: the builds that carry petsc4py and slepc4py are
@@ -51,6 +61,7 @@ let
   # OpenFOAM from ESI, built against pkgs.mpi, the MPI of the numerics blocks
   openfoam = import ./openfoam.nix { inherit pkgs; };
 
+  ## Part 3. Python
   # Libraries that PyPI wheels expect from the system
   wheelLibraries = [
     pkgs.stdenv.cc.cc.lib # libstdc++, libgcc_s: nearly every compiled wheel (numpy, matplotlib)
@@ -83,6 +94,7 @@ let
         ];
       };
 
+  ## Part 4. What a shell runs at its start, per block
   # nixpkgs' Python setup hook fills PYTHONPATH in shells with numerics (PETSc
   # propagates numpy and with it the bare Python). It would put every Nix package
   # before the project's .venv and leak into Pythons outside the shell; the wrapped
@@ -136,6 +148,8 @@ let
     fi
   '';
 in
+## Part 5. The shell
+# A name that is no block, and the two numerics blocks together, are refused with the reason
 if (unknownBlocks != [ ]) then
   throw "devShell: unknown block(s) ${lib.concatStringsSep ", " unknownBlocks}; known blocks are ${lib.concatStringsSep ", " knownBlocks}"
 else if (has "numerics-cpu" && has "numerics-cuda") then
@@ -167,6 +181,7 @@ else
         ]
         ++ packages pkgs;
 
+      # What the project's own C, C++ and Fortran code is built against (PETSC_DIR, SLEPC_DIR, pkg-config)
       buildInputs =
         lib.optionals hasNumerics [
           petsc
@@ -175,6 +190,7 @@ else
         # nvcc and the CUDA headers and libraries for the project's own CUDA code
         ++ lib.optional (has "numerics-cuda") pkgs.petscCudaToolkit;
 
+      # The start scripts of part 4, for the blocks that were asked for
       shellHook =
         commonShellHook
         + lib.optionalString (has "numerics-cuda") cudaShellHook

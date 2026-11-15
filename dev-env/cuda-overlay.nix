@@ -1,11 +1,16 @@
 # PETSc and SLEPc with CUDA 12.6 for the numerics-cuda block
-# Each setting is explained where it is made; what was validated is in docs/DEV-ENVIRONMENTS.md
-# Returns the overlay and the unfree names it needs
+#
+# What it is    The changes to nixpkgs that give PETSc and SLEPc the GPU, and the names of the unfree CUDA packages they need
+# Who uses it   dev-env/dev-shell.nix, only for a shell with the numerics-cuda block
+# A user adds   Nothing; another graphics card needs another cudaArch
+# Protected     Yes, with all of dev-env/ (docs/UPKEEP.md)
+# What was validated is in docs/DEV-ENVIRONMENTS.md
 let
   # GPU architecture of the RTX 3500 Ada (compute capability 8.9)
   cudaArch = "89";
 in
 {
+  ## Part 1. The unfree packages
   # Unfree packages allowed by name (no global allowUnfree); each name is required
   unfreeNames = [
     "cuda_nvcc"
@@ -22,6 +27,7 @@ in
     "cuda_nvrtc"
   ];
 
+  ## Part 2. The changed packages
   overlay =
     final: prev:
     let
@@ -50,19 +56,20 @@ in
           ]
           # Shared library and headers only; the static and stubs outputs of the math
           # libraries would shadow the real libraries or only add closure size
-          ++ lib.concatMap
-            (p: [
-              p.lib
-              p.include
-            ])
-            [
-              cudaPackages.nvtx # libnvToolsExt (PETSc's basic CUDA library list)
-              cudaPackages.libcublas
-              cudaPackages.libcusparse
-              cudaPackages.libcusolver
-              cudaPackages.libcurand
-              cudaPackages.libcufft
-            ];
+          ++
+            lib.concatMap
+              (p: [
+                p.lib
+                p.include
+              ])
+              [
+                cudaPackages.nvtx # libnvToolsExt (PETSc's basic CUDA library list)
+                cudaPackages.libcublas
+                cudaPackages.libcusparse
+                cudaPackages.libcusolver
+                cudaPackages.libcurand
+                cudaPackages.libcufft
+              ];
         # The merged nix-support directory would propagate setup hooks of single packages
         postBuild = "rm -rf $out/nix-support";
       };
@@ -98,6 +105,7 @@ in
             # include and lib directories are on the compiler wrappers' search paths
             buildInputs = old.buildInputs ++ [ petscCudaToolkit ];
 
+            # Switch CUDA on, say where its toolkit is, and which graphics card to compile for
             configureFlags = old.configureFlags ++ [
               "--with-cuda=1"
               "--with-cuda-dir=${petscCudaToolkit}"
@@ -113,11 +121,13 @@ in
                 --replace-fail "\''${RUN_TEST} runex19_cuda;" 'echo "Skipped runex19_cuda: no GPU in the Nix build sandbox";'
             '';
 
+            # PETSc's own tests after the build run without a GPU: with the stubs, on the processor
             preInstallCheck = (old.preInstallCheck or "") + sandboxCheckEnv;
           });
 
       # SLEPc follows the overlay's PETSc by itself; only the missing GPU needs handling
       slepc = prev.slepc.overrideAttrs (old: {
+        # Skip the one test of SLEPc's that needs a GPU
         postPatch = old.postPatch + ''
           substituteInPlace makefile \
             --replace-fail "\''${RUN_TEST} testtest10_cuda;" 'echo "Skipped testtest10_cuda: no GPU in the Nix build sandbox";'

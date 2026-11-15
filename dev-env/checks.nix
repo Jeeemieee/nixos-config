@@ -1,4 +1,10 @@
-# Sandboxed checks of the building blocks (b1-b8, b14, f1-f6); see docs/DEV-ENVIRONMENTS.md
+# Checks of the development building blocks
+#
+# What it is    One test in the Nix sandbox for each thing the blocks promise: b1-b8 and b14 for Python and the numerics,
+#               f1-f6 for OpenFOAM (docs/DEV-ENVIRONMENTS.md)
+# Who uses it   `nix flake check` and `config check`, as dev-env-<name> (modules/flake/dev-env.nix)
+# A user adds   A check for a new block; an OpenFOAM update changes openfoamRelease below
+# Protected     Yes, with all of dev-env/ (docs/UPKEEP.md)
 # The uv, CadQuery and GPU tests need the network, a GPU or a missing driver and are run by hand
 {
   nixpkgs,
@@ -6,6 +12,8 @@
   devShell,
 }:
 let
+  ## Part 1. What the checks are made with
+  # Plain nixpkgs for the checks' own tools, with nothing from the user's own nixpkgs settings
   pkgs = import nixpkgs {
     inherit system;
     config = { };
@@ -44,11 +52,13 @@ let
         touch "$out"
       '';
 
+  # The same question for PETSc
   onePetscInClosure = name: oneInClosure name "petsc-[0-9]";
 
   # True when evaluating the shell fails with a throw
   refused = arguments: !(builtins.tryEval (devShell arguments).drvPath).success;
 
+  # PETSc's vector and matrix types on the processor, which the solver tests are told to expect
   cpuTypes = "-vec_type standard -mat_type aij";
 
   # The release the openfoam block must provide, written here and not read from the
@@ -67,6 +77,7 @@ let
     foamDictionary -entry coeffs/n -set '(2 2 1)' system/decomposeParDict
   '';
 
+  # Mesh, split, solve on 4 processes and join again; the solver must report 4 processes and reach its end
   runParallel = ''
     blockMesh > log.blockMesh
     decomposePar > log.decomposePar
@@ -78,6 +89,8 @@ let
   '';
 in
 rec {
+  ## Part 2. Python and the numerics blocks
+  # MPI from Python: the sum of the process numbers on 1, 2 and 4 processes
   b1-mpi4py =
     inShell "b1-mpi4py"
       [
@@ -90,6 +103,7 @@ rec {
         done
       '';
 
+  # PETSc from Python with the direct solver MUMPS, on one process and on two
   b2-petsc4py-mumps =
     inShell "b2-petsc4py-mumps"
       [
@@ -103,6 +117,7 @@ rec {
           --expect-vec mpi --expect-mat mpiaij ${cpuTypes}
       '';
 
+  # SLEPc from Python: the smallest eigenvalues of a known matrix
   b3-slepc4py =
     inShell "b3-slepc4py"
       [
@@ -113,6 +128,7 @@ rec {
         python g8_slepc.py
       '';
 
+  # PETSc from C, built with CMake and run on two processes
   # Installs the binary and compile_commands.json so that B6 can inspect the binary
   b4-c-petsc =
     inShell "b4-c-petsc"
@@ -130,6 +146,7 @@ rec {
         cp build/compile_commands.json "$out/"
       '';
 
+  # Fortran with MPI, compiled and run on four processes
   b5-fortran-mpi =
     inShell "b5-fortran-mpi"
       [
@@ -142,6 +159,7 @@ rec {
         grep -q '^ranks: 4 sum of ranks: 6$' b5.out
       '';
 
+  # One PETSc per shell: the C program, Python and PETSC_DIR all name the same one
   b6-one-petsc-cpu =
     inShell "b6-one-petsc-cpu"
       [
@@ -160,6 +178,7 @@ rec {
         [ "$(storePath "$linked")" = "$PETSC_DIR" ]
       '';
 
+  # And the whole shell holds exactly one PETSc, without the GPU and with it
   b6-closure-cpu = onePetscInClosure "b6-closure-cpu" [
     "python"
     "cpp"
@@ -172,6 +191,7 @@ rec {
     "numerics-cuda"
   ];
 
+  # The processor shell's PETSc is built without CUDA, the GPU shell's with it
   b7-variant-cpu = inShell "b7-variant-cpu" [ "numerics-cpu" ] ''
     echo "PETSC_DIR: $PETSC_DIR"
     ! grep '^#define PETSC_HAVE_CUDA ' "$PETSC_DIR/include/petscconf.h"
@@ -182,6 +202,7 @@ rec {
     grep '^#define PETSC_HAVE_CUDA 1$' "$PETSC_DIR/include/petscconf.h"
   '';
 
+  # Both numerics blocks together, and a name that is no block, are refused
   # Only the refusal itself; the messages are in the recorded evaluation
   b8-refusals =
     assert refused {
@@ -198,15 +219,19 @@ rec {
     };
     pkgs.runCommand "check-b8-refusals" { } ''touch "$out"'';
 
+  # The python block carries the kernel that Jupyter notebooks run in
   b14-ipykernel = inShell "b14-ipykernel" [ "python" ] ''
     python -c "import ipykernel; print('ipykernel', ipykernel.__version__, 'from', ipykernel.__file__)"
   '';
 
+  ## Part 3. The openfoam block
+  # The release is the one written above
   f1-openfoam-version = inShell "f1-openfoam-version" [ "openfoam" ] ''
     simpleFoam -help | tee f1.out
     grep -q '^Using: OpenFOAM-${openfoamRelease} ' f1.out
   '';
 
+  # The cavity tutorial runs to its end on one process
   f2-cavity = inShell "f2-cavity" [ "openfoam" ] ''
     ${copyCavity "cavity"}
     cd cavity
@@ -243,6 +268,7 @@ rec {
     done
   '';
 
+  # A program of the user's own is compiled with wmake and gives the mesh's known size
   # The hook runs again with a folder for the user's own programs that is writable here, so that
   # FOAM_USER_APPBIN, where wmake installs the program, is on PATH
   # Expected from blockMeshDict: 20 x 20 x 1 cells, 0.1 m x 0.1 m x 0.01 m
@@ -328,6 +354,7 @@ rec {
     expect "a named folder" "$(export OPENFOAM_USER_DIR=$PWD/named; userFolder "$PWD/home" | cut -d'|' -f1)" "$PWD/named"
   '';
 
+  # A shell with every block holds exactly one Open MPI
   f5-closure = oneInClosure "f5-closure" "openmpi-[0-9.]+$" [
     "python"
     "cpp"
