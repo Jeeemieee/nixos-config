@@ -2,6 +2,8 @@
 
 A physical host is installed from another Linux system with Nix (the laptop's Ubuntu), through a virtual machine, the installer, that can see only the target disk. The system is built on the host; the installer has no network and receives no credentials. `modules/install/installer.nix` defines the installer and the `install` tool; the same steps serve a rehearsal on a disk image file and the real disk.
 
+The laptop's installation, step by step with its commands, is in [MIMIR-INSTALL.md](MIMIR-INSTALL.md).
+
 Commands on the host are run in the nixos-config checkout. The install tool and the system it installs are built from the last commit, not from the folder: commit first, and run `config check` once if that commit was not made on this machine (see [UPKEEP.md](UPKEEP.md)).
 
 ```bash

@@ -71,6 +71,6 @@ The check `backup` runs the module in two virtual machines, against a throwaway 
 | No route | Skipped quietly; with a route the next run succeeds; no route and a backup older than 24 hours fails |
 | Wrong repository password; secrets that cannot be decrypted | The unit fails and the notification is sent |
 | Delete with the laptop's login | Refused with 403; the snapshot is still on the server |
-| A host without secrets; an address that is not a rest-server | Refused |
+| An address that is not a rest-server | Refused before anything is sent |
 
 Not tested there: the real server and Tailscale, suspend and resume, the pop-up itself in Plasma, and the size and duration with the real home folder.
