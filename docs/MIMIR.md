@@ -50,3 +50,11 @@ Not testable in a virtual machine, to be checked on the laptop after the install
 Also on the laptop only: a container with the graphics card (`docker run --rm --device nvidia.com/gpu=all <image> nvidia-smi`; containers from Ubuntu have to be created again); the touchpad (natural scrolling, tap to click, off while typing, right click in the bottom-right corner) and the mouse on the 3Dconnexion receiver (no acceleration), which Plasma sets per device; and the panel on every screen with the dock connected.
 
 Also to be checked on the laptop, because Ubuntu catches these keys before the user's VM window sees them (they pass in the automated test VM): `Meta+<number>` and `Meta+Shift+<number>` for the desktops, and `Alt+Space` with a web keyword such as `nixopt:programs.tmux`; and whether the KDE wallet asks for a password when Brave is opened. Also whether pipewire and KDE's crash reporter crash at logout, as they did in a virtual machine without a sound card.
+
+### Checked on the laptop
+
+One row per check of the three paragraphs above, added when the user ran it on the installed laptop.
+
+| Date | Check | Result |
+| --- | --- | --- |
+| 2026-11-15 | `nvidia-smi` | Passed: driver 595.71.05 sees the RTX 3500 Ada with 12 282 MiB. It printed a power draw of 593 W for a 90 W card, which cannot be right; to be looked at again with `nvidia-offload` |

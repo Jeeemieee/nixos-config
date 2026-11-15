@@ -1,6 +1,7 @@
 # Command-line tools
 #
-# What it is    A terminal editor plus tools for sessions, networks, disks and system information
+# What it is    A terminal editor plus tools for sessions, networks, disks and system information,
+#               and one graphical viewer of disk use that sits beside its terminal counterpart
 # Who uses it   A Home Manager user by importing homeManager.cli; the workstation account imports it
 # A user adds   Nothing; the module supplies the programs and packages together
 # Protected     No: these are user tools and do not define privileged services or safeguards
@@ -35,6 +36,8 @@
         fastfetch
         # Show what takes space in a folder and delete only when explicitly asked
         ncdu
+        # Show the same as a picture: rings or a tree map of what fills a disk or a folder
+        baobab
       ];
     };
 }

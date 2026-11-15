@@ -46,6 +46,7 @@ Versions are not listed here: they are whatever the current `flake.lock` pins, a
 | fastfetch | `homeManager.cli` | `fastfetch` | no | Package | None |
 | tmux | `homeManager.cli` | `tmux` | no | `programs.tmux`, with mouse support and 50 000 lines of history; keeps shells and long runs alive when a terminal closes (`Ctrl+b d` detaches, `tmux attach` returns) | None |
 | ncdu | `homeManager.cli` | `ncdu` | no | Package; shows what takes space in a folder such as `~/scratch` | None |
+| Baobab (Disk Usage Analyzer) | `homeManager.cli` | `baobab` | no | Package; the graphical counterpart of ncdu | None |
 | pi (coding agent) | `homeManager.pi` | `pi-coding-agent` from nixos-unstable | no | Only as the sandboxed launcher `pi`; version check off, `pi update` points to Nix; instructions, settings and five extensions declared read-only (see [MIMIR-VM.md](MIMIR-VM.md#pi)) | Logins, sessions |
 | Raspberry Pi Imager | `homeManager.rpi` | `rpi-imager` | no | Package | Settings |
 
