@@ -45,6 +45,14 @@ in
       # Leave queue slots for other sandboxes, and keep an ordinary job within two processors
       maxSlots = 2;
       jobProcessors = 2;
+      # An acceptance run unpacks the tested commit and its history into the job's /tmp, which is memory
+      # pyFiDiM needs 1137 MiB there (576 history, 561 files, measured 2026-11-16); the default of 1024 refuses it
+      tmpfsMiB = {
+        tmp = 2048;
+        home = 1024;
+        run = 64;
+        shm = 1024;
+      };
       # Performance cores 0 and 1 with both threads for timing jobs; the other six performance cores and the twelve efficiency cores for the rest
       timingCpus = "0-3";
       workCpus = "4-27";

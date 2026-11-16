@@ -286,7 +286,7 @@ All of them are options of `hostSpec.workers`, set in one block of the host's fi
 | `maxRequests` | Requests of one sandbox waiting or running | 8 | |
 | `maxRunSeconds` | Seconds a job of a mode may run; 0 is no limit | 0, 0, 0 | |
 | `timingCpus`, `workCpus` | The timing cores and all others | 0-3, 4-27 | |
-| `tmpfsMiB` | `/tmp`, home, `/run` and `/dev/shm` of a sandbox, in MiB | 1024, 1024, 64, 1024 | |
+| `tmpfsMiB` | `/tmp`, home, `/run` and `/dev/shm` of a sandbox, in MiB. An acceptance run needs room in `/tmp` for the tested commit's history and its files together | 2048, 1024, 64, 1024 (default 1024 for `/tmp`) | |
 | `folderQuota`, `areaQuota`, `instructionsQuota` | One worker's folder, one scratch area, a project's task files | 10G, 50G, 1G | `sudo zfs set quota=<size> <dataset>`, for one that exists |
 | `holdDays` | Days a removed worker's folder is kept | 14 | |
 | `foundLargeMiB` | Above this size `workers found` leaves an untracked file out | 10 | |
