@@ -208,6 +208,8 @@
         assert !user.programs.direnv.enable;
         assert lib.hasSuffix "@users.noreply.github.com" user.programs.git.settings.user.email;
         assert (cfg.environment.sessionVariables.NIXOS_OZONE_WL or null) == "1";
+        # GTK and Firefox-based programs ask the desktop for its file dialog, so that Plasma's is shown
+        assert (cfg.environment.sessionVariables.GTK_USE_PORTAL or null) == "1";
         # Login shells must load Home Manager's session variables, such as EDITOR
         assert lib.hasInfix "hm-session-vars.sh" cfg.environment.extraInit;
         # Brave's generated policy files: telemetry, AI and paid features off, Bitwarden force-installed

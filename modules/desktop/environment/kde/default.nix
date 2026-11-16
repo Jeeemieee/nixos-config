@@ -18,5 +18,9 @@
 
     # Run Electron and Chromium applications natively on Wayland instead of through XWayland
     environment.sessionVariables.NIXOS_OZONE_WL = "1";
+
+    # GTK and Firefox-based programs ask the desktop for its file dialog, so that they show Plasma's, with its path bar and places
+    # A program that builds its own dialog (GIMP, Blender) keeps it
+    environment.sessionVariables.GTK_USE_PORTAL = "1";
   };
 }

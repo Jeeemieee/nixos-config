@@ -54,6 +54,8 @@ VSCodium (`homeManager.vscode`, `vscodium`) is described in [MIMIR-VM.md](MIMIR-
 
 `nixos.desktop-kde` sets `NIXOS_OZONE_WL=1`, so the Electron and Chromium apps (VSCodium, Brave, Obsidian, Discord, Bitwarden, Spotify, Teams) run natively on Wayland.
 
+It also sets `GTK_USE_PORTAL=1`: a GTK or Firefox-based program that asks for the standard file dialog gets Plasma's, the one with the path bar and your places. Seen to work with Zotero. A program that builds its own dialog keeps it: GIMP (seen), Blender. In GIMP's dialog `Ctrl+L` shows a field for a path.
+
 ## Services
 
 System services come from NixOS modules in `modules/services/`, imported by the workstation profile (`modules/profiles/workstation.nix`); the backup only by the laptop.
