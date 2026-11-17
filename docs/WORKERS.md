@@ -162,9 +162,9 @@ workers status --json    # the same as one document, which the live overview rea
 workers watch            # the live overview in the terminal; it only displays, and q ends it
 ```
 
-The document's form is `workers-dashboard/SCHEMA.md`. The overview makes one block per project: managers first in name order, then each side branch with its implementers, its reviewers and its deep reviewers. A reviewer appears once under its branch and names every implementer it reviews. Ordinary sessions share one final block. A project without a manager is shown in the same form without a manager row.
+The document's form is `workers-dashboard/SCHEMA.md`. The overview makes one block per project. Managers are indented two spaces below the project; each side branch is indented two spaces and its implementers, reviewers and deep reviewers four. One blank line separates branches and two separate projects. Names receive room before optional measurements, roles are written in full, and a long item in work uses at most two lines. A reviewer appears once under its branch and names every implementer it reviews. Ordinary sessions share one final block. A project without a manager is shown in the same form without a manager row.
 
-A worker's detail names the paths supplied by the status command for its copy, reports, records, task file and scratch area. The overview does not construct paths. An ordinary session has no worker folder; its detail says so, and still names its run records and scratch area when they are known.
+A worker's detail names the paths supplied by the status command for its copy, reports, records, task file and scratch area. It remains a separate view: opening the full detail below a selected row would displace the surrounding branches in a busy overview, especially when work already wraps. The overview does not construct paths. An ordinary session has no worker folder; its detail says so, and still names its run records and scratch area when they are known. Resource meters appear only from 70% of a known limit; lower values are plain figures. Yellow means warning and red means trouble. Magenta is reserved for a future `needs you` state, which the current document cannot report.
 
 **Every value says where it comes from,** and an agent's own words stand apart:
 

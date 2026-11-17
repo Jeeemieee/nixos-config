@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -109,10 +110,12 @@ def test_dashboard(binary, commanded):
     frame = overview.stdout
     positions = {name: frame.find(name) for name in ("ma", "mb", "i1", "i2", "r1", "d1", "ib", "iz", "101", "202")}
     order = [positions[name] for name in ("ma", "mb", "i1", "i2", "r1", "d1", "ib", "iz", "101", "202")]
-    passed &= check(all(position >= 0 for position in order) and order == sorted(order) and frame.count("\n  r1      rev") == 1,
+    passed &= check(all(position >= 0 for position in order) and order == sorted(order)
+                    and len(re.findall(r"^    r1\s+reviewer\s", frame, re.MULTILINE)) == 1,
                     "R4 managers are ordered by name and a multi-implementer reviewer appears once under its branch",
                     repr(positions))
-    passed &= check("Ordinary sessions" in frame and frame.count("alpha / ") >= 3,
+    passed &= check("Ordinary sessions" in frame and frame.count("PROJECT alpha") == 1
+                    and "\n  a\n" in frame and "\n  b\n" in frame,
                     "R4 the overview labels one ordinary-session block and keeps alpha's branches in one project block")
 
     implementer = run_frame(binary, document, detail=2).stdout

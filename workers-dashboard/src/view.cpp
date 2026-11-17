@@ -29,7 +29,6 @@ constexpr double towardsLimit = 0.7;
 constexpr double nearLimit = 0.9;
 
 constexpr const char* roleNames[] = {"implementer", "reviewer", "deep-reviewer", "manager", "plain"};
-constexpr const char* roleShortNames[] = {"impl", "rev", "deep", "mgr", "plain"};
 constexpr const char* stateNames[] = {"planned", "approved", "implementing", "ready for review",
                                       "reviewed", "merged", "removable", "idle"};
 
@@ -121,20 +120,6 @@ struct Canvas {
     return (isOwnWords(source) && !colour) ? ("~" + value) : value;
   }
 
-  Decorator stateLook(const std::string& state) const {
-    static const std::pair<const char*, Color> shades[] = {
-        {"planned", Color::Blue},        {"approved", Color::Cyan},  {"implementing", Color::Yellow},
-        {"ready for review", Color::Magenta}, {"reviewed", Color::Green}, {"merged", Color::GreenLight},
-        {"removable", Color::GrayDark},
-    };
-    for (const auto& [name, shade] : shades) {
-      if (state == name) {
-        return tint(shade);
-      }
-    }
-    return ftxui::nothing;
-  }
-
   // Colour only where it points at something: from 70 % of a limit
   Decorator levelLook(double share) const {
     if (share >= nearLimit) {
@@ -146,9 +131,6 @@ struct Canvas {
   Decorator testLook(const std::string& value) const {
     if (value == "failed") {
       return tint(Color::Red) | ftxui::bold;
-    }
-    if (value == "passed") {
-      return tint(Color::Green);
     }
     return lookIf(value == "stale", tint(Color::Yellow));
   }
@@ -218,9 +200,9 @@ Level levelOf(const Amount& amount) {
   return levelOf(amount.used, amount.limit, amount.peak);
 }
 
-// A bar of a fixed number of cells: full for now, shaded up to the highest value, dots up to the limit
+// A meter is useful only when it calls attention to a limit; ordinary values stay as plain figures
 Pieces bar(const Canvas& canvas, int cells, const Level& level) {
-  if (!level.known) {
+  if (!level.known || (level.peak < towardsLimit)) {
     return {{fitText("", cells)}};
   }
   const int now = static_cast<int>(std::lround(level.used * cells));
@@ -228,12 +210,57 @@ Pieces bar(const Canvas& canvas, int cells, const Level& level) {
   return {
       {repeated("█", now), canvas.levelLook(level.used)},
       {repeated("▒", highest - now), canvas.levelLook(level.peak)},
-      {repeated("·", cells - highest), ftxui::dim},
+      {fitText("", cells - highest)},
   };
 }
 
 bool isNearLimit(const Level& level) {
   return level.known && (level.peak >= nearLimit);
+}
+
+// Wraps cleaned text at words, with the last allowed line carrying the cut mark when more remains
+std::vector<std::string> wrapText(const std::string& text, int width, int mostLines) {
+  if (text.empty() || (width <= 0) || (mostLines <= 0)) {
+    return {""};
+  }
+  std::vector<std::string> lines;
+  std::string left = text;
+  while (!left.empty() && (static_cast<int>(lines.size()) < mostLines)) {
+    const bool last = (static_cast<int>(lines.size()) == (mostLines - 1));
+    if (textWidth(left) <= width) {
+      lines.push_back(left);
+      left.clear();
+      break;
+    }
+    if (last) {
+      lines.push_back(cutText(left, width));
+      left.clear();
+      break;
+    }
+
+    // Find the longest UTF-8 prefix that fits, then prefer the last whole word in it
+    std::size_t end = 0;
+    for (std::size_t next = 1; next <= left.size(); ++next) {
+      if ((next < left.size()) && ((static_cast<unsigned char>(left[next]) & 0xC0U) == 0x80U)) {
+        continue;
+      }
+      if (textWidth(std::string_view(left).substr(0, next)) > width) {
+        break;
+      }
+      end = next;
+    }
+    if (end == 0) {
+      lines.push_back(cutText(left, width));
+      left.clear();
+      break;
+    }
+    const std::size_t space = left.rfind(' ', end - 1);
+    const std::size_t taken = (space == std::string::npos) ? end : space;
+    lines.push_back(left.substr(0, taken));
+    left.erase(0, (space == std::string::npos) ? end : (space + 1));
+    left.erase(0, left.find_first_not_of(' '));
+  }
+  return lines.empty() ? std::vector<std::string>{""} : lines;
 }
 
 std::string workerKey(const Worker& worker) {
@@ -243,11 +270,6 @@ std::string workerKey(const Worker& worker) {
 template <std::size_t Size>
 std::size_t rankIn(const char* const (&names)[Size], const std::string& value) {
   return static_cast<std::size_t>(std::find(std::begin(names), std::end(names), value) - std::begin(names));
-}
-
-std::string shortRole(const std::string& role) {
-  const std::size_t rank = rankIn(roleNames, role);
-  return (rank < std::size(roleShortNames)) ? roleShortNames[rank] : role;
 }
 
 const std::string& filterField(const Worker& worker, std::size_t filter) {
@@ -524,60 +546,64 @@ void addNotices(Elements& lines, const Canvas& canvas, const Snapshot& snapshot,
 
 enum class Field { Name, Role, State, Steps, Todo, Changed, Tests, Reviews, Memory, Cpu, Folder, Scratch };
 
-// A column of the list. When the to-do item needs room, the columns give way in the order of their step:
-// to their narrow width and head, or altogether when they have none
+// A column of the list. Optional columns give way in step order; names, roles, states and work stay
 struct Column {
   Field field;
   const char* head;
   int width;
   int step = 0;
-  int narrow = 0;
-  const char* narrowHead = "";
 };
 
+constexpr int hierarchyWidth = 4;
 constexpr int memoryBar = 6;
-constexpr int stepBar = 5;
 constexpr int diskBar = 4;
+constexpr int longestName = 24;
+constexpr int roleWidth = 13;
+constexpr int todoLines = 2;
 
-// The cells left for the to-do item: the width without the mark, the other columns and the gaps
+bool isDirectWorker(const Worker& worker) {
+  return (worker.role == "manager") || (worker.role == "plain");
+}
+
+int nameWidthFor(const Document& document, const std::vector<std::size_t>& order) {
+  int wanted = 8;
+  for (const std::size_t index : order) {
+    const Worker& worker = document.workers[index];
+    const int allowance = isDirectWorker(worker) ? 2 : 0;
+    wanted = std::max(wanted, textWidth(worker.name) - allowance);
+  }
+  return std::clamp(wanted, 8, longestName);
+}
+
+// The cells left for the to-do item: the width without the hierarchy, the other columns and their gaps
 int todoWidth(const std::vector<Column>& columns, int width, int gap) {
-  int fixed = 2 + (static_cast<int>(columns.size()) - 1) * gap;
+  int fixed = hierarchyWidth + (static_cast<int>(columns.size()) - 1) * gap;
   for (const Column& column : columns) {
     fixed += column.width;
   }
   return std::max(1, width - fixed);
 }
 
-std::vector<Column> columnsFor(int width) {
+std::vector<Column> columnsFor(int width, int nameWidth) {
   std::vector<Column> columns = {
-      {Field::Name, "NAME", 6},
-      {Field::Role, "ROLE", 5},
+      {Field::Name, "NAME", nameWidth},
+      {Field::Role, "ROLE", roleWidth},
       {Field::State, "STATE", 18},
-      {Field::Steps, "STEPS", 7 + stepBar, 5, 6, "STEPS"},
+      {Field::Steps, "STEPS", 7, 8},
       {Field::Todo, "IN WORK", 0},
-      {Field::Changed, "CHANGED", 7, 4},
-      {Field::Tests, "TESTS", 6},
-      {Field::Reviews, "REVIEWS", 9, 6},
-      {Field::Memory, "MEM GiB now peak", memoryBar + 13, 3, memoryBar + 3, "MEMORY"},
-      {Field::Cpu, " CPU", 4, 2},
-      {Field::Folder, "FOLDER GiB", diskBar + 6, 1},
+      {Field::Changed, "CHANGED", 7, 6},
+      {Field::Tests, "TESTS", 6, 7},
+      {Field::Reviews, "REVIEWS", 9, 5},
+      {Field::Memory, "MEM GiB now peak", memoryBar + 13, 4},
+      {Field::Cpu, "CPU", 4, 3},
+      {Field::Folder, "FOLDER GiB", diskBar + 6, 2},
       {Field::Scratch, "SCRATCH", diskBar + 6, 1},
   };
-  // The to-do item is what the row is read for: 50 cells at 160 columns, and never less than 20
+  // Names and roles keep their room first; work gets enough room to read across two bounded lines
   const int gap = (width >= roomyWidth) ? 2 : 1;
-  const int wanted = (width >= 160) ? 50 : ((width >= roomyWidth) ? 40 : 20);
-  for (int step = 1; (step <= 6) && (todoWidth(columns, width, gap) < wanted); ++step) {
-    for (auto column = columns.begin(); column != columns.end();) {
-      if (column->step != step) {
-        ++column;
-      } else if (column->narrow == 0) {
-        column = columns.erase(column);
-      } else {
-        column->width = column->narrow;
-        column->head = column->narrowHead;
-        ++column;
-      }
-    }
+  const int wanted = (width >= 160) ? 50 : ((width >= roomyWidth) ? 40 : 18);
+  for (int step = 1; (step <= 8) && (todoWidth(columns, width, gap) < wanted); ++step) {
+    std::erase_if(columns, [step](const Column& column) { return column.step == step; });
   }
   return columns;
 }
@@ -607,25 +633,17 @@ Pieces cellOf(const Canvas& canvas, const Worker& worker, Field field, int width
     case Field::Name:
       return {{fitText(worker.name, width)}};
     case Field::Role:
-      return {{fitText(shortRole(worker.role), width)}};
+      return {{fitText(worker.role, width)}};
     case Field::State: {
       const std::string mark = worker.running ? (*worker.running ? "▶ " : "  ") : "? ";
-      return {{mark + fitText(canvas.marked(worker.state, worker.stateSource), width - 2),
-               canvas.stateLook(worker.state)}};
+      return {{mark + fitText(canvas.marked(worker.state, worker.stateSource), width - 2)}};
     }
-    case Field::Steps: {
-      if (!steps.done && !steps.total) {
-        return {{fitText("", width)}};
-      }
-      Pieces pieces = {{fitText(canvas.marked(count(steps.done) + "/" + count(steps.total), steps.source), 6, true),
-                        canvas.lookOf(steps.source)}};
-      if (width > 6) {
-        pieces.push_back({" "});
-        const Pieces progress = bar(canvas, stepBar, levelOf(steps.done, steps.total));
-        pieces.insert(pieces.end(), progress.begin(), progress.end());
-      }
-      return pieces;
-    }
+    case Field::Steps:
+      return {{fitText((steps.done || steps.total)
+                           ? canvas.marked(count(steps.done) + "/" + count(steps.total), steps.source)
+                           : "",
+                       width, true),
+               canvas.lookOf(steps.source)}};
     case Field::Todo:
       return {{fitText(steps.current ? canvas.marked(*steps.current, steps.source) : "", width),
                canvas.lookOf(steps.source)}};
@@ -677,14 +695,18 @@ void addOverview(Elements& lines, const Canvas& canvas, ViewState& state, const 
   const Document& document = canvas.document;
   const int width = canvas.width;
   const int gap = (width >= roomyWidth) ? 2 : 1;
-  const std::vector<Column> columns = columnsFor(width);
+  const int nameWidth = nameWidthFor(document, order);
+  const std::vector<Column> columns = columnsFor(width, nameWidth);
   const auto widthOf = [&](const Column& column) {
     return (column.width > 0) ? column.width : todoWidth(columns, width, gap);
   };
+  const auto todoColumn = std::find_if(columns.begin(), columns.end(),
+                                       [](const Column& column) { return column.field == Field::Todo; });
+  const int todoCellWidth = widthOf(*todoColumn);
 
-  // Step 1. The heads of the columns; figures stand at the right, and so do their heads
+  // Step 1. The heads align with branch workers, while managers use the two spare hierarchy cells for their names
   LineBuilder heads;
-  heads.add("  ");
+  heads.add(std::string(static_cast<std::size_t>(hierarchyWidth), ' '));
   for (const Column& column : columns) {
     const bool right = (column.field == Field::Changed) || (column.field == Field::Cpu);
     heads.cell(column.head, widthOf(column), right).add(std::string(static_cast<std::size_t>(gap), ' '));
@@ -695,12 +717,12 @@ void addOverview(Elements& lines, const Canvas& canvas, ViewState& state, const 
     return;
   }
 
-  // Step 2. One block per project, with branch headings inside it; ordinary sessions share the last block
-  // The air goes when the whole list does not fit with it
+  // Step 2. Projects keep two blank lines between them; branches and the managers above them keep one
   enum class Kind { Air, Project, Branch, Ordinary, Worker };
   struct Row {
     Kind kind;
     std::size_t position;
+    int continuation = 0;
   };
   std::vector<Row> rows;
   bool ordinaryStarted = false;
@@ -708,58 +730,108 @@ void addOverview(Elements& lines, const Canvas& canvas, ViewState& state, const 
     const Worker& worker = document.workers[order[position]];
     const Worker* previous = (position > 0) ? &document.workers[order[position - 1]] : nullptr;
     const bool ordinary = (worker.role == "plain");
-    if (ordinary && !ordinaryStarted) {
-      rows.push_back({Kind::Air, position});
-      rows.push_back({Kind::Ordinary, position});
-      ordinaryStarted = true;
-    } else if (!ordinary && ((previous == nullptr) || (previous->role == "plain") ||
-                             (previous->project != worker.project))) {
-      rows.push_back({Kind::Air, position});
+    const bool newProject = !ordinary && ((previous == nullptr) || (previous->role == "plain") ||
+                                           (previous->project != worker.project));
+    if (ordinary) {
+      if (!ordinaryStarted) {
+        if (!rows.empty()) {
+          rows.push_back({Kind::Air, position});
+          rows.push_back({Kind::Air, position});
+        }
+        rows.push_back({Kind::Ordinary, position});
+        ordinaryStarted = true;
+      }
+      const bool newOrdinaryProject = (previous == nullptr) || (previous->role != "plain") ||
+                                      (previous->project != worker.project);
+      if (newOrdinaryProject) {
+        if ((previous != nullptr) && (previous->role == "plain")) {
+          rows.push_back({Kind::Air, position});
+        }
+        rows.push_back({Kind::Branch, position});
+      }
+    } else if (newProject) {
+      if (!rows.empty()) {
+        rows.push_back({Kind::Air, position});
+        rows.push_back({Kind::Air, position});
+      }
       rows.push_back({Kind::Project, position});
+    } else if ((worker.role != "manager") &&
+               ((previous->role == "manager") || (previous->branch != worker.branch))) {
+      rows.push_back({Kind::Air, position});
     }
-    if ((previous == nullptr) || (previous->project != worker.project) || (previous->branch != worker.branch)) {
+    if (!ordinary && (worker.role != "manager") &&
+        (newProject || (previous->role == "manager") || (previous->branch != worker.branch))) {
       rows.push_back({Kind::Branch, position});
     }
-    rows.push_back({Kind::Worker, position});
+
+    const std::string todo = worker.steps.current
+                                 ? canvas.marked(*worker.steps.current, worker.steps.source)
+                                 : "";
+    const std::vector<std::string> wrapped = wrapText(todo, todoCellWidth, todoLines);
+    for (std::size_t line = 0; line < wrapped.size(); ++line) {
+      rows.push_back({Kind::Worker, position, static_cast<int>(line)});
+    }
+  }
+  const Worker& lastWorker = document.workers[order.back()];
+  if (lastWorker.role != "manager") {
+    rows.push_back({Kind::Air, order.size() - 1});
   }
   const int room = std::max(1, height - static_cast<int>(lines.size()));
-  if (static_cast<int>(rows.size()) > room) {
-    std::erase_if(rows, [](const Row& row) { return row.kind == Kind::Air; });
-  }
-  if (static_cast<int>(rows.size()) > room) {
-    std::erase_if(rows, [](const Row& row) { return (row.kind == Kind::Project) || (row.kind == Kind::Ordinary); });
-  }
   const auto selectedAt = std::find_if(rows.begin(), rows.end(), [&](const Row& row) {
-    return (row.kind == Kind::Worker) && (static_cast<int>(row.position) == state.selected);
+    return (row.kind == Kind::Worker) && (row.continuation == 0) &&
+           (static_cast<int>(row.position) == state.selected);
   });
   const int selectedRow = static_cast<int>(selectedAt - rows.begin());
 
-  // Step 3. Scroll so that the selected row and the name of its group stay in sight
+  // Step 3. Scroll through physical lines, including wrapped work, without dropping the hierarchy or its air
   const int total = static_cast<int>(rows.size());
   state.scroll = std::min(state.scroll, std::max(0, selectedRow - 1));
   state.scroll = std::max(state.scroll, selectedRow - room + 1);
   state.scroll = std::clamp(state.scroll, 0, std::max(0, total - room));
 
-  // Step 4. Draw only the rows in sight, so that a frame costs the same for 30 and for 300 workers
+  // Step 4. Draw only the lines in sight; every document string was cleaned by the reader before it reached here
   for (int index = state.scroll; (index < total) && (index < (state.scroll + room)); ++index) {
     const Row& row = rows[static_cast<std::size_t>(index)];
     const Worker& worker = document.workers[order[row.position]];
     if (row.kind == Kind::Air) {
       lines.push_back(ftxui::text(""));
     } else if (row.kind == Kind::Project) {
-      lines.push_back(LineBuilder().add("  PROJECT " + worker.project).build(width, ftxui::bold));
+      lines.push_back(LineBuilder().add("PROJECT " + worker.project).build(width, ftxui::bold));
     } else if (row.kind == Kind::Ordinary) {
-      lines.push_back(LineBuilder().add("  Ordinary sessions").build(width, ftxui::bold));
+      lines.push_back(LineBuilder().add("Ordinary sessions").build(width, ftxui::bold));
     } else if (row.kind == Kind::Branch) {
-      lines.push_back(LineBuilder().add("  " + worker.project + " / " + worker.branch).build(width, ftxui::bold));
+      lines.push_back(LineBuilder().add("  " + ((worker.role == "plain") ? worker.project : worker.branch))
+                          .build(width, ftxui::bold));
     } else {
-      // The mark shows the selection where there is no colour
       const bool selected = (static_cast<int>(row.position) == state.selected);
+      const int indent = isDirectWorker(worker) ? 2 : hierarchyWidth;
+      const int workerNameWidth = nameWidth + hierarchyWidth - indent;
+      const std::string todo = worker.steps.current
+                                   ? canvas.marked(*worker.steps.current, worker.steps.source)
+                                   : "";
+      const std::vector<std::string> wrapped = wrapText(todo, todoCellWidth, todoLines);
       LineBuilder line;
-      line.add(selected ? "> " : "  ");
+      line.add((selected && (row.continuation == 0)) ? "> " : "  ");
+      line.add(std::string(static_cast<std::size_t>(indent - 2), ' '));
       for (const Column& column : columns) {
-        const int end = line.used() + widthOf(column);
-        line.add(cellOf(canvas, worker, column.field, widthOf(column))).padTo(end + gap);
+        const int cellWidth = (column.field == Field::Name) ? workerNameWidth : widthOf(column);
+        const int end = line.used() + cellWidth;
+        if (column.field == Field::Name) {
+          if (row.continuation == 0) {
+            line.add(cellOf(canvas, worker, column.field, cellWidth));
+          } else {
+            line.cell("", cellWidth);
+          }
+        } else if (column.field == Field::Todo) {
+          const std::size_t wrappedLine = static_cast<std::size_t>(row.continuation);
+          line.add(Pieces{{fitText((wrappedLine < wrapped.size()) ? wrapped[wrappedLine] : "", cellWidth),
+                           canvas.lookOf(worker.steps.source)}});
+        } else if (row.continuation == 0) {
+          line.add(cellOf(canvas, worker, column.field, cellWidth));
+        } else {
+          line.cell("", cellWidth);
+        }
+        line.padTo(end + gap);
       }
       lines.push_back(line.cut(width).padTo(width).build(width, lookIf(selected, ftxui::inverted)));
     }
@@ -804,8 +876,7 @@ Lines agentBlock(const Canvas& canvas, const Worker& worker) {
   if (!steps.done && !steps.total && !steps.current && steps.items.empty()) {
     lines.push_back(head.add("–", ftxui::dim));
   } else {
-    addOwnWords(head, canvas, count(steps.done) + " of " + count(steps.total), steps.source).add("  ");
-    head.add(bar(canvas, detailBar, levelOf(steps.done, steps.total)));
+    addOwnWords(head, canvas, count(steps.done) + " of " + count(steps.total), steps.source);
     const std::string changed = age(canvas, steps.changed, true);
     head.add(changed.empty() ? "" : ("   changed " + changed + " ago"));
     // The title says claimed; any other source of the list is named
@@ -1055,7 +1126,7 @@ void addDetail(Elements& lines, const Canvas& canvas, const Worker& worker, View
   title.add("  " + worker.project + " / " + worker.branch + " / " + worker.name + "     " + worker.role + "     ",
             ftxui::bold);
   title.add((worker.running.value_or(false) ? "▶ " : "") + canvas.marked(worker.state, worker.stateSource),
-            canvas.stateLook(worker.state) | ftxui::bold);
+            ftxui::bold);
   if (Canvas::isOwnWords(worker.stateSource)) {
     title.add(" (" + sourceName(worker.stateSource) + ")", ftxui::dim);
   }
@@ -1125,7 +1196,10 @@ void addHelp(Elements& lines, const Canvas& canvas) {
       {"MARKS", ""},
       {"▶", "the worker's sandbox runs"},
       {"dim italic, ~", "the agent's own words, claimed or self-reported: never a measured value; ~ without colour"},
-      {"█ ▒ ·", "now, up to the highest value, up to the limit; yellow from 70 % of the limit, red from 90 %"},
+      {"█ ▒", "a limit meter appears from 70 %: now, then up to the peak"},
+      {"yellow", "yellow means warning: nearing a limit, stale evidence, or an outdated result"},
+      {"red", "red means trouble: a failure, a memory stop, an unreadable source, or 90 % of a limit"},
+      {"magenta", "reserved for a future needs you state; the current document has no such signal"},
       {"!", "the highest value reached 90 % of its limit"},
       {"✕2", "stopped for memory twice"},
       {"–", "nothing yet: no test run, no review, or not known"},

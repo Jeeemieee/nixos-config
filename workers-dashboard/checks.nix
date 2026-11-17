@@ -48,7 +48,7 @@ in
         ## Step 1. T1: both builds exist, so they compiled with warnings as errors; the scripts have no unused names
         expect "T1 the normal build runs" "$(${normal}/bin/workers-watch --help | head -n 1)" "workers-watch: the live overview of the workers. It only displays."
         expect "T1 the sanitized build runs" "$(${sanitized}/bin/workers-watch --help | head -n 1)" "workers-watch: the live overview of the workers. It only displays."
-        pyflakes ${tests}/tests/run.py ${tests}/tests/round4.py ${tests}/tests/measure.py ${tests}/tools/generate.py
+        pyflakes ${tests}/tests/run.py ${tests}/tests/round4.py ${tests}/tests/round5.py ${tests}/tests/measure.py ${tests}/tools/generate.py
 
         ## Step 2. The sample in the repository is what the generator writes: it has not drifted from it
         expect "the sample is the generator's" "$(python3 ${tests}/tools/generate.py --stdout | cmp -s - ${tests}/samples/normal.json && echo same || echo different)" same
@@ -63,6 +63,9 @@ in
         python3 work/tests/round4.py --normal ${normal}/bin/workers-watch --commanded ${commanded}/bin/workers-watch \
           --status ${../workers/status.py} --sample-session ${../workers/sample-session.jsonl} --git ${pkgs.git}/bin/git \
           | tee round4-results.txt || failed=1
+
+        ## Step 5. The hierarchy, wrapping and semantic palette of round 5
+        python3 work/tests/round5.py --normal ${normal}/bin/workers-watch | tee round5-results.txt || failed=1
 
         [ "$failed" = 0 ] || exit 1
         mkdir -p "$out" && cp results.txt "$out/"

@@ -37,7 +37,6 @@ ENVIRONMENT = dict(
 )
 SANITIZER_WORDS = re.compile(rb"AddressSanitizer|LeakSanitizer|UndefinedBehaviorSanitizer|runtime error:|==ERROR")
 ESCAPE_SEQUENCE = re.compile(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[^\[\]]")
-SHORT_ROLES = {"implementer": "impl", "reviewer": "rev", "deep-reviewer": "deep", "manager": "mgr", "plain": "plain"}
 
 # Clears the screen, sets the window title, starts a hyperlink; then a C1 control, a carriage return, a backspace
 # and a direction override. MARK and the words stay readable when the controls are replaced
@@ -196,28 +195,67 @@ def amountMatches(frame, title, label, amount):
     return unit in names and figuresMatch(rows.get(label, []), values, 1024 ** names.index(unit))
 
 
-def rowsByWorker(frame):
-    """The row of every worker in a frame, found through the names of the groups: (project, branch, name) -> line."""
+def rowsByWorker(document, frame):
+    """The row and continuations of every worker: (project, branch, name) -> text."""
     rows = {}
-    group = None
+    project = None
+    branch = None
+    ordinary = False
+    current = None
+    names = {}
+    for worker in document["workers"]:
+        names.setdefault((worker["project"], worker["branch"]), set()).add(worker["name"])
     for line in frame.splitlines():
-        match = re.match(r"  (\S+) / (\S+)$", line)
-        if match:
-            group = match.groups()
-        elif group and re.match(r"[> ] \S", line):
-            rows[group + (line[2:].split()[0],)] = line
+        if line.startswith("PROJECT "):
+            project = line.removeprefix("PROJECT ")
+            branch = "manager"
+            ordinary = False
+            current = None
+            continue
+        if line == "Ordinary sessions":
+            project = None
+            branch = None
+            ordinary = True
+            current = None
+            continue
+        heading = re.match(r"  (\S+)$", line)
+        if heading:
+            if ordinary:
+                project = heading.group(1)
+                branch = None
+            else:
+                branch = heading.group(1)
+            current = None
+            continue
+        if project and (branch or ordinary) and line.strip():
+            content = line[2:] if line.startswith("> ") else line
+            token = content.lstrip().split(maxsplit=1)[0] if content.lstrip() else ""
+            if ordinary:
+                matches = [worker for worker in document["workers"]
+                           if worker["role"] == "plain" and worker["project"] == project
+                           and worker["name"] == token]
+                key = (project, matches[0]["branch"], token) if len(matches) == 1 else None
+            else:
+                key = (project, branch, token)
+            if key and token in names.get(key[:2], set()):
+                rows[key] = line
+                current = key
+            elif current:
+                rows[current] += " " + line.strip()
+        elif not line.strip():
+            current = None
     return rows
 
 
 def checkOverview(name, document, frame, width):
-    rows = rowsByWorker(frame)
+    rows = rowsByWorker(document, frame)
     missing = []
     for worker in document["workers"]:
         key = (worker["project"], worker["branch"], worker["name"])
         line = rows.get(key, "")
         # The mark of a running sandbox stands before the state; a sandbox that does not run has none
         running = "▶ " if worker["running"]["value"] else "  "
-        wanted = rf"^[> ] {re.escape(worker['name'])}\s+{SHORT_ROLES[worker['role']]}\s+{running}{worker['state']['value']}\s"
+        wanted = rf"^(?:> |  )(?:  )?{re.escape(worker['name'])}\s+{worker['role']}\s+{running}{worker['state']['value']}\s"
         if not re.search(wanted, line):
             missing.append("/".join(key) + " name, role, state, running mark")
             continue
@@ -267,7 +305,8 @@ def testT2(binary, label):
           str(headerTable(frame, "DISK")))
     heads = next((line for line in lines if "IN WORK" in line and "CHANGED" in line), "")
     todo = heads.find("CHANGED") - 2 - heads.find("IN WORK")
-    check(f"T2 {label}: the to-do column has at least 50 characters at 160 columns", todo >= 50, f"{todo}")
+    check(f"T2 {label}: the to-do column keeps at least 36 characters after names and full roles at 160 columns",
+          todo >= 36, f"{todo}")
 
     # The detail of one worker: the whole to-do list with the step in work marked
     order = sorted(workers, key=lambda w: (w["project"], w["branch"], w["name"]))
@@ -295,7 +334,12 @@ def testT3(binary, label):
     longest = max(len(line) for line in lines)
     check(f"T3 {label}: no line is longer than 80, and there are 24 lines", longest <= 80 and len(lines) == 24,
           f"longest {longest}, lines {len(lines)}")
-    checkOverview(f"T3 {label}", document, frame, 80)
+    rows = rowsByWorker(document, frame)
+    first = next(worker for worker in document["workers"]
+                 if worker["project"] == "alpha" and worker["branch"] == "mesh" and worker["name"] == "i1")
+    row = rows.get((first["project"], first["branch"], first["name"]), "")
+    check(f"T3 {label}: the selected worker keeps its name, full role and state while the hierarchy scrolls",
+          re.search(r"^>   i1\s+implementer\s+  planned\s", row) is not None, row)
 
 
 #### T4: documents that are wrong or hostile
@@ -389,7 +433,8 @@ def testT4(binary, scratch):
         ("a nesting depth of 10 000, arrays", deepList, [r"Unreadable: the document is an array, expected an object"]),
         ("a nesting depth of 10 000, inside a field", deepValue, [r"nested deeper than 32 levels"]),
         ("a string of 1 MB as a claim", json.dumps(replaced(sample, "workers[0].claim.value", megabyte)), ["alpha"]),
-        ("a string of 1 MB as a to-do item", json.dumps(replaced(sample, "workers[0].steps.current", megabyte)), [r"~x{20,}…"]),
+        ("a string of 1 MB as a to-do item", json.dumps(replaced(sample, "workers[0].steps.current", megabyte)),
+         [r"~x{20,}", r"x{20,}…"]),
         ("a string of 1 MB as a name", json.dumps(replaced(sample, "workers[0].name", megabyte)), [r"xxxx…"]),
         ("a string of 1 MB as the whole document", json.dumps(megabyte), [r"Unreadable: the document is a string, expected an object"]),
         ("invalid UTF-8", text.encode().replace(b"alpha", b"al\xff\xfepha", 1), [r"Unreadable: the document is not valid JSON.*UTF-8"]),
@@ -537,13 +582,13 @@ def liveSession(binary, path, name):
     seen["clear the filters"] = terminal.waitFor("sorted by state · " + origin, 5, mark) is not None
     mark = len(terminal.output)
     terminal.resize(80, 24)
-    seen["resize to 80 by 24"] = terminal.waitFor("MEMORY", 5, mark) is not None
+    seen["resize to 80 by 24"] = terminal.waitFor("Memory", 5, mark) is not None
     mark = len(terminal.output)
     terminal.resize(60, 20)
     seen["resize below the smallest"] = terminal.waitFor("needs a window of 80 by 24", 5, mark) is not None
     mark = len(terminal.output)
     terminal.resize(200, 60)
-    seen["resize to 200 by 60"] = terminal.waitFor("SCRATCH", 5, mark) is not None
+    seen["resize to 200 by 60"] = terminal.waitFor("FOLDER", 5, mark) is not None
     terminal.send("\x1b[6~\x1b[5~\x1b[F\x1b[H\r")
     status = terminal.close()
     report = SANITIZER_WORDS.search(terminal.output)
@@ -711,7 +756,8 @@ def testT7(normal, commanded, scratch):
           calls & imported(commanded) == {"posix_spawn"}, str(calls & imported(commanded)))
     status, frame, raw, errors = once(commanded, None)
     check("T7 the build with a command shows the document that the command printed",
-          cleanRun("T7 the build with a command", status, raw, errors) and "status command" in frame and "alpha / solver" in frame)
+          cleanRun("T7 the build with a command", status, raw, errors) and "status command" in frame
+          and "PROJECT alpha" in frame and "\n  solver\n" in frame)
     ENVIRONMENT["WORKERS_WATCH_TEST_FAIL"] = "1"
     status, frame, raw, errors = once(commanded, None)
     del ENVIRONMENT["WORKERS_WATCH_TEST_FAIL"]
@@ -878,7 +924,7 @@ def testR2(normal, commanded, scratch):
     terminal.waitFor("IN WORK", 20)
     terminal.read(8.0)
     # Frames with the document in them; the frame before the first document was read has none
-    frames = terminal.plain().count("alpha / solver")
+    frames = terminal.plain().count("PROJECT alpha")
     late = "Overdue: the newest document is of " in terminal.plain()
     mark = len(terminal.output)
     os.utime(path)
