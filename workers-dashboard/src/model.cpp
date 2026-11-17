@@ -83,6 +83,32 @@ class Reader {
     return readers;
   }
 
+  std::vector<std::string> wordsList(const char* key, std::size_t most) const {
+    std::vector<std::string> words;
+    const Json* value = find(key, false);
+    if (value == nullptr) {
+      return words;
+    }
+    if (!value->is_array()) {
+      problem(key, "is " + article(*value) + ", expected a list");
+      return words;
+    }
+    if (value->size() > most) {
+      problem(key, "has " + std::to_string(value->size()) + " entries, only the first " + std::to_string(most) +
+                       " are read");
+    }
+    const std::size_t count = std::min(value->size(), most);
+    for (std::size_t index = 0; index < count; ++index) {
+      const Json& entry = (*value)[index];
+      if (!entry.is_string()) {
+        note(pathOf(key) + "[" + std::to_string(index) + "]", "is " + article(entry) + ", expected text");
+        continue;
+      }
+      words.push_back(cleanText(entry.get_ref<const std::string&>(), nameLimit));
+    }
+    return words;
+  }
+
   Number number(const char* key, bool negativeAllowed = false, bool required = false) const {
     const Json* value = find(key, required);
     if (value == nullptr) {
@@ -315,6 +341,7 @@ Worker readWorker(const Reader& reader) {
   const Reader commits = reader.object("commits");
   worker.commits.ahead = commits.number("ahead");
   worker.commits.behind = commits.number("behind");
+  worker.commits.pending = commits.flag("pending");
   const Reader uncommitted = commits.object("uncommitted");
   worker.commits.uncommitted = uncommitted.flag("value");
   worker.commits.uncommittedSource = uncommitted.source(Source::SelfReported);
@@ -328,6 +355,26 @@ Worker readWorker(const Reader& reader) {
     worker.reviews.verdicts.push_back(
         {entry.words("by", nameLimit), entry.words("value"), entry.source(Source::Claimed)});
   }
+
+  const Reader places = reader.object("places");
+  worker.places.copy = places.words("copy");
+  worker.places.reports = places.words("reports");
+  worker.places.records = places.words("records");
+  worker.places.task = places.words("task");
+  worker.places.scratch = places.words("scratch");
+
+  const Reader nextStep = reader.object("nextStep");
+  worker.nextStep.command = nextStep.words("command");
+  worker.nextStep.source = nextStep.source(Source::Derived);
+
+  const Reader review = reader.object("review");
+  worker.reviewRelation.implementers = review.wordsList("implementers", mostEntries);
+  worker.reviewRelation.removableWithMerged = review.flag("removableWithMerged");
+  worker.reviewRelation.source = review.source(Source::Derived);
+
+  const Reader removal = reader.object("removal");
+  worker.removal.value = removal.words("value");
+  worker.removal.source = removal.source(Source::Derived);
 
   const Reader removable = reader.object("removable");
   worker.removable = removable.flag("value");

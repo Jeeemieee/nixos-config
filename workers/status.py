@@ -159,6 +159,7 @@ class Status:
         self.config = config
         self.home = os.environ["HOME"]
         self.state = os.path.join(self.home, ".local/state/workers")
+        self.plainState = os.path.join(self.home, ".local/state/workers-plain")
         self.folders = os.path.join(self.home, "workers")
         self.areas = os.path.join(self.home, "scratch/workers")
         self.runtime = os.path.join(os.environ["XDG_RUNTIME_DIR"], "workers")
@@ -185,6 +186,10 @@ class Status:
         # implementer whose work waits for a review, the command that starts its next reviewer
         self.rows = []
         self.commands = []
+        # A displayed status may leave expensive commit counts to one detached refresh
+        self.deferCounts = False
+        self.pendingProjects = set()
+        self.configPath = None
         # When the machine was started: stops for memory are counted from then
         try:
             with open("/proc/stat") as _file_:
@@ -209,6 +214,7 @@ class Status:
         # The machine last: which jobs were stopped for memory is in the workers' records
         _document_ = {"version": 1, "generated": int(self.now), "machine": self._machine(_datasets_, _stops_, _brokers_), "workers": _workers_}
         self._remember()
+        self._scheduleCounts()
         return _document_
 
     def fullRun(
@@ -501,11 +507,12 @@ class Status:
         self,
         folder: Annotated[str, "A worker's folder"],
         name: Annotated[str, "The worker, for a message"],
+        sessions: Annotated[str, "The session folder, when it is not below the worker's folder"] = None,
     ):
         """The agent's own to-do list, from the last entry that the to-do tool wrote into the newest session file"""
         # The newest session file, at most two folders deep, never through a link
         _newest_ = (0, None)
-        _sessions_ = os.path.join(folder, "sessions")
+        _sessions_ = sessions or os.path.join(folder, "sessions")
         try:
             for _entry_ in os.scandir(_sessions_):
                 _inside_ = [_entry_]
@@ -603,7 +610,13 @@ class Status:
                     _managers_[_manager_] = _path_
             _heads_ = [self._remote(_main_, "refs/heads/*") if _main_ else {}] + [self._remote(f"file://{_path_}", "refs/heads/*") for _path_ in _managers_.values()]
             _key_ = hashlib.sha256(json.dumps([_heads_, sorted(_managers_)], sort_keys=True).encode()).hexdigest()
-            self.projects[project] = {"main": _main_, "managers": _managers_, "key": _key_, "fetched": None}
+            self.projects[project] = {
+                "main": _main_,
+                "managers": _managers_,
+                "key": _key_,
+                "referenceCount": sum(len(_head_) for _head_ in _heads_),
+                "fetched": None,
+            }
             self.next["commits"][project] = {"key": _key_, "workers": {}}
         return self.projects[project]
 
@@ -625,6 +638,9 @@ class Status:
         _noted_ = self.last.get("commits", {}).get(project, {})
         _answer_ = _noted_.get("workers", {}).get(f"{branch}/{name}") if (_noted_.get("key") == _basis_["key"]) and not fresh else None
         if not isinstance(_answer_, dict) or (_answer_.get("heads") != _key_):
+            if self.deferCounts and not fresh and (_basis_["referenceCount"] >= 50):
+                self.pendingProjects.add(project)
+                return {"pending": True}
             _answer_ = self._counted(project, branch, name, current, _basis_)
             if _answer_ is not None:
                 _answer_["heads"] = _key_
@@ -717,6 +733,15 @@ class Status:
         _role_ = self._word(os.path.join(self.state, project, "roles", branch, name))
         _role_ = _role_ if (_role_ in ("implementer", "reviewer", "deep-reviewer", "manager")) else "implementer"
         _worker_ = {"project": project, "branch": branch, "name": name, "role": _role_}
+        _places_ = {
+            "copy": os.path.join(_folder_, "repo"),
+            "reports": os.path.join(_folder_, "reports"),
+            "records": os.path.join(_folder_, "records"),
+            "scratch": os.path.join(self.areas, project, branch, name),
+        }
+        if (_role_ != "manager"):
+            _places_["task"] = os.path.join(self.folders, project, "instructions", branch, f"{name}.md")
+        _worker_["places"] = _places_
 
         ## Step 1. Measured: whether it runs, what it uses, how full its folder and its scratch area are
         _running_ = os.path.isdir(_group_)
@@ -794,7 +819,7 @@ class Status:
                 _onCurrent_ = bool(_current_) and (_tested_[-1].get("commit") == _current_)
                 _value_ = "failed" if (_tested_[-1]["exit"] != 0) else ("passed" if _onCurrent_ else "stale")
                 _worker_["acceptance"] = known(value=_value_, onCurrentCommit=_onCurrent_, time=self._time(_tested_[-1]), source="recorded")
-            _commits_ = known(ahead=_counted_.get("ahead"), behind=_counted_.get("behind"), source="derived")
+            _commits_ = known(ahead=_counted_.get("ahead"), behind=_counted_.get("behind"), pending=_counted_.get("pending"), source="derived")
             _said_ = [_run_.get("uncommitted_as_reported") for _run_ in _runs_ if (_run_.get("uncommitted_as_reported") in ("yes", "no"))]
             if _said_:
                 _commits_["uncommitted"] = {"value": (_said_[-1] == "yes"), "source": "self-reported"}
@@ -856,6 +881,13 @@ class Status:
                 _removeWithMerged_ = True
             else:
                 _why_ = "it has no recorded implementer"
+            _worker_["review"] = {
+                "implementers": _reviewed_[:MANY],
+                "removableWithMerged": _removeWithMerged_,
+                "source": "derived",
+            }
+        elif (_role_ in ("manager", "deep-reviewer")):
+            _worker_["removal"] = {"value": "removed by its own command", "source": "derived"}
 
         ## Step 4. Claimed: the agent's to-do list, and its own line on how it stands
         _steps_ = self._steps(_folder_, _full_)
@@ -878,12 +910,18 @@ class Status:
                 _state_, _source_ = "reviewed", "derived"
             if _merged_:
                 _state_, _source_ = ("removable" if _removable_ else "merged"), "derived"
-            # Work that waits for a review: the command that starts its next reviewer, under a name that is free
-            if (_state_ in ("implementing", "ready for review")):
+            # The next user action is composed here, never taken from the agent's text
+            if (_state_ == "planned"):
+                _worker_["nextStep"] = {"command": f"workers approve {_full_}", "source": "derived"}
+            elif (_state_ in ("implementing", "ready for review")):
                 _taken_ = set(self._listed(os.path.join(self.state, project, "roles", branch)) + self._listed(os.path.join(self.state, project, "roles-removed", branch)))
                 _free_ = [f"{name[:40]}-r{_number_}" for _number_ in range(1, len(_taken_) + 2) if f"{name[:40]}-r{_number_}" not in _taken_][0]
                 _main_ = self._word(os.path.join(self.state, project, "main")) or f"~/{project}"
-                self.commands.append((_full_, f"cd {_main_} && pi --role reviewer --branch {branch} --name {_free_} --of {name}", f"{self.folders}/{project}/instructions/{branch}/{_free_}.md"))
+                _command_ = f"cd {_main_} && pi --role reviewer --branch {branch} --name {_free_} --of {name}"
+                _worker_["nextStep"] = {"command": _command_, "source": "derived"}
+                self.commands.append((_full_, _command_, f"{self.folders}/{project}/instructions/{branch}/{_free_}.md"))
+            elif (_state_ == "removable"):
+                _worker_["nextStep"] = {"command": f"workers remove --merged {project}", "source": "derived"}
         _worker_["state"] = {"value": _state_, "source": _source_}
         # For `workers list`: - without a copy, ? when the commits could not be counted
         _held_ = "-" if not os.path.lexists(os.path.join(_copy_, ".git")) else str(_counted_.get("unmerged", "?"))
@@ -907,17 +945,80 @@ class Status:
                 continue
             _group_ = os.path.join(self.groups, "workers-agents.slice", _scope_)
             _share_, _seconds_ = self._share(_group_, _scope_[: -len(".scope")])
-            _session_ = {"project": _match_.group(1), "branch": "plain", "name": _match_.group(2), "role": "plain", "state": {"value": "idle", "source": "derived"}}
+            _key_ = _match_.group(1)
+            _session_ = {"project": _key_, "branch": "plain", "name": _match_.group(2), "role": "plain", "state": {"value": "idle", "source": "derived"}}
             _session_.update({"running": {"value": True}, "memory": self._memory(_group_), "cpu": known(share=_share_, seconds=_seconds_), "jobs": self._jobs(brokers.get(_scope_[: -len(".scope")], []))})
+            _records_ = os.path.join(self.plainState, _key_, "records.jsonl")
+            _session_["places"] = {"records": _records_, "scratch": os.path.join(self.areas, _key_, "plain", "session")}
             _found_.append(_session_)
         return _found_
 
-    def _remember(self):
+    def _scheduleCounts(self):
+        """Start one detached refresh for commit counts that this displayed status deliberately left unknown"""
+        if not self.pendingProjects or not self.configPath:
+            return
+        try:
+            subprocess.Popen(
+                [sys.executable, "-I", os.path.abspath(__file__), "--config", self.configPath, "--refresh-commits", *sorted(self.pendingProjects)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except OSError:
+            pass
+
+    def refreshCommits(
+        self,
+        projects: Annotated[list, "Projects whose displayed commit counts are being prepared"],
+    ):
+        """Count every worker of the named projects, one detached refresh at a time"""
+        try:
+            os.makedirs(self.runtime, mode=0o700, exist_ok=True)
+            _descriptor_ = os.open(os.path.join(self.runtime, "status-refresh.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl.flock(_descriptor_, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return
+        try:
+            for _project_ in projects:
+                if not NAME.fullmatch(_project_):
+                    continue
+                for _branch_ in sorted(self._listed(os.path.join(self.state, _project_, "roles"))):
+                    for _name_ in sorted(self._listed(os.path.join(self.state, _project_, "roles", _branch_))):
+                        _copy_ = os.path.join(self.folders, _project_, _branch_, _name_, "repo")
+                        if not os.path.isdir(_copy_):
+                            continue
+                        _heads_ = self._remote(f"file://{_copy_}", "HEAD", "refs/heads/*")
+                        if not _heads_:
+                            continue
+                        _judged_ = self.approve.Worker(self.config["approveConfig"], f"{_project_}/{_branch_}/{_name_}")
+                        _role_ = self._word(os.path.join(self.state, _project_, "roles", _branch_, _name_))
+                        _current_ = _heads_.get(_judged_.reference()) if (_role_ == "implementer") else None
+                        self._commits(_project_, _branch_, _name_, _heads_, _current_, fresh=True)
+            self._remember(commitsOnly=True)
+        finally:
+            os.close(_descriptor_)
+
+    def _remember(
+        self,
+        commitsOnly: Annotated[bool, "Merge only refreshed commit counts into the latest display notes"] = False,
+    ):
         """This program's notes for its next look, as a new file put in place by a rename"""
         try:
             os.makedirs(self.runtime, mode=0o700, exist_ok=True)
+            _remembered_ = self.next
+            if commitsOnly:
+                try:
+                    with open(self.notes) as _file_:
+                        _remembered_ = json.load(_file_)
+                except (OSError, ValueError):
+                    _remembered_ = {"time": self.now, "cpu": {}, "commits": {}}
+                if not isinstance(_remembered_, dict) or not isinstance(_remembered_.get("commits"), dict):
+                    _remembered_ = {"time": self.now, "cpu": {}, "commits": {}}
+                _remembered_["commits"].update(self.next["commits"])
             with open(f"{self.notes}.{os.getpid()}", "w") as _file_:
-                json.dump(self.next, _file_)
+                json.dump(_remembered_, _file_)
             os.replace(f"{self.notes}.{os.getpid()}", self.notes)
         except OSError:
             pass
@@ -951,13 +1052,17 @@ def main():
     if (len(_arguments_) < 2) or (_arguments_[0] != "--config"):
         print("usage: workers status [--json]", file=sys.stderr)
         sys.exit(2)
-    with open(_arguments_[1]) as _file_:
+    _configPath_ = _arguments_[1]
+    with open(_configPath_) as _file_:
         _status_ = Status(json.load(_file_))
+    _status_.configPath = _configPath_
     _arguments_ = _arguments_[2:]
     # <project>/<branch>/<name>, for the two uses that name one worker
     _names_ = _arguments_[1].split("/") if (len(_arguments_) == 2) else []
     _named_ = (len(_names_) == 3) and all(NAME.fullmatch(_name_) for _name_ in _names_)
-    if (len(_arguments_) == 4) and (_arguments_[0] == "--full-run") and all(NAME.fullmatch(_name_) for _name_ in _arguments_[1:3]) and COMMIT.fullmatch(_arguments_[3]):
+    if (len(_arguments_) >= 2) and (_arguments_[0] == "--refresh-commits") and all(NAME.fullmatch(_name_) for _name_ in _arguments_[1:]):
+        _status_.refreshCommits(_arguments_[1:])
+    elif (len(_arguments_) == 4) and (_arguments_[0] == "--full-run") and all(NAME.fullmatch(_name_) for _name_ in _arguments_[1:3]) and COMMIT.fullmatch(_arguments_[3]):
         print(_status_.fullRun(*_arguments_[1:]))
     elif _named_ and (_arguments_[0] == "--unmerged"):
         print(_status_.unmerged(*_names_))
@@ -972,8 +1077,10 @@ def main():
         if _sentence_:
             print(_sentence_)
     elif (_arguments_ == ["--json"]):
+        _status_.deferCounts = True
         print(json.dumps(_status_.document()))
     elif not _arguments_:
+        _status_.deferCounts = True
         _document_ = _status_.document()
         table(_document_, _status_.commands)
     else:

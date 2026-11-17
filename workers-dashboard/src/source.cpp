@@ -251,7 +251,7 @@ Loaded loadCommand(int stopDescriptor) {
   if (stopped) {
     loaded.error = "the status command was ended with the program";
   } else if (timedOut) {
-    loaded.error = "the status command did not end within 10 s";
+    loaded.error = "the status command took longer than 10 s, perhaps while counting a large project's history";
   } else if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0)) {
     loaded.error = "the status command failed" +
                    (WIFEXITED(status) ? (" with status " + std::to_string(WEXITSTATUS(status))) : std::string()) +

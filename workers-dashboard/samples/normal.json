@@ -3,9 +3,9 @@
  "generated": 1794650000,
  "machine": {
   "memory": {
-   "used": 6106906624,
+   "used": 10050600960,
    "limit": 19327352832,
-   "peak": 7938978611
+   "peak": 13065781248
   },
   "agentsMemory": {
    "used": 5110759424,
@@ -21,7 +21,7 @@
    "last": [
     {
      "time": 1794640000,
-     "worker": "alpha/solver/w1",
+     "worker": "alpha/solver/i1",
      "what": "job"
     }
    ]
@@ -62,7 +62,7 @@
   {
    "project": "alpha",
    "branch": "solver",
-   "name": "w1",
+   "name": "i1",
    "role": "implementer",
    "state": {
     "value": "implementing",
@@ -99,19 +99,26 @@
      "since": 1794649000,
      "state": "running",
      "memory": {
-      "used": 996147200,
-      "peak": 996147200
+      "used": 4939841536,
+      "peak": 4939841536
      },
      "cpu": {
-      "share": 6.5
+      "share": 4.9
      },
-     "command": "make check"
+     "command": "pytest tests/solver"
     }
    ],
    "runs": [],
    "removable": {
     "value": false,
     "source": "derived"
+   },
+   "places": {
+    "copy": "/home/test/workers/alpha/solver/i1/repo",
+    "reports": "/home/test/workers/alpha/solver/i1/reports",
+    "records": "/home/test/workers/alpha/solver/i1/records",
+    "scratch": "/home/test/scratch/workers/alpha/solver/i1",
+    "task": "/home/test/workers/alpha/instructions/solver/i1.md"
    },
    "steps": {
     "done": 4,
@@ -180,6 +187,10 @@
     "value": "never run",
     "source": "recorded"
    },
+   "nextStep": {
+    "command": "cd /projects/alpha && pi --role reviewer --branch solver --name i1-r1 --of i1",
+    "source": "derived"
+   },
    "memoryStops": {
     "count": 2
    }
@@ -187,7 +198,7 @@
   {
    "project": "alpha",
    "branch": "solver",
-   "name": "w2",
+   "name": "i2",
    "role": "implementer",
    "state": {
     "value": "ready for review",
@@ -231,6 +242,13 @@
    "removable": {
     "value": false,
     "source": "derived"
+   },
+   "places": {
+    "copy": "/home/test/workers/alpha/solver/i2/repo",
+    "reports": "/home/test/workers/alpha/solver/i2/reports",
+    "records": "/home/test/workers/alpha/solver/i2/records",
+    "scratch": "/home/test/scratch/workers/alpha/solver/i2",
+    "task": "/home/test/workers/alpha/instructions/solver/i2.md"
    },
    "steps": {
     "done": 9,
@@ -315,6 +333,10 @@
     "duration": 31,
     "onCurrentCommit": true,
     "source": "recorded"
+   },
+   "nextStep": {
+    "command": "cd /projects/alpha && pi --role reviewer --branch solver --name i2-r1 --of i2",
+    "source": "derived"
    }
   },
   {
@@ -357,6 +379,13 @@
     "value": false,
     "source": "derived"
    },
+   "places": {
+    "copy": "/home/test/workers/alpha/solver/r1/repo",
+    "reports": "/home/test/workers/alpha/solver/r1/reports",
+    "records": "/home/test/workers/alpha/solver/r1/records",
+    "scratch": "/home/test/scratch/workers/alpha/solver/r1",
+    "task": "/home/test/workers/alpha/instructions/solver/r1.md"
+   },
    "steps": {
     "done": 0,
     "total": 4,
@@ -385,12 +414,19 @@
    "claim": {
     "value": "Working on: Read the diff against the branch",
     "source": "claimed"
+   },
+   "review": {
+    "implementers": [
+     "i2"
+    ],
+    "removableWithMerged": false,
+    "source": "derived"
    }
   },
   {
    "project": "alpha",
    "branch": "mesh",
-   "name": "w1",
+   "name": "i1",
    "role": "implementer",
    "state": {
     "value": "planned",
@@ -426,6 +462,13 @@
     "value": false,
     "source": "derived"
    },
+   "places": {
+    "copy": "/home/test/workers/alpha/mesh/i1/repo",
+    "reports": "/home/test/workers/alpha/mesh/i1/reports",
+    "records": "/home/test/workers/alpha/mesh/i1/records",
+    "scratch": "/home/test/scratch/workers/alpha/mesh/i1",
+    "task": "/home/test/workers/alpha/instructions/mesh/i1.md"
+   },
    "commits": {
     "ahead": 0,
     "behind": 0,
@@ -448,12 +491,16 @@
    "acceptance": {
     "value": "never run",
     "source": "recorded"
+   },
+   "nextStep": {
+    "command": "workers approve alpha/mesh/i1",
+    "source": "derived"
    }
   },
   {
    "project": "alpha",
    "branch": "mesh",
-   "name": "w2",
+   "name": "i2",
    "role": "implementer",
    "state": {
     "value": "approved",
@@ -488,6 +535,13 @@
    "removable": {
     "value": false,
     "source": "derived"
+   },
+   "places": {
+    "copy": "/home/test/workers/alpha/mesh/i2/repo",
+    "reports": "/home/test/workers/alpha/mesh/i2/reports",
+    "records": "/home/test/workers/alpha/mesh/i2/records",
+    "scratch": "/home/test/scratch/workers/alpha/mesh/i2",
+    "task": "/home/test/workers/alpha/instructions/mesh/i2.md"
    },
    "steps": {
     "done": 0,
@@ -568,7 +622,7 @@
   {
    "project": "alpha",
    "branch": "mesh",
-   "name": "d1",
+   "name": "z1",
    "role": "deep-reviewer",
    "state": {
     "value": "idle",
@@ -605,6 +659,13 @@
     "value": false,
     "source": "derived"
    },
+   "places": {
+    "copy": "/home/test/workers/alpha/mesh/z1/repo",
+    "reports": "/home/test/workers/alpha/mesh/z1/reports",
+    "records": "/home/test/workers/alpha/mesh/z1/records",
+    "scratch": "/home/test/scratch/workers/alpha/mesh/z1",
+    "task": "/home/test/workers/alpha/instructions/mesh/z1.md"
+   },
    "steps": {
     "done": 2,
     "total": 4,
@@ -633,11 +694,15 @@
    "claim": {
     "value": "Working on: Check the edge cases of the change",
     "source": "claimed"
+   },
+   "removal": {
+    "value": "removed by its own command",
+    "source": "derived"
    }
   },
   {
    "project": "beta",
-   "branch": "main",
+   "branch": "manager",
    "name": "m1",
    "role": "manager",
    "state": {
@@ -674,12 +739,22 @@
    "removable": {
     "value": false,
     "source": "derived"
+   },
+   "places": {
+    "copy": "/home/test/workers/beta/manager/m1/repo",
+    "reports": "/home/test/workers/beta/manager/m1/reports",
+    "records": "/home/test/workers/beta/manager/m1/records",
+    "scratch": "/home/test/scratch/workers/beta/manager/m1"
+   },
+   "removal": {
+    "value": "removed by its own command",
+    "source": "derived"
    }
   },
   {
    "project": "beta",
    "branch": "main",
-   "name": "w1",
+   "name": "i1",
    "role": "implementer",
    "state": {
     "value": "reviewed",
@@ -723,6 +798,13 @@
    "removable": {
     "value": false,
     "source": "derived"
+   },
+   "places": {
+    "copy": "/home/test/workers/beta/main/i1/repo",
+    "reports": "/home/test/workers/beta/main/i1/reports",
+    "records": "/home/test/workers/beta/main/i1/records",
+    "scratch": "/home/test/scratch/workers/beta/main/i1",
+    "task": "/home/test/workers/beta/instructions/main/i1.md"
    },
    "steps": {
     "done": 4,
@@ -803,7 +885,7 @@
   {
    "project": "beta",
    "branch": "main",
-   "name": "w2",
+   "name": "i2",
    "role": "implementer",
    "state": {
     "value": "merged",
@@ -847,6 +929,13 @@
    "removable": {
     "value": false,
     "source": "derived"
+   },
+   "places": {
+    "copy": "/home/test/workers/beta/main/i2/repo",
+    "reports": "/home/test/workers/beta/main/i2/reports",
+    "records": "/home/test/workers/beta/main/i2/records",
+    "scratch": "/home/test/scratch/workers/beta/main/i2",
+    "task": "/home/test/workers/beta/instructions/main/i2.md"
    },
    "steps": {
     "done": 8,
@@ -943,7 +1032,7 @@
   {
    "project": "beta",
    "branch": "io",
-   "name": "w1",
+   "name": "i1",
    "role": "implementer",
    "state": {
     "value": "removable",
@@ -988,6 +1077,13 @@
    "removable": {
     "value": true,
     "source": "derived"
+   },
+   "places": {
+    "copy": "/home/test/workers/beta/io/i1/repo",
+    "reports": "/home/test/workers/beta/io/i1/reports",
+    "records": "/home/test/workers/beta/io/i1/records",
+    "scratch": "/home/test/scratch/workers/beta/io/i1",
+    "task": "/home/test/workers/beta/instructions/io/i1.md"
    },
    "steps": {
     "done": 6,
@@ -1071,12 +1167,16 @@
     "duration": 62,
     "onCurrentCommit": true,
     "source": "recorded"
+   },
+   "nextStep": {
+    "command": "workers remove --merged beta",
+    "source": "derived"
    }
   },
   {
    "project": "gamma",
    "branch": "docs",
-   "name": "w1",
+   "name": "i1",
    "role": "implementer",
    "state": {
     "value": "implementing",
@@ -1113,19 +1213,26 @@
      "since": 1794649880,
      "state": "waiting",
      "memory": {
-      "used": 487587840,
-      "peak": 487587840
+      "used": 4942987264,
+      "peak": 4942987264
      },
      "cpu": {
-      "share": 6.8
+      "share": 6.5
      },
-     "command": "pytest tests/solver"
+     "command": "make check"
     }
    ],
    "runs": [],
    "removable": {
     "value": false,
     "source": "derived"
+   },
+   "places": {
+    "copy": "/home/test/workers/gamma/docs/i1/repo",
+    "reports": "/home/test/workers/gamma/docs/i1/reports",
+    "records": "/home/test/workers/gamma/docs/i1/records",
+    "scratch": "/home/test/scratch/workers/gamma/docs/i1",
+    "task": "/home/test/workers/gamma/instructions/docs/i1.md"
    },
    "steps": {
     "done": 4,
@@ -1189,6 +1296,10 @@
    "acceptance": {
     "value": "never run",
     "source": "recorded"
+   },
+   "nextStep": {
+    "command": "cd /projects/gamma && pi --role reviewer --branch docs --name i1-r1 --of i1",
+    "source": "derived"
    }
   },
   {
@@ -1226,10 +1337,9 @@
     "limit": 53687091200
    },
    "jobs": [],
-   "runs": [],
-   "removable": {
-    "value": false,
-    "source": "derived"
+   "places": {
+    "records": "/home/test/.local/state/workers-plain/gamma/records.jsonl",
+    "scratch": "/home/test/scratch/workers/gamma/plain/session"
    }
   }
  ]

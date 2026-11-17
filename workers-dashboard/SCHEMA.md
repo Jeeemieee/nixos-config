@@ -9,6 +9,7 @@ Rules:
 - Text written by an agent (`claimed` and `self-reported` strings, to-do items, commands) may contain anything. The producer cuts each to 4096 bytes; a reader must still treat it as untrusted.
 - Added after the dashboard's report: a value that is not known is **left out**, never written as `null`.
 - Added: project, branch and name together are unique among `workers`.
+- Added: the overview orders managers by name, then each branch's implementers, reviewers and deep reviewers. A reviewer appears once and its `review.implementers` names every implementer it follows.
 - Added: at most 2000 workers, and at most 20 entries each in `jobs`, `reviews.verdicts` and `memoryStops.last`; `memoryStops.last` and `runs` are newest first.
 - Added: if the document is written to a file, it is written to a new file and renamed into place, so that a reader never sees half of it.
 - Added: the producer writes valid UTF-8 and no unpaired surrogate escapes (such as `\udc80`), replacing what is not valid in an agent's text, so that one agent's text cannot make the whole document unreadable. A reader that meets an unreadable document keeps showing the last good one and says so.
@@ -49,6 +50,13 @@ Rules:
       "gpuMemory": { "used": 0 },
       "folder": { "used": 300000000, "limit": 10737418240 },
       "scratch": { "used": 4200000000, "limit": 53687091200 },
+      "places": {
+        "copy": "/home/test/workers/alpha/solver/w1/repo",
+        "reports": "/home/test/workers/alpha/solver/w1/reports",
+        "records": "/home/test/workers/alpha/solver/w1/records",
+        "task": "/home/test/workers/alpha/instructions/solver/w1.md",
+        "scratch": "/home/test/scratch/workers/alpha/solver/w1"
+      },
       "jobs": [
         { "mode": "run", "since": 1794649000, "state": "running", "memory": { "used": 5200000000, "peak": 6100000000 }, "cpu": { "share": 7.6 }, "command": "pytest tests/solver" }
       ],
@@ -65,6 +73,7 @@ Rules:
       "runs": [ { "mode": "run", "time": 1794648000, "exit": 0, "duration": 95, "onCurrentCommit": true, "command": "pytest tests/solver" } ],
       "acceptance": { "value": "passed", "onCurrentCommit": true, "time": 1794648000, "source": "recorded" },
       "commits": { "ahead": 4, "behind": 0, "uncommitted": { "value": true, "source": "self-reported" }, "source": "derived" },
+      "nextStep": { "command": "cd /projects/alpha && pi --role reviewer --branch solver --name w1-r1 --of w1", "source": "derived" },
       "reviews": { "count": 1, "outdated": 0, "verdicts": [ { "by": "r1", "value": "needs changes", "source": "claimed" } ], "source": "derived" },
       "claim": { "value": "Residual assembled; boundary term next", "source": "claimed" },
       "removable": { "value": false, "source": "derived" }
@@ -83,12 +92,18 @@ Rules:
 | `workers[].state.value` | `planned`, `approved`, `implementing`, `ready for review`, `reviewed`, `merged`, `removable`, or `idle` for a role without these stages |
 | `workers[].running` | Whether its sandbox runs, and since when; `lastRun` is the start of the last one |
 | `workers[].memory`, `cpu`, `gpuMemory` | The agent's own sandbox. `cpu.share` is in processors (1.0 is one busy processor) |
+| `workers[].places` | Added, optional. Paths supplied by the tools: `copy`, `reports`, `records`, `task` and `scratch`. The reader does not compose a path. An ordinary session normally has only `records` and `scratch` |
 | `workers[].memoryStops` | Added, optional: `{ "count": 1 }`, how often this worker's agent or one of its jobs was stopped for memory since the last restart |
 | `workers[].jobs[]` | Its queued jobs: `state` is `running` or `waiting`; `command` is the agent's text. Added: `memory.peak`. A job has no memory limit of its own; it counts against `machine.memory` |
-| `workers[].steps` | From the agent's own to-do list: how many done of how many, the item in work, when the list last changed. Added, optional: `items`, the whole list in order, each with its `state` (`done`, `in work`, `open`); at most 100 items |
+| `workers[].steps` | From the agent's own to-do list: how many done of how many, the item in work, when the list last changed. Added, optional: `items`, the whole list in order, each with its `state` (`done`, `in work`, `open`); at most 100 items. The current producer leaves this out for an ordinary session because its project's shared session folder cannot identify which session owns the list |
 | `workers[].intent` | Whether the user approved the intent, which approach, and whether the form changed afterwards |
-| `workers[].runs` | Added, optional: the last queued runs, newest first, at most 20; `source` is `recorded` for all, `command` is the agent's text |
+| `workers[].runs` | Added, optional: the last queued runs, newest first, at most 20; `source` is `recorded` for all, `command` is the agent's text. The current producer leaves this and `lastQueuedRun` out for an ordinary session because its project's shared record cannot identify which session owns a run |
 | `workers[].lastQueuedRun`, `acceptance` | The broker's records. `acceptance.value` is `passed`, `failed`, `stale` (passed on an older commit) or `never run` |
-| `workers[].commits` | Against its branch in the project |
+| `workers[].commits` | Against its branch in the project. Added, optional: `pending: true` means that a first, expensive count is in progress; `ahead` and `behind` are then left out |
 | `workers[].reviews` | Reviews that ran against it; `outdated` counts those of an older commit |
+| `workers[].nextStep` | Added, optional. The exact next command composed by `status.py`, with source `derived`; for approval, a next reviewer, or removal |
+| `workers[].review` | Added, optional for a reviewer: `implementers` names the implementers it follows and `removableWithMerged` says whether `workers remove --merged` would take it now; source `derived` |
+| `workers[].removal` | Added, optional for a manager or deep reviewer: `{ "value": "removed by its own command", "source": "derived" }` |
 | `workers[].claim` | One line in the agent's own words |
+
+All fields added in this round are optional. A version 1 document from an older producer remains valid and readable.

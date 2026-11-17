@@ -158,7 +158,9 @@ workers status --json    # the same as one document, which the live overview rea
 workers watch            # the live overview in the terminal; it only displays, and q ends it
 ```
 
-The document's form is `workers-dashboard/SCHEMA.md`.
+The document's form is `workers-dashboard/SCHEMA.md`. The overview makes one block per project: managers first in name order, then each side branch with its implementers, its reviewers and its deep reviewers. A reviewer appears once under its branch and names every implementer it reviews. Ordinary sessions share one final block. A project without a manager is shown in the same form without a manager row.
+
+A worker's detail names the paths supplied by the status command for its copy, reports, records, task file and scratch area. The overview does not construct paths. An ordinary session has no worker folder; its detail says so, and still names its run records and scratch area when they are known.
 
 **Every value says where it comes from,** and an agent's own words stand apart:
 
@@ -172,6 +174,9 @@ The document's form is `workers-dashboard/SCHEMA.md`.
 
 - **A claim never changes a fact.** A worker that writes "passed" changes the last column and nothing else; whether the approved tests passed is the broker's record.
 - **The to-do list** is read from the worker's newest pi session file: the last entry that the to-do extension wrote there. If that entry is not in the form this tool knows, the list is left out and the command says so.
+- **An ordinary session's shared data is not assigned to it.** All ordinary sessions of one project currently share one session folder and one run-record file, so the status document leaves their to-do lists and runs out rather than guessing which session owns them. It still shows their shared records path and scratch path. Worker-only facts in their detail are stated as facts they do not have, not as an ambiguous dash.
+- **The next command** is composed by `status.py`, marked `derived`, and shown without being run. It is present when an implementer waits for approval or a reviewer, and when a merged worker can be removed.
+- **A reviewer** names every implementer it has reviewed and whether `workers remove --merged` would take it now. A manager and a deep reviewer say that their own explicit command removes them.
 - **What an agent wrote is read as data:** without following a link, within a size limit, each text cut to 4096 bytes. Nothing of it is run.
 - **Stopped for memory:** how often is the watcher's count. Which job it was is in that job's record (`memory_stops`, beside `memory_peak`, the job's highest memory). Which agent it was is known only if the agent's sandbox still ran two seconds later.
 - On a machine with plain folders the sizes of folders and scratch areas are left out.
@@ -189,7 +194,7 @@ The document's form is `workers-dashboard/SCHEMA.md`.
 | `removable` | Merged, its last queued run reported nothing uncommitted, and it does not run |
 
 - **Under the table** `workers status` prints, for every implementer whose work waits for a review, the command that starts its next reviewer, under a name that is free, and where the manager writes that reviewer's task file first.
-- **The tools' own repository** (`~/.local/state/workers/<project>/mirror.git`), in which the commits are counted, holds of a copy what the copy's branches hold and no more: when a worker moves a branch back or aside or deletes one, what that leaves behind is removed at the same call. One call works in it at a time; a second one waits for it.
+- **The tools' own repository** (`~/.local/state/workers/<project>/mirror.git`), in which the commits are counted, holds of a copy what the copy's branches hold and no more: when a worker moves a branch back or aside or deletes one, what that leaves behind is removed at the same call. One count works in it at a time. On the first status of a project with many branch references, the display answers first with the commit counts as "not known yet" and starts one detached count; a later status replaces them with the result. An old count is not shown as current while that refresh is needed.
 
 ## Workers that exist, and removing one
 

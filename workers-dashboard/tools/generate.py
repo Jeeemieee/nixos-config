@@ -49,17 +49,17 @@ VERDICTS = ["needs changes", "ready", "blocked by missing evidence"]
 
 # Project, branch, name, role, state: three projects, every role and every state
 CAST = [
-    ("alpha", "solver", "w1", "implementer", "implementing"),
-    ("alpha", "solver", "w2", "implementer", "ready for review"),
+    ("alpha", "solver", "i1", "implementer", "implementing"),
+    ("alpha", "solver", "i2", "implementer", "ready for review"),
     ("alpha", "solver", "r1", "reviewer", "idle"),
-    ("alpha", "mesh", "w1", "implementer", "planned"),
-    ("alpha", "mesh", "w2", "implementer", "approved"),
-    ("alpha", "mesh", "d1", "deep-reviewer", "idle"),
-    ("beta", "main", "m1", "manager", "idle"),
-    ("beta", "main", "w1", "implementer", "reviewed"),
-    ("beta", "main", "w2", "implementer", "merged"),
-    ("beta", "io", "w1", "implementer", "removable"),
-    ("gamma", "docs", "w1", "implementer", "implementing"),
+    ("alpha", "mesh", "i1", "implementer", "planned"),
+    ("alpha", "mesh", "i2", "implementer", "approved"),
+    ("alpha", "mesh", "z1", "deep-reviewer", "idle"),
+    ("beta", "manager", "m1", "manager", "idle"),
+    ("beta", "main", "i1", "implementer", "reviewed"),
+    ("beta", "main", "i2", "implementer", "merged"),
+    ("beta", "io", "i1", "implementer", "removable"),
+    ("gamma", "docs", "i1", "implementer", "implementing"),
     ("gamma", "docs", "p1", "plain", "idle"),
 ]
 BRANCHES = [("alpha", "solver"), ("alpha", "mesh"), ("beta", "main"), ("beta", "io"), ("gamma", "docs")]
@@ -71,7 +71,7 @@ def stepsOf(rng, role, state, now):
     tasks = TASKS if role == "implementer" else REVIEW_TASKS
     total = rng.randint(4, len(tasks))
     stage = STAGES.index(state) if state in STAGES else None
-    if role in ("manager", "plain") or stage == 0:
+    if role == "manager" or stage == 0:
         return None
     if stage is None:
         done = rng.randint(0, total - 1)
@@ -112,12 +112,32 @@ def newWorker(rng, project, branch, name, role, state, now):
         "runs": [],
         "removable": {"value": state == "removable", "source": "derived"},
     }
+    if role == "plain":
+        worker.pop("runs")
+        worker.pop("removable")
+        worker["places"] = {
+            "records": f"/home/test/.local/state/workers-plain/{project}/records.jsonl",
+            "scratch": f"/home/test/scratch/workers/{project}/plain/session",
+        }
+    else:
+        worker["places"] = {
+            "copy": f"/home/test/workers/{project}/{branch}/{name}/repo",
+            "reports": f"/home/test/workers/{project}/{branch}/{name}/reports",
+            "records": f"/home/test/workers/{project}/{branch}/{name}/records",
+            "scratch": f"/home/test/scratch/workers/{project}/{branch}/{name}",
+        }
+        if role != "manager":
+            worker["places"]["task"] = f"/home/test/workers/{project}/instructions/{branch}/{name}.md"
     if running:
         worker["running"]["since"] = worker["lastRun"]
-    steps = stepsOf(rng, role, state, now)
+    steps = stepsOf(rng, role, state, now) if role != "plain" else None
     if steps:
         worker["steps"] = steps
         worker["claim"] = {"value": "Working on: " + steps.get("current", "everything is done"), "source": "claimed"}
+    if role == "reviewer":
+        worker["review"] = {"implementers": ["i2"], "removableWithMerged": False, "source": "derived"}
+    elif role in ("manager", "deep-reviewer"):
+        worker["removal"] = {"value": "removed by its own command", "source": "derived"}
     if role != "implementer":
         return worker
 
@@ -142,6 +162,15 @@ def newWorker(rng, project, branch, name, role, state, now):
         ]
     if stage >= 5:
         worker["commits"].update(ahead=0, behind=0)
+    if state == "planned":
+        worker["nextStep"] = {"command": f"workers approve {project}/{branch}/{name}", "source": "derived"}
+    elif state in ("implementing", "ready for review"):
+        worker["nextStep"] = {
+            "command": f"cd /projects/{project} && pi --role reviewer --branch {branch} --name {name}-r1 --of {name}",
+            "source": "derived",
+        }
+    elif state == "removable":
+        worker["nextStep"] = {"command": f"workers remove --merged {project}", "source": "derived"}
     return worker
 
 
@@ -176,7 +205,8 @@ def newWorld(seed, count, now):
         startJob(world, workers[10], now - 120)
     if len(workers) > 1:
         workers[1]["memory"]["peak"] = int(0.93 * AGENT_MEMORY)
-        world["stops"] = [{"time": now - 10000, "worker": "alpha/solver/w1", "what": "job"}]
+        first = workers[0]
+        world["stops"] = [{"time": now - 10000, "worker": f"{first['project']}/{first['branch']}/{first['name']}", "what": "job"}]
         world["stopCount"] = 2
         workers[0]["memoryStops"] = {"count": 2}
     return world

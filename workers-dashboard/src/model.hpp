@@ -106,6 +106,7 @@ struct Acceptance {
 struct Commits {
   Number ahead;
   Number behind;
+  Flag pending;
   Flag uncommitted;
   Source uncommittedSource = Source::SelfReported;
   Source source = Source::Derived;
@@ -121,6 +122,30 @@ struct Reviews {
   Number count;
   Number outdated;
   std::vector<Verdict> verdicts;
+  Source source = Source::Derived;
+};
+
+struct Places {
+  Words copy;
+  Words reports;
+  Words records;
+  Words task;
+  Words scratch;
+};
+
+struct NextStep {
+  Words command;
+  Source source = Source::Derived;
+};
+
+struct ReviewRelation {
+  std::vector<std::string> implementers;
+  Flag removableWithMerged;
+  Source source = Source::Derived;
+};
+
+struct Removal {
+  Words value;
   Source source = Source::Derived;
 };
 
@@ -150,6 +175,10 @@ struct Worker {
   Acceptance acceptance;
   Commits commits;
   Reviews reviews;
+  Places places;
+  NextStep nextStep;
+  ReviewRelation reviewRelation;
+  Removal removal;
   Words claim;
   Source claimSource = Source::Claimed;
   Flag removable;

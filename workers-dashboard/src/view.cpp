@@ -507,7 +507,7 @@ void addNotices(Elements& lines, const Canvas& canvas, const Snapshot& snapshot,
   if (isOverdueAt(snapshot, now)) {
     lines.push_back(LineBuilder()
                         .add("Overdue: the newest document is of " + clockTime(*snapshot.document.generated, now) +
-                                 "; its producer may have stopped",
+                                 "; the status command may be counting a large project's history",
                              canvas.tint(Color::Yellow) | ftxui::bold)
                         .build(canvas.width));
   }
@@ -695,26 +695,39 @@ void addOverview(Elements& lines, const Canvas& canvas, ViewState& state, const 
     return;
   }
 
-  // Step 2. The lines of the list: the name of a group wherever the project or the branch changes, with air
-  // above it; the air goes when the whole list does not fit with it
-  enum class Kind { Air, Group, Worker };
+  // Step 2. One block per project, with branch headings inside it; ordinary sessions share the last block
+  // The air goes when the whole list does not fit with it
+  enum class Kind { Air, Project, Branch, Ordinary, Worker };
   struct Row {
     Kind kind;
     std::size_t position;
   };
   std::vector<Row> rows;
+  bool ordinaryStarted = false;
   for (std::size_t position = 0; position < order.size(); ++position) {
     const Worker& worker = document.workers[order[position]];
-    if ((position == 0) || (document.workers[order[position - 1]].project != worker.project) ||
-        (document.workers[order[position - 1]].branch != worker.branch)) {
+    const Worker* previous = (position > 0) ? &document.workers[order[position - 1]] : nullptr;
+    const bool ordinary = (worker.role == "plain");
+    if (ordinary && !ordinaryStarted) {
       rows.push_back({Kind::Air, position});
-      rows.push_back({Kind::Group, position});
+      rows.push_back({Kind::Ordinary, position});
+      ordinaryStarted = true;
+    } else if (!ordinary && ((previous == nullptr) || (previous->role == "plain") ||
+                             (previous->project != worker.project))) {
+      rows.push_back({Kind::Air, position});
+      rows.push_back({Kind::Project, position});
+    }
+    if ((previous == nullptr) || (previous->project != worker.project) || (previous->branch != worker.branch)) {
+      rows.push_back({Kind::Branch, position});
     }
     rows.push_back({Kind::Worker, position});
   }
   const int room = std::max(1, height - static_cast<int>(lines.size()));
   if (static_cast<int>(rows.size()) > room) {
     std::erase_if(rows, [](const Row& row) { return row.kind == Kind::Air; });
+  }
+  if (static_cast<int>(rows.size()) > room) {
+    std::erase_if(rows, [](const Row& row) { return (row.kind == Kind::Project) || (row.kind == Kind::Ordinary); });
   }
   const auto selectedAt = std::find_if(rows.begin(), rows.end(), [&](const Row& row) {
     return (row.kind == Kind::Worker) && (static_cast<int>(row.position) == state.selected);
@@ -733,7 +746,11 @@ void addOverview(Elements& lines, const Canvas& canvas, ViewState& state, const 
     const Worker& worker = document.workers[order[row.position]];
     if (row.kind == Kind::Air) {
       lines.push_back(ftxui::text(""));
-    } else if (row.kind == Kind::Group) {
+    } else if (row.kind == Kind::Project) {
+      lines.push_back(LineBuilder().add("  PROJECT " + worker.project).build(width, ftxui::bold));
+    } else if (row.kind == Kind::Ordinary) {
+      lines.push_back(LineBuilder().add("  Ordinary sessions").build(width, ftxui::bold));
+    } else if (row.kind == Kind::Branch) {
       lines.push_back(LineBuilder().add("  " + worker.project + " / " + worker.branch).build(width, ftxui::bold));
     } else {
       // The mark shows the selection where there is no colour
@@ -843,10 +860,14 @@ Lines toolsBlock(const Canvas& canvas, const Worker& worker) {
   lines.push_back(titled("THE TOOLS RECORDED OR DERIVED"));
   lines.emplace_back();
 
+  const bool ordinary = (worker.role == "plain");
+
   // Step 1. The intent and the tests
   const Intent& intent = worker.intent;
   LineBuilder intentLine = labelled("intent");
-  if (!intent.approved) {
+  if (ordinary) {
+    intentLine.add("an ordinary session has none", ftxui::dim);
+  } else if (!intent.approved) {
     intentLine.add("–", ftxui::dim);
   } else if (!*intent.approved) {
     intentLine.add("not approved");
@@ -866,9 +887,14 @@ Lines toolsBlock(const Canvas& canvas, const Worker& worker) {
   const std::string result = acceptance.value.value_or("");
   const std::string tested = age(canvas, acceptance.time, true);
   LineBuilder tests = labelled("tests");
-  tests.add(result.empty() ? "–" : result, result.empty() ? Decorator(ftxui::dim) : canvas.testLook(result));
-  const std::string where = joined({commitText(acceptance.onCurrentCommit), tested.empty() ? "" : (tested + " ago")});
-  lines.push_back(tests.add(where.empty() ? "" : (" " + where)));
+  if (ordinary) {
+    tests.add("an ordinary session has none", ftxui::dim);
+  } else {
+    tests.add(result.empty() ? "–" : result, result.empty() ? Decorator(ftxui::dim) : canvas.testLook(result));
+    const std::string where = joined({commitText(acceptance.onCurrentCommit), tested.empty() ? "" : (tested + " ago")});
+    tests.add(where.empty() ? "" : (" " + where));
+  }
+  lines.push_back(tests);
 
   // Step 2. The runs, newest first; the last run alone when the document has no list
   std::vector<const Run*> runs;
@@ -887,13 +913,21 @@ Lines toolsBlock(const Canvas& canvas, const Worker& worker) {
 
   // Step 3. The commits and the reviews; a verdict is a reviewer's own words
   const Commits& commits = worker.commits;
-  lines.push_back(labelled("commits").add((commits.ahead || commits.behind)
-                                              ? (count(commits.ahead) + " ahead · " + count(commits.behind) + " behind")
-                                              : "–"));
+  if (ordinary) {
+    lines.push_back(labelled("commits").add("an ordinary session has none", ftxui::dim));
+  } else if (commits.pending.value_or(false)) {
+    lines.push_back(labelled("commits").add("not known yet", ftxui::dim));
+  } else {
+    lines.push_back(labelled("commits").add((commits.ahead || commits.behind)
+                                                ? (count(commits.ahead) + " ahead · " + count(commits.behind) + " behind")
+                                                : "–"));
+  }
   const Reviews& reviews = worker.reviews;
   const bool outdated = (reviews.outdated.value_or(0.0) > 0.0);
   LineBuilder reviewLine = labelled("reviews");
-  if (reviews.count.value_or(0.0) <= 0.0) {
+  if (ordinary) {
+    reviewLine.add("an ordinary session has none", ftxui::dim);
+  } else if (reviews.count.value_or(0.0) <= 0.0) {
     reviewLine.add(reviews.count ? "none" : "–", ftxui::dim);
   } else {
     reviewLine.add(count(reviews.count))
@@ -906,7 +940,48 @@ Lines toolsBlock(const Canvas& canvas, const Worker& worker) {
     line.cell(verdict.by.value_or("–"), 8).add(" ");
     lines.push_back(addOwnWords(line, canvas, verdict.value.value_or("–"), verdict.source));
   }
-  lines.push_back(labelled("removable").add(worker.removable ? (*worker.removable ? "yes" : "no") : "–"));
+  lines.push_back(labelled("removable").add(
+      ordinary ? "an ordinary session has none" : (worker.removable ? (*worker.removable ? "yes" : "no") : "–"),
+      ordinary ? Decorator(ftxui::dim) : Decorator(ftxui::nothing)));
+  if (worker.nextStep.command) {
+    lines.push_back(labelled("next command").add(*worker.nextStep.command));
+  }
+  if (!worker.reviewRelation.implementers.empty() || worker.reviewRelation.removableWithMerged) {
+    std::string followed;
+    for (const std::string& implementer : worker.reviewRelation.implementers) {
+      followed += (followed.empty() ? "" : ", ") + implementer;
+    }
+    lines.push_back(labelled("follows").add(followed.empty() ? "not known" : followed));
+    if (worker.reviewRelation.removableWithMerged) {
+      lines.push_back(labelled("removal").add(
+          *worker.reviewRelation.removableWithMerged
+              ? "workers remove --merged would take this reviewer now"
+              : "workers remove --merged: not now"));
+    }
+  }
+  if (worker.removal.value) {
+    lines.push_back(labelled("removal").add(*worker.removal.value));
+  }
+  return lines;
+}
+
+Lines placesBlock(const Worker& worker) {
+  Lines lines;
+  lines.push_back(titled("PLACES FROM THE TOOLS"));
+  lines.emplace_back();
+  const bool ordinary = (worker.role == "plain");
+  const auto place = [&](const std::string& label, const Words& value, const std::string& absent) {
+    return labelled(label).add(value.value_or(absent), value ? Decorator(ftxui::nothing) : Decorator(ftxui::dim));
+  };
+  lines.push_back(place("copy", worker.places.copy,
+                        ordinary ? "an ordinary session has no folder" : "not known"));
+  lines.push_back(place("reports", worker.places.reports,
+                        ordinary ? "an ordinary session has none" : "not known"));
+  lines.push_back(place("records", worker.places.records, "not known"));
+  lines.push_back(place("task file", worker.places.task,
+                        ordinary ? "an ordinary session has none"
+                                 : ((worker.role == "manager") ? "a manager has no task file" : "not known")));
+  lines.push_back(place("scratch", worker.places.scratch, "not known"));
   return lines;
 }
 
@@ -994,6 +1069,10 @@ void addDetail(Elements& lines, const Canvas& canvas, const Worker& worker, View
 
   // Step 2. Two columns where there is room: the agent's words at the left, the tools and the system at the right
   Lines right = toolsBlock(canvas, worker);
+  right.emplace_back();
+  for (LineBuilder& line : placesBlock(worker)) {
+    right.push_back(std::move(line));
+  }
   right.emplace_back();
   for (LineBuilder& line : systemBlock(canvas, worker)) {
     right.push_back(std::move(line));
@@ -1094,8 +1173,9 @@ Element footer(const Canvas& canvas, const ViewState& state, const std::string& 
 }  // namespace
 
 std::vector<std::size_t> visibleWorkers(const Document& document, const ViewState& state) {
-  // Step 1. Keep the workers that pass every filter
-  std::vector<std::size_t> order;
+  // Step 1. Keep the workers that pass every filter, apart from ordinary sessions which form the last block
+  std::vector<std::size_t> workers;
+  std::vector<std::size_t> ordinary;
   for (std::size_t index = 0; index < document.workers.size(); ++index) {
     bool passes = true;
     for (std::size_t filter = 0; filter < state.filters.size(); ++filter) {
@@ -1103,11 +1183,10 @@ std::vector<std::size_t> visibleWorkers(const Document& document, const ViewStat
       passes = passes && (wanted.empty() || (filterField(document.workers[index], filter) == wanted));
     }
     if (passes) {
-      order.push_back(index);
+      ((document.workers[index].role == "plain") ? ordinary : workers).push_back(index);
     }
   }
 
-  // Step 2. The groups by project and branch always stay; the sorting orders the rows inside them
   const auto rank = [&state](const Worker& worker) {
     switch (state.sort) {
       case ViewState::Sort::Role:
@@ -1119,12 +1198,74 @@ std::vector<std::size_t> visibleWorkers(const Document& document, const ViewStat
     }
     return std::size_t{0};
   };
-  std::stable_sort(order.begin(), order.end(), [&](std::size_t one, std::size_t other) {
+  const auto inside = [&](std::size_t one, std::size_t other) {
     const Worker& left = document.workers[one];
     const Worker& right = document.workers[other];
-    return std::forward_as_tuple(left.project, left.branch, rank(left), left.name) <
-           std::forward_as_tuple(right.project, right.branch, rank(right), right.name);
+    return std::forward_as_tuple(rank(left), left.name) < std::forward_as_tuple(rank(right), right.name);
+  };
+
+  // Step 2. Each project: managers by name, then each branch's implementers, reviewers and deep reviewers
+  std::vector<std::size_t> order;
+  std::set<std::string> projects;
+  for (const std::size_t index : workers) {
+    projects.insert(document.workers[index].project);
+  }
+  for (const std::string& project : projects) {
+    std::vector<std::size_t> managers;
+    std::set<std::string> branches;
+    for (const std::size_t index : workers) {
+      const Worker& worker = document.workers[index];
+      if (worker.project != project) {
+        continue;
+      }
+      if (worker.role == "manager") {
+        managers.push_back(index);
+      } else {
+        branches.insert(worker.branch);
+      }
+    }
+    std::stable_sort(managers.begin(), managers.end(), inside);
+    order.insert(order.end(), managers.begin(), managers.end());
+
+    for (const std::string& branch : branches) {
+      std::vector<std::size_t> implementers;
+      std::vector<std::size_t> reviewers;
+      std::vector<std::size_t> deepReviewers;
+      std::vector<std::size_t> others;
+      for (const std::size_t index : workers) {
+        const Worker& worker = document.workers[index];
+        if ((worker.project != project) || (worker.branch != branch) || (worker.role == "manager")) {
+          continue;
+        }
+        if (worker.role == "implementer") {
+          implementers.push_back(index);
+        } else if (worker.role == "reviewer") {
+          reviewers.push_back(index);
+        } else if (worker.role == "deep-reviewer") {
+          deepReviewers.push_back(index);
+        } else {
+          others.push_back(index);
+        }
+      }
+      std::stable_sort(implementers.begin(), implementers.end(), inside);
+      std::stable_sort(reviewers.begin(), reviewers.end(), inside);
+      std::stable_sort(deepReviewers.begin(), deepReviewers.end(), inside);
+      std::stable_sort(others.begin(), others.end(), inside);
+      order.insert(order.end(), implementers.begin(), implementers.end());
+      order.insert(order.end(), reviewers.begin(), reviewers.end());
+      order.insert(order.end(), deepReviewers.begin(), deepReviewers.end());
+      order.insert(order.end(), others.begin(), others.end());
+    }
+  }
+
+  // Step 3. Ordinary sessions are one block of their own, last
+  std::stable_sort(ordinary.begin(), ordinary.end(), [&](std::size_t one, std::size_t other) {
+    const Worker& left = document.workers[one];
+    const Worker& right = document.workers[other];
+    return std::forward_as_tuple(left.project, rank(left), left.name) <
+           std::forward_as_tuple(right.project, rank(right), right.name);
   });
+  order.insert(order.end(), ordinary.begin(), ordinary.end());
   return order;
 }
 
