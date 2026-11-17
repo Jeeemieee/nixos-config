@@ -33,6 +33,7 @@ die() {
 state=$HOME/.local/state/workers
 folders=$HOME/workers
 areas=$HOME/scratch/workers
+runtime=${XDG_RUNTIME_DIR:?}/workers
 validName() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$ ]]; }
 read -r -a helper <<< "$HELPER"
 read -r -a status <<< "$STATUS"
@@ -233,7 +234,30 @@ case "$action" in
     worker "${2:-}"
     record=$state/$project/roles/$branch/$name
     [ -f "$record" ] || die "there is no worker $project/$branch/$name"
+
+    # No start can acquire worker places while removal checks and changes them
+    mkdir -p "$runtime"
+    exec 8> "$runtime/worker:$project.lifecycle.lock"
+    flock -x 8
     running "$project" "$branch" "$name" && die "the worker $project/$branch/$name is running: end its session first"
+
+    # A running session that received this worker's folders keeps their mounts alive in its private mount namespace
+    holders=()
+    for view in "$runtime"/worker:"$project":*; do
+      [ -f "$view/worker-views" ] || continue
+      grep -Fqx "$branch/$name" "$view/worker-views" || continue
+      holderUnit=$(basename "$view")
+      if systemctl --user is-active --quiet "$holderUnit.scope"; then
+        holder=${holderUnit#worker:"$project":}
+        holders+=("${holder/:/\/}")
+      else
+        rm -rf "$view"
+      fi
+    done
+    if [ "${#holders[@]}" -gt 0 ]; then
+      heldBy=$(IFS=', '; echo "${holders[*]}")
+      die "$heldBy holds $project/$branch/$name in a mounted worker view: end that session first; the worker was not removed and is as it was"
+    fi
     removed() {
       mkdir -p "$state/$project/roles-removed/$branch"
       mv "$record" "$state/$project/roles-removed/$branch/$name"
@@ -247,7 +271,7 @@ case "$action" in
     }
     # A removal that was interrupted after the folder was marked: complete it, without a second archive
     if [ "${#helper[@]}" -gt 0 ] && [[ ${retired[$workersDataset/$project/$branch/$name]:-} =~ ^[0-9]+$ ]]; then
-      "${helper[@]}" retire "$project" "$branch" "$name" || die "the removal of $project/$branch/$name could not be completed"
+      "${helper[@]}" retire "$project" "$branch" "$name" || die "the earlier removal of $project/$branch/$name could not be completed"
       removed
       echo "removed $project/$branch/$name: an earlier removal was completed; the folder is kept for $HOLD_DAYS days from then (workers restore $project/$branch/$name)"
       exit 0
@@ -271,12 +295,8 @@ case "$action" in
     if [ -e "$folders/$project/instructions/$branch/$name.md" ] || [ -L "$folders/$project/instructions/$branch/$name.md" ]; then
       cp -P "$folders/$project/instructions/$branch/$name.md" "$archive/task.md"
     fi
-    # The helper changes nothing unless it can unmount both: then the worker is as it was, and so is the archive
+    # The helper either completes the dataset transition or rolls it back; the archive follows the same boundary
     if ! "${helper[@]}" retire "$project" "$branch" "$name"; then
-      # Only its last step, destroying the scratch area, can fail after the folder was marked: the removal then took place, and the archive stays
-      if marked "$project" "$branch" "$name"; then
-        die "the folder of $project/$branch/$name is unmounted and kept, and its records, reports and task are in $archive, but its scratch area could not be destroyed; run 'workers remove $project/$branch/$name' again to complete the removal"
-      fi
       rm -rf "$archive"
       die "the worker $project/$branch/$name was not removed and is as it was"
     fi

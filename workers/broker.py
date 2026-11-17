@@ -7,11 +7,14 @@
 import argparse
 import datetime
 import fcntl
+import hashlib
 import json
 import os
 import re
 import select
+import signal
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -19,13 +22,14 @@ import threading
 import time
 from typing import Annotated
 
-MODES = ("run", "run-parallel", "timing", "exclusive", "acceptance", "acceptance-all", "status")
+MODES = ("run", "run-parallel", "timing", "exclusive", "acceptance", "acceptance-all", "status", "worker-read")
 # The modes whose command is not the request's: the broker takes it from the approval and from the project (see _acceptance)
 ACCEPTANCE = ("acceptance", "acceptance-all")
 FIELDS = {"mode", "command", "folder", "environment"}
 POLL_SECONDS = 0.5
 # A name of the environment that can never be read as an option, and the one character that ends a word where words are separated by it
 NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+WORKER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,47}")
 NUL = "\0"
 
 
@@ -46,6 +50,8 @@ class Broker:
         self.recordsLimit = int(arguments.records_limit)
         self.scratch = arguments.scratch
         self.repo = arguments.repo
+        self.workersRoot = arguments.workers_root
+        self.rolesRoot = arguments.roles_root
         self.identity = json.loads(arguments.identity)
         self.active = 0
         self.counter = 0
@@ -55,6 +61,8 @@ class Broker:
         self.waiting = {}
         self.lock = threading.Lock()
         self.slots = threading.BoundedSemaphore(config["maxSlots"])
+        self.stopping = threading.Event()
+        self.server = None
         # The worker's view and the variables that no request may change, as the launcher wrote them
         with open(os.path.join(self.directory, "view"), "rb") as _file_:
             self.view = [_part_.decode() for _part_ in _file_.read().split(b"\0")[:-1]]
@@ -68,10 +76,17 @@ class Broker:
         if os.path.exists(_path_):
             os.unlink(_path_)
         _server_ = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.server = _server_
+        signal.signal(signal.SIGTERM, self._stop)
         _server_.bind(_path_)
         _server_.listen(16)
-        while True:
-            _connection_, _ = _server_.accept()
+        while not self.stopping.is_set():
+            try:
+                _connection_, _ = _server_.accept()
+            except OSError:
+                if self.stopping.is_set():
+                    break
+                raise
             # A client that connects and sends nothing must not keep the broker busy: each request has a time limit to arrive,
             # and when too many connections are open without one, the oldest is closed to make room for the new
             _connection_.settimeout(self.config["requestSeconds"])
@@ -86,7 +101,17 @@ class Broker:
                         # It closed by itself meanwhile
                         pass
                 self.waiting[_connection_] = True
-            threading.Thread(target=self._handle, args=(_connection_,), daemon=True).start()
+            threading.Thread(target=self._handle, args=(_connection_,), daemon=False).start()
+
+    def _stop(
+        self,
+        _signal: Annotated[int, "The signal that asks the broker to stop"],
+        _frame: Annotated[object, "The interrupted frame"],
+    ):
+        """Stop accepting requests; non-daemon request threads finish their stopped-job records"""
+        self.stopping.set()
+        if self.server is not None:
+            self.server.close()
 
     def _handle(
         self,
@@ -107,22 +132,28 @@ class Broker:
                 self._reply(connection, {"status": self._status()})
                 return
 
-            ## Step 2. Count it against this sandbox's limit of waiting and running requests
+            ## Step 2. Count reads and jobs against this sandbox's limit of waiting and running requests
             with self.lock:
                 if (self.active >= self.config["maxRequests"]):
                     raise Refused(f"this sandbox already has {self.active} requests waiting or running, which is the limit")
                 self.active += 1
-                self.counter += 1
-                _number_ = self.counter
-                self.requests[_number_] = {"mode": _request_["mode"], "state": "waiting", "since": int(time.time()), "command": " ".join(_request_["command"])[:4096]}
-                self._publish()
+            _number_ = None
             try:
+                if (_request_["mode"] == "worker-read"):
+                    self._reply(connection, {"read": self._workerRead(_request_, _descriptors_[1])})
+                    return
+                with self.lock:
+                    self.counter += 1
+                    _number_ = self.counter
+                    self.requests[_number_] = {"mode": _request_["mode"], "state": "waiting", "since": int(time.time()), "command": " ".join(_request_["command"])[:4096]}
+                    self._publish()
                 _answer_ = self._run(connection, _request_, _descriptors_, _number_)
             finally:
                 with self.lock:
                     self.active -= 1
-                    del self.requests[_number_]
-                    self._publish()
+                    if (_number_ is not None):
+                        del self.requests[_number_]
+                        self._publish()
             self._reply(connection, _answer_)
         except Refused as _refusal_:
             self._reply(connection, {"refused": str(_refusal_)})
@@ -221,6 +252,134 @@ class Broker:
         """Whether the client closed its end: it sends nothing after its request, so readable means closed"""
         _readable_, _, _ = select.select([connection], [], [], 0)
         return bool(_readable_)
+
+    def _workerRead(
+        self,
+        request: Annotated[dict, "A checked manager read request"],
+        output: Annotated[int, "The client's output descriptor"],
+    ):
+        """Read one reports/records path of this project, without adding a mount to the manager"""
+        ## Step 1. Check the authority and the closed request
+        if (self.identity.get("role") != "manager"):
+            raise Refused("only a manager reads other workers through worker-read")
+        if not self.workersRoot or not self.rolesRoot:
+            raise Refused("this manager has no project worker root")
+        if request["environment"] or (request["folder"] != "/") or (len(request["command"]) != 6):
+            raise Refused("a worker-read request has exactly its worker, part, path, offset and read mode")
+        _branch_, _name_, _part_, _path_, _offsetText_, _readMode_ = request["command"]
+        if not WORKER_NAME.fullmatch(_branch_) or not WORKER_NAME.fullmatch(_name_):
+            raise Refused("the worker is <branch>/<name>, each a checked worker name")
+        if (_part_ not in ("reports", "records")):
+            raise Refused("the part is reports or records")
+        _pathParts_ = _path_.split("/") if _path_ else []
+        if _path_.startswith("/") or any((_item_ in ("", ".", "..")) for _item_ in _pathParts_):
+            raise Refused(f"the path stays below {_part_}")
+        if not _offsetText_.isdigit() or (_readMode_ not in ("read", "sha256")):
+            raise Refused("the offset is a non-negative byte count and the read mode is read or sha256")
+        _offset_ = int(_offsetText_)
+
+        ## Step 2. Require a recorded worker of this project
+        try:
+            _roleDescriptor_ = self._openBelow(self.rolesRoot, [_branch_, _name_])
+            _roleStatus_ = os.fstat(_roleDescriptor_)
+            _role_ = os.read(_roleDescriptor_, 64).decode(errors="replace").strip()
+            os.close(_roleDescriptor_)
+        except Refused:
+            _roleStatus_, _role_ = None, ""
+        if (_roleStatus_ is None) or not stat.S_ISREG(_roleStatus_.st_mode) or (_role_ not in ("implementer", "reviewer", "deep-reviewer", "manager")):
+            raise Refused(f"there is no worker {self.identity['project']}/{_branch_}/{_name_}")
+
+        ## Step 3. Open the requested path once, without following a link
+        _relative_ = [_branch_, _name_, _part_, *_pathParts_]
+        _shown_ = os.path.join(self.workersRoot, *_relative_)
+        try:
+            _descriptor_ = self._openBelow(self.workersRoot, _relative_)
+        except Refused:
+            raise Refused(f"there is no path {_shown_} that is reached without a link")
+        try:
+            _status_ = os.fstat(_descriptor_)
+            if stat.S_ISDIR(_status_.st_mode):
+                if (_readMode_ != "read") or (_offset_ != 0):
+                    raise Refused("a directory is listed without --sha256 or --offset")
+                _lines_ = []
+                _size_ = 0
+                with os.scandir(_descriptor_) as _entries_:
+                    for _entry_ in _entries_:
+                        _line_ = (json.dumps(_entry_.name, ensure_ascii=True) + "\n").encode()
+                        _size_ += len(_line_)
+                        if (_size_ > self.config["maxReadBytes"]):
+                            raise Refused(f"the directory listing is larger than {self.config['maxReadBytes']} bytes; name a path inside it")
+                        _lines_.append(_line_)
+                _data_ = b"".join(sorted(_lines_))
+                self._output(output, _data_)
+                return {"bytes": len(_data_), "more": False}
+            if not stat.S_ISREG(_status_.st_mode):
+                raise Refused(f"{_shown_} is not a regular file or directory")
+            if (_readMode_ == "sha256"):
+                if (_offset_ != 0):
+                    raise Refused("--sha256 is used without --offset")
+                _digest_ = hashlib.sha256()
+                while True:
+                    _partData_ = os.read(_descriptor_, 1024 * 1024)
+                    if not _partData_:
+                        break
+                    _digest_.update(_partData_)
+                _data_ = (_digest_.hexdigest() + "\n").encode()
+                self._output(output, _data_)
+                return {"bytes": len(_data_), "more": False}
+            if (_offset_ > _status_.st_size):
+                raise Refused(f"the offset {_offset_} is beyond the file's {_status_.st_size} bytes")
+            os.lseek(_descriptor_, _offset_, os.SEEK_SET)
+            _chunks_ = []
+            _left_ = self.config["maxReadBytes"]
+            while (_left_ > 0):
+                _chunk_ = os.read(_descriptor_, _left_)
+                if not _chunk_:
+                    break
+                _chunks_.append(_chunk_)
+                _left_ -= len(_chunk_)
+            _data_ = b"".join(_chunks_)
+            self._output(output, _data_)
+            _next_ = _offset_ + len(_data_)
+            return {"bytes": len(_data_), "more": _next_ < _status_.st_size, "nextOffset": _next_}
+        finally:
+            os.close(_descriptor_)
+
+    def _openBelow(
+        self,
+        root: Annotated[str, "A trusted root outside the sandbox"],
+        parts: Annotated[list, "Checked path components below the root"],
+    ):
+        """Open a path below a root without following a link at any level"""
+        _descriptor_ = None
+        try:
+            _descriptor_ = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            for _index_, _part_ in enumerate(parts):
+                _flags_ = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY
+                if (_index_ < (len(parts) - 1)):
+                    _flags_ |= os.O_DIRECTORY
+                _next_ = os.open(_part_, _flags_, dir_fd=_descriptor_)
+                os.close(_descriptor_)
+                _descriptor_ = _next_
+            return _descriptor_
+        except OSError:
+            if (_descriptor_ is not None):
+                os.close(_descriptor_)
+            raise Refused("the path is missing or is reached through a link")
+
+    def _output(
+        self,
+        descriptor: Annotated[int, "The client's output descriptor"],
+        data: Annotated[bytes, "The bounded bytes to write"],
+    ):
+        """Write all data unless the reader of a pipeline has deliberately gone away"""
+        _left_ = memoryview(data)
+        try:
+            while _left_:
+                _written_ = os.write(descriptor, _left_)
+                _left_ = _left_[_written_:]
+        except BrokenPipeError:
+            pass
 
     def _lock(
         self,
@@ -409,6 +568,7 @@ class Broker:
         # What the job's resource group said at its end: the highest memory, and the processes that the kernel stopped for memory
         _peak_, _stops_ = self._measured(_measure_)
         _status_ = _process_.returncode if (_process_.returncode >= 0) else (128 - _process_.returncode)
+        _stopped_ = _stopped_ or (self.stopping.is_set() and (_status_ != 0))
 
         ## Step 5. The record of the end: written here, where the worker cannot change it
         del _record_["state"]
@@ -430,6 +590,12 @@ class Broker:
             self._record(_record_)
         except OSError as _error_:
             _notes_.append(f"the end of this run could not be recorded ({_error_.strerror}); its start is in the records")
+
+        # A successful implementer baseline can be the second half of approval and baseline; the approval program owns that decision
+        if (_mode_ == "acceptance") and (_status_ == 0) and not _stopped_ and not _late_:
+            _worker_ = f"{self.identity['project']}/{self.identity['branch']}/{self.identity['name']}"
+            subprocess.run([*self.config["approve"], "--request-restart", _worker_], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
         _answer_ = {"exit": _status_}
         if _notes_:
             _answer_["note"] = "; ".join(_notes_)
@@ -582,7 +748,7 @@ class Broker:
 
 def main():
     _parser_ = argparse.ArgumentParser()
-    for _name_ in ("config", "dir", "unit", "records", "records-limit", "scratch", "repo", "identity"):
+    for _name_ in ("config", "dir", "unit", "records", "records-limit", "scratch", "repo", "workers-root", "roles-root", "identity"):
         _parser_.add_argument(f"--{_name_}", required=True)
     _arguments_ = _parser_.parse_args()
     with open(_arguments_.config) as _file_:

@@ -13,10 +13,13 @@
 # those tests on the copy as it was when it was approved (the baseline)
 import argparse
 import datetime
+import fcntl
 import hashlib
 import json
 import os
 import re
+import secrets
+import shlex
 import subprocess
 import sys
 import time
@@ -120,18 +123,71 @@ class Worker:
             return None, None, _checked_.stderr.decode(errors="replace").strip()
         return _content_, json.loads(_checked_.stdout), None
 
-    def added(self):
-        """The tests that the manager added in the worker's task file: lines 'test: <name>' directly below its three first lines"""
+    def task(self):
+        """The task bytes used by approval, and the tests named directly below its fixed header"""
         _content_, _ = self._copied(self.instructions, f"{self.branch}/{self.worker}.md")
+        _content_ = _content_ or b""
         _tests_ = []
-        for _line_ in (_content_ or b"").decode(errors="replace").split("\n")[3:]:
+        for _line_ in _content_.decode(errors="replace").split("\n")[3:]:
             if not _line_.startswith("test:"):
                 break
             _test_ = _line_[len("test:") :].strip()
             if not TEST.fullmatch(_test_):
                 raise Refused(f"the task file of {self.name} names a test that is not a test's name: {plain(_test_, 80)}")
             _tests_.append(_test_)
-        return _tests_
+        return _content_, _tests_
+
+    def added(self):
+        """The tests that the manager added in the worker's task file"""
+        return self.task()[1]
+
+    def advice(
+        self,
+        formFingerprint: Annotated[str, "The sha256 fingerprint of the one form copy that will be shown"],
+        taskFingerprint: Annotated[str, "The sha256 fingerprint of the task bytes used by approval"],
+        testsCommit: Annotated[str, "The project branch commit that supplies the tests"],
+    ):
+        """Each manager's optional advice file, and whether it names all approval inputs"""
+        _managerRoot_ = os.path.join(os.environ["HOME"], "workers", self.project, "manager")
+        try:
+            _names_ = sorted(os.listdir(_managerRoot_))
+        except OSError:
+            return []
+        _found_ = []
+        for _name_ in _names_:
+            # Only a worker whose recorded role is manager can supply manager advice
+            if not NAME.fullmatch(_name_) or (self._word(os.path.join(self.state, "roles", "manager", _name_)) != "manager"):
+                continue
+            _root_ = os.path.join(_managerRoot_, _name_)
+            _path_ = f"reports/advice/{self.branch}/{self.worker}.md"
+            if not os.path.lexists(os.path.join(_root_, _path_)):
+                continue
+            _content_, _reason_ = self._copied(_root_, _path_)
+            if _content_ is None:
+                _found_.append({"manager": _name_, "state": "unreadable", "reason": _reason_})
+                continue
+            _lines_ = _content_.decode(errors="replace").splitlines()
+            _headers_ = [
+                f"worker: {self.name}",
+                f"form-sha256: {formFingerprint}",
+                f"task-sha256: {taskFingerprint}",
+                f"tests-commit: {testsCommit}",
+            ]
+            if (len(_lines_) < 4) or (_lines_[0] != _headers_[0]):
+                _found_.append({"manager": _name_, "state": "other", "content": _content_})
+                continue
+            _reasons_ = []
+            if (_lines_[1] != _headers_[1]):
+                _reasons_.append("the form changed")
+            if (_lines_[2] != _headers_[2]):
+                _reasons_.append("the task changed")
+            if (_lines_[3] != _headers_[3]):
+                _reasons_.append("the project tests commit changed")
+            if _reasons_:
+                _found_.append({"manager": _name_, "state": "stale", "reasons": _reasons_, "content": _content_})
+            else:
+                _found_.append({"manager": _name_, "state": "current", "content": _content_})
+        return _found_
 
     def mainBranch(self):
         """The branch of the project that only the user commits on"""
@@ -210,6 +266,56 @@ class Worker:
                 if all(_run_.get(_key_) == approval.get(_other_) for _key_, _other_ in (("listDigest", "listDigest"), ("testsCommit", "testsCommit"), ("commit", "copyCommit"))):
                     return True
         return False
+
+    def running(self):
+        """Whether this worker's sandbox is active at this moment"""
+        _unit_ = f"worker:{self.project}:{self.branch}:{self.worker}.scope"
+        return subprocess.run([self.config["systemctl"], "--user", "is-active", "--quiet", _unit_], check=False).returncode == 0
+
+    def requestRestart(
+        self,
+        approval: Annotated[dict, "The approval whose open lock is being acted on"],
+    ):
+        """Ask a supported real pi launcher to replace this sandbox once for this approval"""
+        ## Step 1. Find the supported control channel of the running launcher
+        _runtime_ = os.environ.get("XDG_RUNTIME_DIR")
+        if not _runtime_:
+            return False
+        _unit_ = f"worker:{self.project}:{self.branch}:{self.worker}"
+        _control_ = os.path.join(_runtime_, "workers", f"{_unit_}.control")
+        try:
+            _mode_ = os.open(os.path.join(_control_, "mode"), os.O_RDONLY | os.O_NOFOLLOW)
+            _supported_ = os.read(_mode_, 32) == b"supported\n"
+            os.close(_mode_)
+        except OSError:
+            return False
+        if not _supported_:
+            return False
+
+        ## Step 2. Serialize the one request belonging to this approval
+        _generation_ = approval.get("approvalId") or hashlib.sha256(json.dumps(approval, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        _restartRoot_ = os.path.join(self.state, "continuations", self.branch)
+        os.makedirs(_restartRoot_, mode=0o700, exist_ok=True)
+        _marker_ = os.path.join(_restartRoot_, self.worker)
+        _guard_ = os.open(f"{_marker_}.lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(_guard_, fcntl.LOCK_EX)
+            if (self._word(_marker_) == _generation_):
+                return True
+
+            ## Step 3. Reserve the one use, then publish it; a failed publication gives the use back
+            write(_marker_, f"{_generation_}\n", 0o600)
+            try:
+                write(os.path.join(_control_, "restart"), json.dumps({"nonce": secrets.token_hex(16), "worker": self.name}) + "\n", 0o600)
+            except OSError:
+                if (self._word(_marker_) == _generation_):
+                    os.unlink(_marker_)
+                return False
+            return True
+        except OSError:
+            return False
+        finally:
+            os.close(_guard_)
 
     def _word(
         self,
@@ -302,10 +408,27 @@ def acceptance(
 def show(
     worker: Annotated[Worker, "The worker whose form is shown"],
     content: Annotated[bytes, "The form as it was read"],
+    advice: Annotated[list, "The managers' advice files and how they relate to this form"],
 ):
-    """The form, every line behind a mark of this tool's; on a terminal in a viewer that waits until it is closed"""
+    """The form and current advice, every agent-written line behind a mark of this tool's"""
     _lines_ = plain(content.decode(errors="replace"), worker.config["maxFormBytes"]).split("\n")
-    _text_ = "\n".join([f"The form of {worker.name} ({len(content)} bytes); every line of it stands behind '{QUOTE.strip()}':", *[QUOTE + _line_ for _line_ in _lines_], "The end of the form."]) + "\n"
+    _shown_ = [f"The form of {worker.name} ({len(content)} bytes); every line of it stands behind '{QUOTE.strip()}':", *[QUOTE + _line_ for _line_ in _lines_], "The end of the form."]
+    if not advice:
+        _shown_.append("No manager advice for this form.")
+    for _entry_ in advice:
+        _manager_ = _entry_["manager"]
+        if (_entry_["state"] == "current"):
+            _adviceLines_ = plain(_entry_["content"].decode(errors="replace"), worker.config["maxFormBytes"]).split("\n")
+            _shown_ += [f"Advice from manager {_manager_} (the manager's word; checked against this form, task and tests commit); every line stands behind '{QUOTE.strip()}':", *[QUOTE + _line_ for _line_ in _adviceLines_], f"The end of advice from manager {_manager_}."]
+        elif (_entry_["state"] == "stale"):
+            _reason_ = ", and ".join(_entry_["reasons"])
+            _command_ = f"cd {shlex.quote(worker.main)} && pi --role manager --name {_manager_} -c"
+            _shown_.append(f"Advice from manager {_manager_} is not current because {_reason_}. Start the manager again to renew it with: {_command_}")
+        elif (_entry_["state"] == "other"):
+            _shown_.append(f"Advice from manager {_manager_} does not have the exact worker, form-sha256, task-sha256 and tests-commit headers for {worker.name}, so it is not shown as current.")
+        else:
+            _shown_.append(f"Advice from manager {_manager_} cannot be read safely: {plain(_entry_['reason'], 300)}")
+    _text_ = "\n".join(_shown_) + "\n"
     if sys.stdout.isatty():
         # As the commit guard shows a change: q closes the viewer, and the questions follow
         subprocess.run(worker.config["viewer"], input=_text_.encode(), check=False)
@@ -350,7 +473,7 @@ def approve(
         raise Refused(f"nothing was changed; to approve it anew, take the approval back first: workers approve --revoke {worker.name}")
 
     ## Step 4. What is approved: nothing but the user's word, or one approach of the worker's form as it is now
-    _approval_ = {"worker": worker.name}
+    _approval_ = {"worker": worker.name, "approvalId": secrets.token_hex(16)}
     _lines_ = ["# Decision", "", f"Written by `workers approve` for {worker.name}. The worker can read this file and cannot change it.", ""]
     if arguments.without_form:
         if worker.role is None:
@@ -370,11 +493,15 @@ def approve(
                 print(f"- {plain(_problem_, 300)}", file=sys.stderr)
             raise Refused("nothing was approved; the worker sees the same list with: intent check")
         # The tests: the form's, then the ones the manager added in the task file; and whether the project says how to run them
-        _added_ = [_test_ for _test_ in worker.added() if (_test_ not in _found_["tests"])]
+        _taskContent_, _taskTests_ = worker.task()
+        _added_ = [_test_ for _test_ in _taskTests_ if (_test_ not in _found_["tests"])]
         _tests_ = _found_["tests"] + _added_
         _commit_ = worker.tip(worker.branch)
         _stated_ = worker.stated(_commit_) if _commit_ else None
-        show(worker, _content_)
+        _fingerprint_ = hashlib.sha256(_content_).hexdigest()
+        _taskFingerprint_ = hashlib.sha256(_taskContent_).hexdigest()
+        _advice_ = worker.advice(_fingerprint_, _taskFingerprint_, _commit_ or "")
+        show(worker, _content_, _advice_)
         for _approach_ in _found_["approaches"]:
             _mark_ = "  (the worker's recommendation)" if (_approach_["number"] == _found_.get("recommended")) else ""
             print(f"Approach {_approach_['number']}: {plain(_approach_['title'], 200)}, {len(_approach_['steps'])} steps{_mark_}")
@@ -395,7 +522,14 @@ def approve(
                 "tests": _tests_,
                 "newTests": [_test_[:SHOWN] for _test_ in _found_["newTests"]],
                 # Of the bytes that were shown above
-                "fingerprint": hashlib.sha256(_content_).hexdigest(),
+                "fingerprint": _fingerprint_,
+                # Which managers' advice was shown, checked against that same one copy of the form
+                "advice": {
+                    "shown": sorted(_entry_["manager"] for _entry_ in _advice_ if (_entry_["state"] == "current")),
+                    "formFingerprint": _fingerprint_,
+                    "taskFingerprint": _taskFingerprint_,
+                    "testsCommit": _commit_,
+                },
                 # What a run of these tests must name to count as the baseline: the list, the project's commit that the tests
                 # are taken from, and the commit the worker's copy is at now
                 "listDigest": digest(_tests_),
@@ -419,8 +553,7 @@ def approve(
     if arguments.empty_scratch:
         if not worker.config["helper"]:
             raise Refused("--empty-scratch needs the datasets: on this machine the scratch areas are plain folders. Nothing was approved")
-        _unit_ = f"worker:{worker.project}:{worker.branch}:{worker.worker}.scope"
-        if (subprocess.run([worker.config["systemctl"], "--user", "is-active", "--quiet", _unit_], check=False).returncode == 0):
+        if worker.running():
             raise Refused(f"{worker.name} is running: end its session first. Nothing was approved")
         _emptied_ = subprocess.run([*worker.config["helper"], "rollback", worker.project, worker.branch, worker.worker, "created"], capture_output=True, text=True)
         if (_emptied_.returncode != 0):
@@ -429,6 +562,14 @@ def approve(
 
     ## Step 6. The record, which is the lock; then the decision file for the worker
     _approval_.update({"time": int(time.time()), "note": _note_[:SHOWN]})
+    if ("advice" in _approval_):
+        _adviceNames_ = ", ".join(_approval_["advice"]["shown"]) or "none"
+        _lines_ += [
+            f"- Manager advice shown: {_adviceNames_}",
+            f"- The form fingerprint that advice was checked against (sha256): {_approval_['advice']['formFingerprint']}",
+            f"- The task fingerprint that advice was checked against (sha256): {_approval_['advice']['taskFingerprint']}",
+            f"- The project tests commit that advice was checked against: {_approval_['advice']['testsCommit']}",
+        ]
     os.makedirs(os.path.dirname(worker.record), mode=0o700, exist_ok=True)
     write(worker.record, json.dumps(_approval_) + "\n", 0o600)
     _lines_ += [f"- Approved: {datetime.datetime.fromtimestamp(_approval_['time']).astimezone().isoformat(timespec='minutes')}", f"- The user's note: {plain(_note_) or '(none)'}"]
@@ -446,18 +587,25 @@ def approve(
     if os.path.isdir(os.path.dirname(worker.decision)) and not os.path.islink(os.path.dirname(worker.decision)):
         write(worker.decision, "\n".join(_lines_) + "\n", 0o644)
         _where_ = f"; what was decided is in {worker.decision}"
+    _lockState_ = state(worker)
     if _approval_.get("noTests"):
         print(f"approved (no tests: {_approval_['noTests']}): from its next start {worker.name} can write its copy of the project{_where_}")
-    elif (state(worker) == "open"):
+    elif (_lockState_ == "open"):
         print(f"approved, and the approved tests have run on its copy already: from its next start {worker.name} can write its copy of the project{_where_}")
     else:
         print(f"approved. Its copy stays read-only until the approved tests have run on it as it is, which is the baseline: the worker runs 'queue acceptance' and is started again{_where_}")
+    _running_ = worker.running()
+    _restart_ = _running_ and (_lockState_ == "open") and worker.requestRestart(_approval_)
+    if _restart_:
+        print(f"{worker.name} is still running; automatic continuation was requested. Its current answer and chat are saved before pi resumes in a writable sandbox")
+    elif _running_:
+        print(f"{worker.name} is still running: end its running session, then continue the same chat with: cd {shlex.quote(worker.main)} && pi --branch {worker.branch} --name {worker.worker} -c")
 
 
 def main():
     _parser_ = argparse.ArgumentParser(prog="workers approve", add_help=False)
     _parser_.add_argument("--config", required=True)
-    for _option_ in ("--without-form", "--revoke", "--empty-scratch", "--state", "--acceptance"):
+    for _option_ in ("--without-form", "--revoke", "--empty-scratch", "--state", "--acceptance", "--request-restart"):
         _parser_.add_argument(_option_, action="store_true")
     _parser_.add_argument("worker", nargs="?", default="")
     try:
@@ -468,13 +616,17 @@ def main():
     with open(_arguments_.config) as _file_:
         _config_ = json.load(_file_)
     try:
-        if (sum([_arguments_.without_form, _arguments_.revoke, _arguments_.empty_scratch, _arguments_.state, _arguments_.acceptance]) > 1):
+        if (sum([_arguments_.without_form, _arguments_.revoke, _arguments_.empty_scratch, _arguments_.state, _arguments_.acceptance, _arguments_.request_restart]) > 1):
             raise Refused(USAGE)
         _worker_ = Worker(_config_, _arguments_.worker)
         if _arguments_.state:
             print(state(_worker_))
         elif _arguments_.acceptance:
             print(json.dumps(acceptance(_worker_)))
+        elif _arguments_.request_restart:
+            _approval_ = _worker_.approval()
+            if (_approval_ is not None) and (_worker_.running()) and (state(_worker_) == "open"):
+                _worker_.requestRestart(_approval_)
         else:
             approve(_worker_, _arguments_)
     except Refused as _refusal_:

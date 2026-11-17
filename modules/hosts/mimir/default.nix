@@ -42,6 +42,8 @@ in
       # The user's numbers: every pi session counts as an agent, and jobs keep at least 12 GiB
       agentsMemory = "6G";
       agentMemory = "3G";
+      # Yield contended processors to the desktop: its default weight 100 gets five shares for the workers' one
+      processorWeight = 20;
       # Leave queue slots for other sandboxes, and keep an ordinary job within two processors
       maxSlots = 2;
       jobProcessors = 2;

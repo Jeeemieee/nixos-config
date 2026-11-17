@@ -38,10 +38,34 @@ checkParent() {
   [ "$(stat -c '%u %a' -- "$path")" = "0 755" ] || die "refusing: $path does not belong to root with mode 755"
 }
 
+# Make each grouping level as root, and refuse an existing one that the user could rename or replace
+checkAncestors() {
+  local root=$1 relative=$2 parent path level levels
+  parent=$(dirname "$relative")
+  [ "$parent" = . ] && return
+  path=$root
+  IFS=/ read -r -a levels <<< "$parent"
+  for level in "${levels[@]}"; do
+    path=$path/$level
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+      install -d -o root -g root -m 755 -- "$path"
+    fi
+    [ "$(realpath -e -- "$path" 2> /dev/null)" = "$path" ] || die "refusing: $path is missing or is reached through a link"
+    [ "$(stat -c '%u %a' -- "$path")" = "0 755" ] || die "refusing: $path does not belong to root with mode 755; correct it with: sudo chown root:root $path && sudo chmod 755 $path"
+  done
+}
+
 # Mount a dataset at its own mount point unless it is mounted, and check where it arrived
 mountDataset() {
   local dataset=$1 path
   path=$(zfs get -H -o value mountpoint "$dataset")
+  if [[ $path = "$WORKERS_PATH/"* ]]; then
+    checkAncestors "$WORKERS_PATH" "${path#"$WORKERS_PATH/"}"
+  elif [[ $path = "$SCRATCH_PATH/"* ]]; then
+    checkAncestors "$SCRATCH_PATH" "${path#"$SCRATCH_PATH/"}"
+  else
+    die "refusing: the mount point of $dataset is outside the two worker parents"
+  fi
   if [ "$(zfs get -H -o value mounted "$dataset")" != yes ]; then zfs mount "$dataset"; fi
   [ "$(findmnt -rn -o SOURCE --mountpoint "$path" 2> /dev/null)" = "$dataset" ] || die "$dataset did not arrive at $path"
 }
@@ -49,6 +73,7 @@ mountDataset() {
 # Create a dataset that belongs to the caller, with a limit, and mount it; the levels above it only group and are never mounted
 createOwned() {
   local parent=$1 parentPath=$2 relative=$3 quota=$4 level dataset=$1
+  checkAncestors "$parentPath" "$relative"
   for level in $(dirname "$relative" | tr / ' '); do
     if [ "$level" != . ]; then
       dataset=$dataset/$level
@@ -134,21 +159,36 @@ case "$action" in
     ;;
   retire)
     exists "$folder" || die "there is no worker $project/$branch/$name"
-    # A removal either completes or leaves the worker as it was. Everything that can fail comes before anything is changed:
-    # both must be free to unmount. If the second is not, the first is mounted again
-    if [ -z "$(retired)" ]; then
-      if exists "$area" && [ "$(zfs get -H -o value mounted "$area")" = yes ]; then
-        zfs unmount "$area" || die "the scratch area of $project/$branch/$name is in use (a terminal or a program is in it); nothing was changed"
-      fi
-      if [ "$(zfs get -H -o value mounted "$folder")" = yes ] && ! zfs unmount "$folder"; then
-        if exists "$area"; then zfs mount "$area"; fi
+    # A worker already marked by an older interrupted removal keeps that state; a later call only finishes its scratch area
+    if [ -n "$(retired)" ]; then
+      if exists "$area"; then zfs destroy -r "$area" || die "the earlier removal of $project/$branch/$name is still blocked because its scratch area is in use"; fi
+      exit 0
+    fi
+
+    # A new removal first detaches both places while remembering exactly what must be restored on refusal
+    areaMounted=no
+    folderMounted=no
+    if exists "$area" && [ "$(zfs get -H -o value mounted "$area")" = yes ]; then
+      areaMounted=yes
+      zfs unmount "$area" || die "the scratch area of $project/$branch/$name is in use (a terminal or a program is in it); nothing was changed"
+    fi
+    if [ "$(zfs get -H -o value mounted "$folder")" = yes ]; then
+      folderMounted=yes
+      if ! zfs unmount "$folder"; then
+        if [ "$areaMounted" = yes ]; then zfs mount "$area"; fi
         die "the folder of $project/$branch/$name is in use (a terminal or a program is in it); nothing was changed"
       fi
-      # Nothing is destroyed of the folder: it is kept from being mounted, and marked with the time
-      zfs set canmount=off "workers:retired=$(date +%s)" "$folder"
     fi
-    # Also the step that is left of a removal that was interrupted here: a second call completes it
-    if exists "$area"; then zfs destroy -r "$area"; fi
+
+    # Mark the kept folder, then destroy the disposable area; a failed destruction rolls every property and mount back
+    zfs set canmount=off "workers:retired=$(date +%s)" "$folder"
+    if exists "$area" && ! zfs destroy -r "$area"; then
+      zfs inherit workers:retired "$folder"
+      zfs set canmount=noauto "$folder"
+      if [ "$folderMounted" = yes ]; then mountDataset "$folder"; fi
+      if [ "$areaMounted" = yes ]; then mountDataset "$area"; fi
+      die "the scratch area of $project/$branch/$name is in use; the removal was rolled back and nothing was changed"
+    fi
     ;;
   restore)
     [ -n "$(retired)" ] || die "the worker $project/$branch/$name is not removed"

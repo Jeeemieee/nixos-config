@@ -186,6 +186,8 @@ in
             ]
           );
           maxRequestBytes = 1048576;
+          # One piece of a manager's read of another worker; larger regular files are read with another offset
+          maxReadBytes = maxTextBytes;
           # A request arrives at once or not at all, so the whole of it has this long; connections without one are few
           requestSeconds = 10;
           maxConnections = 16;
@@ -214,19 +216,22 @@ in
       # When the sandbox has ended, the broker ends with it, and after it the sandbox's runtime state is removed: its folder
       # with the view and the socket, and the copies of the task and of the project's rules beside it
       start = pkgs.writeShellScript "worker-start" ''
+        # The scope is active and its mount-view record exists now, so removal can use those facts instead of the launcher's lifecycle lock
+        exec 8>&-
         ${systemd}/bin/systemd-run --user --quiet --collect --expand-environment=no --unit="broker-$WORKER_UNIT" --slice=workers-brokers.slice \
           -p BindsTo="$WORKER_UNIT.scope" -p After="$WORKER_UNIT.scope" -p MemoryMax=${cfg.brokerMemory} -p MemorySwapMax=0 \
           -p ExecStopPost="${pkgs.coreutils}/bin/rm -rf $WORKER_STATE $WORKER_STATE.task $WORKER_STATE.rules" \
           -- ${python} ${checked ../../workers/broker.py} --config ${brokerConfig} --dir "$WORKER_STATE" --unit "$WORKER_UNIT" \
-          --records "$WORKER_RECORDS" --records-limit "$WORKER_RECORDS_LIMIT" --scratch "$WORKER_AREA" --repo "$WORKER_REPO" --identity "$WORKER_IDENTITY" \
+          --records "$WORKER_RECORDS" --records-limit "$WORKER_RECORDS_LIMIT" --scratch "$WORKER_AREA" --repo "$WORKER_REPO" \
+          --workers-root "$WORKER_FOLDERS" --roles-root "$WORKER_ROLES" --identity "$WORKER_IDENTITY" \
           || { echo "the broker of this sandbox could not be started, so the sandbox does not start" >&2; exit 2; }
         for _ in $(${pkgs.coreutils}/bin/seq 50); do
           if [ -S "$WORKER_STATE/socket/queue.sock" ]; then break; fi
           ${pkgs.coreutils}/bin/sleep 0.1
         done
         [ -S "$WORKER_STATE/socket/queue.sock" ] || { echo "the broker of this sandbox did not come up, so the sandbox does not start" >&2; exit 2; }
-        unset WORKER_UNIT WORKER_STATE WORKER_RECORDS WORKER_RECORDS_LIMIT WORKER_AREA WORKER_REPO WORKER_IDENTITY
-        # The launcher's lock on this worker's name (descriptor 9) is given up here: from now on the running scope holds the name
+        unset WORKER_UNIT WORKER_STATE WORKER_RECORDS WORKER_RECORDS_LIMIT WORKER_AREA WORKER_REPO WORKER_FOLDERS WORKER_ROLES WORKER_IDENTITY
+        # The launcher's lock on this worker's name is given up after the running scope exists
         exec "$@" 9>&-
       '';
 
@@ -271,6 +276,11 @@ in
 
       queue = pkgs.writeShellScriptBin "queue" ''
         exec ${python} ${checked ../../workers/queue.py} "$@"
+      '';
+
+      # A manager's read-only route to every worker's reports and records, including workers made after this sandbox started
+      workerRead = pkgs.writeShellScriptBin "worker-read" ''
+        exec ${python} ${checked ../../workers/worker-read.py} "$@"
       '';
 
       # The worker's own command for the check of its form
@@ -402,6 +412,11 @@ in
           default = "400%";
           description = "Processor time of all agents together, without their jobs: 100% is one CPU.";
         };
+        processorWeight = lib.mkOption {
+          type = lib.types.ints.between 1 10000;
+          default = 100;
+          description = "Processor weight of the workers' whole resource group against the user's other groups; systemd's default is 100.";
+        };
         brokerMemory = lib.mkOption {
           type = lib.types.str;
           default = "64M";
@@ -446,6 +461,7 @@ in
           tmpfsBytes = lib.mapAttrs (_: size: size * 1024 * 1024) cfg.tmpfsMiB;
           inherit (cfg) agentMemory;
           start = "${start}";
+          supervise = "${python} ${checked ../../workers/supervise.py}";
           prepare = "${prepareCopy}/bin/prepare-copy";
           readChecked = "${python} ${checked ../../workers/read-checked.py}";
           # Says whether an implementer's copy is writable at this start: open, no approval, or no baseline
@@ -473,6 +489,7 @@ in
 
         environment.systemPackages = [
           queue
+          workerRead
           intent
           workersTool
         ];
@@ -507,6 +524,7 @@ in
           workers.sliceConfig = {
             MemoryMax = cfg.totalMemory;
             MemorySwapMax = 0;
+            CPUWeight = cfg.processorWeight;
           };
           workers-agents.sliceConfig = {
             MemoryMax = cfg.agentsMemory;
@@ -686,6 +704,16 @@ in
 
       # The real pi, as this flake builds it, for the one test that starts it in every role
       realPi = pkgs.pi-coding-agent;
+      # A deterministic continuation failure after the first real interactive session, to check the manual recovery path
+      restartFailurePi = pkgs.writeShellScript "pi-restart-failure-probe" ''
+        for argument in "$@"; do
+          if [ "$argument" = -c ]; then
+            echo "forced continuation failure" >&2
+            exit 9
+          fi
+        done
+        exec ${realPi}/bin/pi "$@"
+      '';
 
       standIn =
         config:
@@ -740,6 +768,7 @@ in
               agentsMemory = "384M";
               agentMemory = "256M";
               agentsCpuQuota = "150%";
+              processorWeight = 20;
               tmpfsMiB = {
                 tmp = 64;
                 home = 32;
@@ -846,6 +875,21 @@ in
                 ${pkgs.coreutils}/bin/cat /run/task.md
               fi
             '';
+            controlProbe = pkgs.writeShellScript "control-probe" ''
+              result=$WORKER_SCRATCH/control-probe-result
+              attempt() {
+                label=$1
+                shift
+                if "$@" 2> /dev/null; then state=written; else state=refused; fi
+                printf '%s=%s\n' "$label" "$state" >> "$result"
+              }
+              : > "$result"
+              attempt started ${pkgs.coreutils}/bin/dd if=/dev/zero of=/run/worker-control/started bs=1M count=8 status=none
+              attempt mode ${pkgs.bash}/bin/bash -c 'printf changed > /run/worker-control/mode'
+              attempt create ${pkgs.bash}/bin/bash -c 'printf created > /run/worker-control/created'
+              touch "$WORKER_SCRATCH/control-probe-ready"
+              until [ -e "$WORKER_SCRATCH/control-probe-stop" ]; do ${pkgs.coreutils}/bin/sleep 0.05; done
+            '';
           in
           {
             imports = [ topLevel.flake.modules.nixos.workers ];
@@ -883,7 +927,43 @@ in
                   PI_TELEMETRY = "0";
                 };
               })
+              # A deterministic sandbox command that probes the approval control mount without depending on pi startup
+              (topLevel.flake.lib.mkSandbox pkgs {
+                name = "worker-control-probe";
+                command = "${controlProbe}";
+                workers = config.hostSpec.workers.sandbox;
+                promptOption = "--instructions";
+                approvalRestart = ../../workers/approval-restart.ts;
+              })
+              # Real interactive pi with a local deterministic provider, for the automatic approval continuation
+              (topLevel.flake.lib.mkSandbox pkgs {
+                name = "worker-pi-restart";
+                command = "${realPi}/bin/pi --extension ${../../workers/test-provider.ts} --provider worker-test --model deterministic --offline";
+                workers = config.hostSpec.workers.sandbox;
+                promptOption = "--append-system-prompt";
+                approvalRestart = ../../workers/approval-restart.ts;
+                environment = {
+                  PI_SKIP_VERSION_CHECK = "1";
+                  PI_TELEMETRY = "0";
+                };
+              })
+              (topLevel.flake.lib.mkSandbox pkgs {
+                name = "worker-pi-restart-failure";
+                command = "${restartFailurePi} --extension ${../../workers/test-provider.ts} --provider worker-test --model deterministic --offline";
+                workers = config.hostSpec.workers.sandbox;
+                promptOption = "--append-system-prompt";
+                approvalRestart = ../../workers/approval-restart.ts;
+                environment = {
+                  PI_SKIP_VERSION_CHECK = "1";
+                  PI_TELEMETRY = "0";
+                };
+              })
+              # Direct access to the production supervisor for bounded-channel lifecycle controls
+              (pkgs.writeShellScriptBin "worker-supervise-test" ''
+                exec ${config.hostSpec.workers.sandbox.supervise} "$@"
+              '')
               # Tools of a development shell, for the same test
+              pkgs.expect
               pkgs.python3
               pkgs.uv
               pkgs.gcc

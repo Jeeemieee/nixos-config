@@ -197,6 +197,28 @@ with subtest("V13c: the helper while the caller tries to swap a folder on its wa
     assert machine.succeed("ls /var/lib/target").split() == ["file"]
     assert machine.succeed(f"stat -c '%U' {folders}/race {folders}/race/b {folders}/race/b/n1").split() == ["root", "root", user]
 
+with subtest("Round 6 item 4: every project and branch level above a worker belongs to root"):
+    # Reproduction: a user-owned project level must be refused before a worker dataset is made or mounted below it
+    machine.succeed(asUser("mkdir ~/owned-project && git -C ~/owned-project init -q -b main && git -C ~/owned-project commit -q --allow-empty -m base && git -C ~/owned-project branch b1"), f"mkdir {folders}/owned-project && chown {user}:users {folders}/owned-project")
+    out = machine.fail(worker("b1", "w1", "true", project="owned-project") + " 2>&1")
+    correction = f"sudo chown root:root {folders}/owned-project && sudo chmod 755 {folders}/owned-project"
+    print("Round 6 item 4 project:", out)
+    assert f"refusing: {folders}/owned-project" in out and correction in out, out
+    machine.fail("zfs list rpool/workers/owned-project/b1/w1")
+
+    # Control: the user's own old/ is a neighbour, not an ancestor, and remains his while a worker starts
+    machine.succeed(f"chown root:root {folders}/owned-project; chmod 755 {folders}/owned-project; mkdir {folders}/owned-project/old; chown {user}:users {folders}/owned-project/old")
+    machine.succeed(worker("b1", "w1", "true", project="owned-project"))
+    assert machine.succeed(f"stat -c '%U' {folders}/owned-project/old").strip() == user
+
+    # The same refusal covers a branch level and the scratch tree
+    machine.succeed(asUser("git -C ~/owned-project branch b2"), f"mkdir {folders}/owned-project/b2; chown {user}:users {folders}/owned-project/b2")
+    out = machine.fail(worker("b2", "w2", "true", project="owned-project") + " 2>&1")
+    assert f"refusing: {folders}/owned-project/b2" in out and f"sudo chown root:root {folders}/owned-project/b2 && sudo chmod 755 {folders}/owned-project/b2" in out, out
+    machine.succeed(f"mkdir {areas}/owned-area; chown {user}:users {areas}/owned-area")
+    out = machine.fail(asUser(f"sudo -n {helper} ensure-area owned-area b1 w1") + " 2>&1")
+    assert f"refusing: {areas}/owned-area" in out and f"sudo chown root:root {areas}/owned-area && sudo chmod 755 {areas}/owned-area" in out, out
+
 with subtest("V16a: the first start creates the worker's folder and scratch area, each a dataset with its limit"):
     out = machine.succeed(worker("b1", "w1", "pwd; env | grep -E '^(WORKER|UV)_' | sort; ls ~; ls ~/workers/alpha ~/workers/alpha/b1; ls ~/workers/alpha/b1/w1"))
     print("V16a inside:", out)
@@ -251,6 +273,16 @@ with subtest("Views: an implementer's own places, its records read-only, its ses
     for expected in ["r\nd\n", "folder-write=1", "area-write=1", "instructions=0", "project=1", f"{areas}/alpha/manager/manager", f"{folders}/alpha/manager/manager/repo"]:
         assert expected in out, out
     machine.succeed(f"test ! -e {folders}/alpha/b1/w1/reports/intruder && test ! -e {areas}/alpha/b1/w1/intruder && test ! -e {home}/alpha/by-manager")
+
+with subtest("Round 6 item 2: a running manager reads a worker made later through its broker"):
+    live = "echo manager-runs; until [ -e $WORKER_SCRATCH/read-go ]; do sleep 0.2; done; worker-read b1/read-late reports r; worker-read b1/read-late records runs.jsonl | grep -m1 '\"name\": \"read-late\"'; echo \"read=$?\""
+    machine.succeed(f"(({manager(live)}); touch /tmp/read-late-ended) > /tmp/read-late 2>&1 &")
+    machine.wait_until_succeeds("grep -q manager-runs /tmp/read-late", timeout=60 * pace)
+    machine.succeed(worker("b1", "read-late", "echo made-later > ../reports/r; queue run -- true"), f"touch {areas}/alpha/manager/manager/read-go")
+    machine.wait_until_succeeds("test -e /tmp/read-late-ended", timeout=60 * pace)
+    out = machine.succeed("cat /tmp/read-late")
+    print("live manager reader:", out)
+    assert "made-later" in out and '"name": "read-late"' in out and out.rstrip().endswith("read=0"), out
 
 with subtest("V16c: a folder and an area created after a manager and a deep reviewer started are neither visible nor writable for them"):
     # Each of the two says when its sandbox runs and waits at a gate; the new worker is made in between
@@ -452,6 +484,30 @@ with subtest("V17: removing a worker keeps its folder for a time, and only the s
     # The worker still starts, and a second attempt after the terminal is closed completes the removal, with one archive
     machine.succeed(worker("b1", "rm3", "grep -qx report ../reports/final"), "pkill -x -f 'sleep 600'; while pgrep -x -f 'sleep 600' > /dev/null; do sleep 0.1; done", asUser("workers remove alpha/b1/rm3"))
     assert machine.succeed(f"ls -d {folders}/alpha/archive/b1-rm3-* | wc -l").strip() == "1" and "removed" in machine.succeed(asUser("workers list") + " | grep rm3")
+
+    # R2: a manager that has the worker's places in its mount view causes a named refusal before any removal state changes
+    machine.succeed(worker("b1", "rm6", "echo report > ../reports/final"))
+    before = state("rm6")
+    machine.succeed(f"({manager('touch $WORKER_SCRATCH/rm6-manager-runs; while [ ! -e $WORKER_SCRATCH/rm6-manager-end ]; do sleep 0.2; done')}) > /tmp/rm6-manager 2>&1 &")
+    machine.wait_until_succeeds(f"test -e {areas}/alpha/manager/manager/rm6-manager-runs", timeout=30 * pace)
+    out = machine.fail(asUser("workers remove alpha/b1/rm6") + " 2>&1")
+    print("R2 manager holds worker places:", out.strip(), "| state:", state("rm6"))
+    assert "manager/manager" in out and "holds alpha/b1/rm6" in out and "was not removed and is as it was" in out and state("rm6") == before, (out, before, state("rm6"))
+    machine.succeed(f"touch {areas}/alpha/manager/manager/rm6-manager-end")
+    machine.wait_until_succeeds(asUser("! systemctl --user is-active --quiet worker:alpha:manager:manager.scope"), timeout=30 * pace)
+    out = machine.succeed(asUser("workers remove alpha/b1/rm6"))
+    assert "removed alpha/b1/rm6" in out and machine.succeed(f"ls -d {folders}/alpha/archive/b1-rm6-* | wc -l").strip() == "1", out
+
+    # R2: the project lifecycle lock serializes a start against removal before that start can acquire worker places
+    machine.succeed(f"rm -f /tmp/remove-lock-held /tmp/remove-lock-release {areas}/alpha/manager/manager/remove-race-mounted")
+    machine.succeed(asUser("flock -x /run/user/1000/workers/worker:alpha.lifecycle.lock -c 'touch /tmp/remove-lock-held; while [ ! -e /tmp/remove-lock-release ]; do sleep 0.2; done'") + " > /tmp/remove-lock 2>&1 &")
+    machine.wait_until_succeeds("test -e /tmp/remove-lock-held", timeout=10 * pace)
+    machine.succeed(f"({manager('touch $WORKER_SCRATCH/remove-race-mounted')}) > /tmp/remove-race-manager 2>&1 &")
+    machine.sleep(2)
+    machine.fail(f"test -e {areas}/alpha/manager/manager/remove-race-mounted")
+    machine.succeed("touch /tmp/remove-lock-release")
+    machine.wait_until_succeeds(f"test -e {areas}/alpha/manager/manager/remove-race-mounted", timeout=30 * pace)
+
     # A removal interrupted after the folder was marked (here: the helper called without the tool): the tool's next call completes it
     machine.succeed(worker("b1", "rm4", "true"), asUser(f"sudo -n {helper} retire alpha b1 rm4"))
     assert machine.succeed(asUser("workers list") + " | grep rm4 | awk '{ print $5 }'").strip() == "stopped"
@@ -467,18 +523,23 @@ with subtest("V17: removing a worker keeps its folder for a time, and only the s
     print("the folder in use:", out.strip(), "| state:", state("rm5"))
     assert "the folder of alpha/b1/rm5 is in use" in out and "was not removed and is as it was" in out and state("rm5") == before == ["noauto", "yes", "-", "yes", "1", "0", "stopped"], (before, state("rm5"))
     machine.succeed(f"grep -qx kept {areas}/alpha/b1/rm5/kept", "pkill -x -f 'sleep 601'; while pgrep -x -f 'sleep 601' > /dev/null; do sleep 0.1; done")
-    # The review's first small point: the last step, destroying the scratch area, fails after the folder was marked (here: a
-    # snapshot of the area that is held). The removal took place, so the archive stays; the next call completes it, with that one archive
+    # R2: if destruction of the scratch dataset fails, the helper rolls the worker back completely and the archive is removed
     area = "rpool/scratch/workers/alpha/b1/rm5"
     machine.succeed(f"zfs snapshot {area}@held && zfs hold keep {area}@held")
     out = machine.fail(asUser("workers remove alpha/b1/rm5") + " 2>&1")
-    print("the last step fails:", out.strip(), "| state:", state("rm5"))
-    assert "is unmounted and kept" in out and "its scratch area could not be destroyed" in out and "as it was" not in out, out
-    after = state("rm5")
-    assert after[0:2] == ["off", "no"] and after[2].isdigit() and after[4:] == ["1", "1", "stopped"], after
-    machine.succeed(f"grep -qx report {folders}/alpha/archive/b1-rm5-*/reports/final", f"zfs release keep {area}@held")
+    print("scratch destruction fails atomically:", out.strip(), "| state:", state("rm5"))
+    assert "was not removed and is as it was" in out and state("rm5") == before, (out, before, state("rm5"))
+    assert machine.succeed(f"(ls -d {folders}/alpha/archive/b1-rm5-* 2>/dev/null || true) | wc -l").strip() == "0"
+
+    # A worker left half removed by an earlier version is still completed on the next call; a real held snapshot blocks one retry
+    folder = "rpool/workers/alpha/b1/rm5"
+    retired = machine.succeed("date +%s").strip()
+    machine.succeed(f"zfs unmount {area}; zfs unmount {folder}; zfs set canmount=off workers:retired={retired} {folder}")
+    out = machine.fail(asUser("workers remove alpha/b1/rm5") + " 2>&1")
+    assert "earlier removal" in out and state("rm5")[0:3] == ["off", "no", retired], (out, state("rm5"))
+    machine.succeed(f"zfs release keep {area}@held")
     out = machine.succeed(asUser("workers remove alpha/b1/rm5"))
-    assert "an earlier removal was completed" in out and machine.succeed(f"ls -d {folders}/alpha/archive/b1-rm5-* | wc -l").strip() == "1", out
+    assert "an earlier removal was completed" in out and machine.succeed(f"(ls -d {folders}/alpha/archive/b1-rm5-* 2>/dev/null || true) | wc -l").strip() == "0", out
     machine.fail(f"zfs list {area}")
     assert "removed" in machine.succeed(asUser("workers list") + " | grep rm5")
     # A copy replaced by a link to another folder, from outside: the removal does not reach through it

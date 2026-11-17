@@ -1,3 +1,4 @@
+import base64
 import json
 import shlex
 import time
@@ -614,7 +615,8 @@ with subtest("V5: the sandbox killed, the client killed, the broker killed"):
     assert slot() == "taken" and userUnits("'job-*'") == ["job-worker:alpha:b1:a-1.scope"] and "broker-worker:alpha:b1:a.service" in userUnits("'broker-*'")
     machine.succeed(asUser("systemctl --user kill -s KILL worker:alpha:b1:a.scope"))
     machine.wait_until_fails("pgrep -x -f 'sleep 300'", timeout=15 * pace)
-    machine.wait_until_succeeds(asUser("! systemctl --user is-active --quiet broker-worker:alpha:b1:a.service"), timeout=15 * pace)
+    # `is-active` is already false while a service is still deactivating; wait until its non-daemon record writer has ended
+    machine.wait_until_succeeds(asUser('[ "$(systemctl --user show -p ActiveState --value broker-worker:alpha:b1:a.service)" = inactive ]'), timeout=15 * pace)
     assert slot() == "free" and userUnits("'job-*'") == [], userUnits("'job-*'")
 
     # The client
@@ -659,6 +661,67 @@ with subtest("V2a: all agents together stay within their share of the processors
     openGate("v2a-measured", "a2")
     sandboxEnded("a")
     sandboxEnded("a2")
+
+with subtest("Round 6 item 3: the worker group yields contended processors to ordinary user work"):
+    # CPUWeight 20 against the ordinary default 100 predicts an ordinary/worker ratio of 5 and shares 5/6 versus 1/6
+    # The fixed lower result is their ratios' midpoint, 3; the equal-weight control stays within 3/5 and 5/3 of 1
+    assert machine.succeed(f"cat {cgroup}/workers.slice/cpu.weight").strip() == "20"
+    cpuProgram = r'''import os
+import sys
+import time
+
+gate, output, seconds, cpuText = sys.argv[1:]
+children = []
+for cpu in [int(value) for value in cpuText.split(",")]:
+    child = os.fork()
+    if child == 0:
+        os.sched_setaffinity(0, {cpu})
+        while not os.path.exists(gate):
+            time.sleep(0.01)
+        end = time.monotonic() + float(seconds)
+        count = 0
+        while time.monotonic() < end:
+            count += 1
+        descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.write(descriptor, f"{count}\n".encode())
+        os.close(descriptor)
+        os._exit(0)
+    children.append(child)
+for child in children:
+    os.waitpid(child, 0)
+'''
+    encoded = base64.b64encode(cpuProgram.encode()).decode()
+    cpuHost = f"{home}/cpu-benchmark"
+    machine.succeed(f"install -d -o {user} -g users {cpuHost}; printf %s {shlex.quote(encoded)} | base64 -d > {cpuHost}/count.py; chown {user}:users {cpuHost}/count.py; chmod 755 {cpuHost}/count.py")
+
+    # The control puts the same three busy processes in each of two default-weight sibling groups
+    machine.succeed(f"rm -f {cpuHost}/control-go {cpuHost}/control-a {cpuHost}/control-b")
+    machine.succeed(asUser(f"systemd-run --user --quiet --unit=cpu-control-a --slice=control-a.slice python3 {cpuHost}/count.py {cpuHost}/control-go {cpuHost}/control-a 6 1,2,3"))
+    machine.succeed(asUser(f"systemd-run --user --quiet --unit=cpu-control-b --slice=control-b.slice python3 {cpuHost}/count.py {cpuHost}/control-go {cpuHost}/control-b 6 1,2,3"))
+    machine.wait_until_succeeds(f"[ $(pgrep -fc 'count.py {cpuHost}/control-go') -ge 2 ]")
+    machine.succeed(f"touch {cpuHost}/control-go")
+    machine.wait_until_succeeds(f"[ $(wc -l < {cpuHost}/control-a) -eq 3 ] && [ $(wc -l < {cpuHost}/control-b) -eq 3 ]", timeout=15 * pace)
+    controlA = sum(int(value) for value in machine.succeed(f"cat {cpuHost}/control-a").split())
+    controlB = sum(int(value) for value in machine.succeed(f"cat {cpuHost}/control-b").split())
+    controlRatio = controlA / controlB
+    print("Round 6 item 3 equal-weight control:", controlA, controlB, controlRatio)
+    assert (3 / 5) < controlRatio < (5 / 3), controlRatio
+
+    # A parallel queued job and ordinary app group then contend on every work CPU, with weights 20 and 100
+    scratch = f"{areas}/alpha/b1/a"
+    machine.succeed(f"cp {cpuHost}/count.py {scratch}/cpu-count.py; rm -f {scratch}/cpu-go {scratch}/cpu-worker {cpuHost}/desktop")
+    background(worker("a", 'queue run --parallel -- python3 "$WORKER_SCRATCH/cpu-count.py" "$WORKER_SCRATCH/cpu-go" "$WORKER_SCRATCH/cpu-worker" 8 1,2,3'), "/tmp/cpu-worker-log")
+    machine.wait_until_succeeds("pgrep -f 'cpu-count.py.*cpu-worker'", timeout=30 * pace)
+    machine.succeed(asUser(f"systemd-run --user --quiet --unit=cpu-desktop --slice=app.slice python3 {cpuHost}/count.py {scratch}/cpu-go {cpuHost}/desktop 8 1,2,3"))
+    machine.wait_until_succeeds(f"pgrep -f 'count.py.*{cpuHost}/desktop'")
+    machine.succeed(f"touch {scratch}/cpu-go")
+    machine.wait_until_succeeds(f"[ $(wc -l < {scratch}/cpu-worker) -eq 3 ] && [ $(wc -l < {cpuHost}/desktop) -eq 3 ]", timeout=20 * pace)
+    workerCount = sum(int(value) for value in machine.succeed(f"cat {scratch}/cpu-worker").split())
+    desktopCount = sum(int(value) for value in machine.succeed(f"cat {cpuHost}/desktop").split())
+    weightedRatio = desktopCount / workerCount
+    print("Round 6 item 3 weighted:", desktopCount, workerCount, weightedRatio)
+    assert weightedRatio > 3, weightedRatio
+    sandboxEnded("a")
 
 with subtest("V2b: the timing cores are cleared while a timing job runs, and only then"):
     background(worker("a", loop("loop-direct")), "/dev/null")

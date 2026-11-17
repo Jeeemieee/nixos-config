@@ -107,6 +107,7 @@ let
       #   tmpfsBytes: the sizes of the sandbox's folders in memory, { tmp, home, run, shm }
       #   agentMemory: the memory limit of the agent's own scope
       #   start: the program that starts the sandbox's broker and then the sandbox
+      #   supervise: the program that keeps pi's terminal and re-enters this launcher after approval
       #   prepare: the program that makes a worker's copy of the project, inside its sandbox
       #   readChecked: the program that copies a file an agent may have written, opened once and without following links
       #   lockState: the program that says whether an implementer's copy is writable: open, no approval, or no baseline
@@ -116,6 +117,8 @@ let
       # The option by which the command takes a file of instructions (pi: --append-system-prompt); null for a command that takes none
       # With it, a worker gets its role's file and its task file, and does not start without the task file
       promptOption ? null,
+      # A trusted pi extension that requests graceful shutdown for an approval; null for commands that cannot resume a saved chat
+      approvalRestart ? null,
     }:
     let
       # Starts bwrap. Every mount that the view names as "checked" (--ro-bind-checked, --bind-checked) is opened by it first,
@@ -133,6 +136,27 @@ let
           exit 1
         '';
       };
+      # A manager's stable instructions name the live broker route, rather than paths whose visibility was fixed at session start
+      workerRoleFiles =
+        if workers == null then
+          { }
+        else
+          workers.roleFiles
+          // {
+            manager = pkgs.runCommand "worker-role-manager.md" { } ''
+              cat ${workers.roleFiles.manager} > "$out"
+              printf '\n%s\n%s\n%s\n' \
+                'To read any worker’s reports or records, including a worker started after this manager, use `worker-read <branch>/<name> <reports|records> [<path>]`; do not rely on the worker being visible as a direct path.' \
+                'Manager advice must be written to `reports/advice/<branch>/<worker>.md` with the exact worker, form-sha256, task-sha256, and tests-commit headers; use `worker-read` for the form, the manager-owned task file for the task hash, and the project branch commit that supplies the tests.' \
+                'After each implementer reports completion, start a separate reviewer or deep-reviewer worker. Do not ask the implementer to wait for or perform its own review.' >> "$out"
+            '';
+            implementer = pkgs.runCommand "worker-role-implementer.md" { } ''
+              cat ${workers.roleFiles.implementer} > "$out"
+              printf '\n%s\n%s\n' \
+                'When approval and the required baseline both exist, a supported open interactive pi session saves the current answer and chat, then continues automatically in a fresh writable sandbox. If automatic continuation is unavailable or its startup fails, follow the exact manual `pi --branch <branch> --name <name> -c` recovery command printed by the tool.' \
+                'Finish the implementation and validation, then write a clear handoff and stop. Do not wait for a reviewer in the implementation session.' >> "$out"
+            '';
+          };
     in
     pkgs.writeShellApplication {
       inherit name;
@@ -170,6 +194,7 @@ let
 
         # The wrapper's own options come first; everything else goes to ${name}
         # Every shared folder is a root: the project, and each folder named with --allow or --allow-ro
+        restartWrapper=()
         roots=()
         writable=()
         unlock=0
@@ -187,6 +212,7 @@ let
           case "$1" in
             --branch | --name | --role | --of | --snapshot | --rollback)
               [ "$#" -ge 2 ] || deny "$1 needs a value"
+              restartWrapper+=("$1" "$2")
               case "$1" in
                 --branch) branch=$2 ;;
                 --name) workerName=$2 ;;
@@ -197,15 +223,18 @@ let
               shift 2
               ;;
             --snapshots)
+              restartWrapper+=("$1")
               scratchAction=list
               shift
               ;;
             --unlock)
+              restartWrapper+=("$1")
               unlock=1
               shift
               ;;
             --allow | --allow-ro)
               [ "$#" -ge 2 ] || deny "$1 needs a folder"
+              restartWrapper+=("$1" "$2")
               allowed=$(realpath -e -- "$2") || deny "$1: $2 does not exist"
               checkPath "$allowed"
               case "$allowed/" in
@@ -221,6 +250,57 @@ let
             *) break ;;
           esac
         done
+
+        # Pi options that affect a resumed interactive chat are kept; one-time session selectors and initial messages are not repeated
+        ${pkgs.lib.optionalString (approvalRestart != null) ''
+          restartPi=()
+          restartReason=
+          restartScan=("$@")
+          for ((restartIndex = 0; restartIndex < ''${#restartScan[@]}; )); do
+            restartArgument=''${restartScan[restartIndex]}
+            case "$restartArgument" in
+              --continue | -c | --resume | -r)
+                ((restartIndex += 1))
+                ;;
+              --session | --session-id | --fork)
+                if [ $((restartIndex + 1)) -ge ''${#restartScan[@]} ]; then restartReason="$restartArgument has no value"; break; fi
+                ((restartIndex += 2))
+                ;;
+              --no-session | --print | -p | --export | --list-models)
+                restartReason="$restartArgument does not keep an interactive saved chat"
+                break
+                ;;
+              --mode)
+                if [ $((restartIndex + 1)) -ge ''${#restartScan[@]} ]; then restartReason="--mode has no value"; break; fi
+                if [ "''${restartScan[restartIndex + 1]}" != text ]; then
+                  restartReason="--mode ''${restartScan[restartIndex + 1]} is not the interactive text mode"
+                  break
+                fi
+                restartPi+=("$restartArgument" "''${restartScan[restartIndex + 1]}")
+                ((restartIndex += 2))
+                ;;
+              --provider | --model | --api-key | --system-prompt | --append-system-prompt | --session-dir | --name | -n | --models | --tools | -t | --exclude-tools | -xt | --thinking | --extension | -e | --skill | --prompt-template | --theme | --use-theme | --tui-mode)
+                if [ $((restartIndex + 1)) -ge ''${#restartScan[@]} ]; then restartReason="$restartArgument has no value"; break; fi
+                restartPi+=("$restartArgument" "''${restartScan[restartIndex + 1]}")
+                ((restartIndex += 2))
+                ;;
+              --no-tools | -nt | --no-builtin-tools | -nbt | --no-extensions | -ne | --no-mcp | --no-skills | -ns | --no-prompt-templates | -np | --no-themes | --no-context-files | -nc | --verbose | --approve | -a | --no-approve | -na | --offline)
+                restartPi+=("$restartArgument")
+                ((restartIndex += 1))
+                ;;
+              --)
+                break
+                ;;
+              -*)
+                restartReason="the pi option $restartArgument is not known to the approval continuation"
+                break
+                ;;
+              *)
+                break
+                ;;
+            esac
+          done
+        ''}
 
         # The repositories with protected files that exist on this machine, by their real paths
         repositories=()
@@ -301,6 +381,9 @@ let
             # The worker's own copy of the project, if its role has one, and whether it is still locked
             repo=
             locked=0
+            # Trusted host paths for the manager-only broker reader; empty for an ordinary session
+            workerFolders=
+            workerRoles=
             # A full folder in memory returns an error to the writer; without a size, the memory limit would stop a process instead
             tmpfs=(--size ${toString workers.tmpfsBytes.tmp})
             tmpfsHome=(--size ${toString workers.tmpfsBytes.home})
@@ -314,7 +397,7 @@ let
             roleInstructions() {
               case "$1" in
                 ${pkgs.lib.concatStrings (
-                  pkgs.lib.mapAttrsToList (role: file: "${role}) echo ${file} ;;\n              ") workers.roleFiles
+                  pkgs.lib.mapAttrsToList (role: file: "${role}) echo ${file} ;;\n              ") workerRoleFiles
                 )}
               esac
             }
@@ -387,6 +470,8 @@ let
               fi
               folders=$workersRoot/$projectName
               areas=$areasRoot/$projectName
+              workerFolders=$folders
+              workerRoles=$state/$projectName/roles
               folder=$folders/$branch/$workerName
               area=$areas/$branch/$workerName
 
@@ -418,10 +503,40 @@ let
               # what is written would reach the one that runs. The lock holds from here until the scope exists (descriptor 9, which
               # ${workers.start} closes), so two starts of one name cannot pass this check together
               (umask 077 && mkdir -p "$runtime")
-              exec 9> "$runtime/$unit.lock"
-              flock -n 9 || deny "another start of the worker $branch/$workerName is under way"
-              if systemctl --user is-active --quiet "$unit.scope"; then
-                deny "the worker $branch/$workerName is already running: choose another name with --name <name>"
+              # Starts and removal serialize before either can acquire or retire worker mount points
+              exec 8> "$runtime/worker:$projectName.lifecycle.lock"
+              flock -x 8
+              if [ "''${WORKER_INTERNAL_RESTART:-}" = "$unit" ]; then
+                approvalContinuationFailed() {
+                  status=$?
+                  trap - EXIT
+                  printf -v projectCommand '%q' "$project"
+                  echo "${name}: automatic continuation failed; continue the saved chat with: cd $projectCommand && pi --branch $branch --name $workerName -c" >&2
+                  exit "$status"
+                }
+                trap approvalContinuationFailed EXIT
+
+                # The supervisor must pass descriptor 9 for this exact lock, already held; verify both facts before trusting the marker
+                expectedLock=$(readlink -e "$runtime/$unit.lock" 2> /dev/null) \
+                  || deny "inherited descriptor 9 does not name the worker start lock $runtime/$unit.lock"
+                inheritedLock=$(readlink -e /proc/$$/fd/9 2> /dev/null) \
+                  || deny "inherited descriptor 9 does not name the worker start lock $runtime/$unit.lock"
+                [ "$inheritedLock" = "$expectedLock" ] \
+                  || deny "inherited descriptor 9 does not name the worker start lock $runtime/$unit.lock"
+                if flock -n "$expectedLock" true; then
+                  deny "inherited descriptor 9 does not hold the worker start lock $expectedLock"
+                fi
+                flock -u 9
+                flock -n "$expectedLock" true \
+                  || deny "inherited descriptor 9 does not hold the worker start lock $expectedLock"
+                flock -n 9 \
+                  || deny "inherited descriptor 9 could not restore the worker start lock $expectedLock"
+              else
+                exec 9> "$runtime/$unit.lock"
+                flock -n 9 || deny "another start of the worker $branch/$workerName is under way"
+                if systemctl --user is-active --quiet "$unit.scope"; then
+                  deny "the worker $branch/$workerName is already running: end its running session first to restart this worker, or choose another name with --name <name> for a new worker"
+                fi
               fi
               # The broker of this worker's last sandbox ends with that sandbox and then clears its folder of the runtime state. A
               # start that comes at that moment waits until it has, so that nothing of the new sandbox is cleared away
@@ -469,11 +584,27 @@ let
               fixedEnvironment=(WORKER_PROJECT "$projectName" WORKER_BRANCH "$branch" WORKER_NAME "$workerName" WORKER_ROLE "$role" WORKER_SCRATCH "$area")
               identity="{\"project\": \"$projectName\", \"branch\": \"$branch\", \"name\": \"$workerName\", \"role\": \"$role\"}"
               workerBinds=(--bind "$folder/reports" "$folder/reports" --ro-bind "$folder/records" "$folder/records")
+              declare -A viewedWorkers=()
+
+              # Remember every other worker whose places this session mounts, so removal can refuse before detaching anything
+              rememberView() {
+                local other=$1 relative otherBranch otherName rest
+                case "$other" in
+                  "$folders"/*) relative=''${other#"$folders"/} ;;
+                  "$areas"/*) relative=''${other#"$areas"/} ;;
+                  *) return ;;
+                esac
+                IFS=/ read -r otherBranch otherName rest <<< "$relative"
+                if validName "$otherBranch" && validName "$otherName" && [ -z "$rest" ]; then
+                  viewedWorkers["$otherBranch/$otherName"]=1
+                fi
+              }
 
               # Of another worker's folder, read-only: its records and its reports, each by itself. A bind of a folder above them would
               # also show, writable, whatever is mounted there later
               readOnly() {
                 local other=$1 part
+                rememberView "$other"
                 for part in records reports; do
                   if [ -d "$other/$part" ] && [ ! -L "$other/$part" ]; then workerBinds+=(--ro-bind "$other/$part" "$other/$part"); fi
                 done
@@ -496,6 +627,7 @@ let
               for copy in "$folders"/manager/*/repo; do
                 if [ "$copy" != "$folder/repo" ] && [ -d "$copy" ] && [ ! -L "$copy" ]; then
                   managerCopies+=("$copy")
+                  rememberView "$(dirname "$copy")"
                   copies+=(--ro-bind "$copy" "$copy")
                 fi
               done
@@ -531,6 +663,7 @@ let
                   for noted in "$state/$projectName/reviews/$branch/$workerName"/*; do
                     reviewer=$(basename "$noted")
                     if [ -f "$noted" ] && validName "$reviewer" && [ -d "$folders/$branch/$reviewer/reports" ] && [ ! -L "$folders/$branch/$reviewer/reports" ]; then
+                      rememberView "$folders/$branch/$reviewer"
                       workerBinds+=(--ro-bind "$folders/$branch/$reviewer/reports" "$folders/$branch/$reviewer/reports")
                     fi
                   done
@@ -546,7 +679,12 @@ let
                     other=''${other%/}
                     case "$other" in
                       "$folder" | "$area" | "$folders"/instructions/* | "$folders"/archive/*) ;;
-                      *) if [ -d "$other" ] && [ ! -L "$other" ]; then workerBinds+=(--ro-bind "$other" "$other"); fi ;;
+                      *)
+                        if [ -d "$other" ] && [ ! -L "$other" ]; then
+                          rememberView "$other"
+                          workerBinds+=(--ro-bind "$other" "$other")
+                        fi
+                        ;;
                     esac
                   done
                   workdir=$repo
@@ -559,6 +697,7 @@ let
                   reviews "$folders/$branch/$reviewed"
                   projectBinds=(--bind "$repo" "$repo" "''${history[@]}")
                   readOnly "$folders/$branch/$reviewed"
+                  rememberView "$areas/$branch/$reviewed"
                   workerBinds+=(--ro-bind "$areas/$branch/$reviewed" "$areas/$branch/$reviewed")
                   workdir=$folder/reports
                   ;;
@@ -573,6 +712,7 @@ let
                     if [ "$(roleOf "$branch" "$(basename "$other")")" = implementer ]; then
                       reviews "$other"
                       readOnly "$other"
+                      rememberView "$areas/$branch/$(basename "$other")"
                       workerBinds+=(--ro-bind "$areas/$branch/$(basename "$other")" "$areas/$branch/$(basename "$other")")
                     fi
                   done
@@ -814,17 +954,53 @@ let
 
             # What the broker of this sandbox needs: the view of its jobs, and the variables that no request may change
             runtimeState=$runtime/$unit
+            ${pkgs.lib.optionalString (approvalRestart != null) ''
+              agentControl=()
+              approvalArguments=()
+              control=
+              if [ "$role" = implementer ]; then
+                if [ -z "$restartReason" ]; then
+                  control=$runtime/$unit.control
+                  rm -rf "$control"
+                  (umask 077 && mkdir -p "$control" && printf 'supported\n' > "$control/mode")
+                  agentControl=(--ro-bind "$control" /run/worker-control)
+                  approvalArguments=(--extension ${approvalRestart})
+                else
+                  echo "${name}: automatic approval continuation is unavailable: $restartReason; approval will give the manual 'pi --branch $branch --name $workerName -c' command" >&2
+                fi
+              fi
+            ''}
             rm -rf "$runtimeState"
             (umask 077 && mkdir -p "$runtimeState/socket")
             printf '%s\0' "''${view[@]}" "''${jobOnly[@]}" > "$runtimeState/view"
             printf '%s\0' "''${fixedEnvironment[@]}" > "$runtimeState/fixed-env"
-            export WORKER_UNIT=$unit WORKER_STATE=$runtimeState WORKER_RECORDS=$records WORKER_RECORDS_LIMIT=$recordsLimit WORKER_AREA=$area WORKER_REPO=$repo WORKER_IDENTITY=$identity
+            : > "$runtimeState/worker-views"
+            for viewedWorker in "''${!viewedWorkers[@]}"; do printf '%s\n' "$viewedWorker" >> "$runtimeState/worker-views"; done
+            export WORKER_UNIT=$unit WORKER_STATE=$runtimeState WORKER_RECORDS=$records WORKER_RECORDS_LIMIT=$recordsLimit WORKER_AREA=$area WORKER_REPO=$repo WORKER_FOLDERS=$workerFolders WORKER_ROLES=$workerRoles WORKER_IDENTITY=$identity
 
             # The agent runs in a scope of the user's systemd, which the sandbox cannot reach (no session bus, no /sys): its memory limit
             # and its share of the cores are set from outside
             # ${workers.start} starts the broker, bound to this scope, and then the sandbox; only the agent's sandbox sees the broker's socket,
             # read-only, since its folder is a piece of the user's runtime folder: connecting needs no write access to it
             # --expand-environment=no: systemd-run would otherwise rewrite $NAME in the command line that follows, the user's own arguments in it
+            ${
+              if approvalRestart != null then
+                ''
+                  if [ -n "$control" ]; then
+                    restartArguments=("''${restartWrapper[@]}" "''${restartPi[@]}" -c)
+                    exec ${workers.supervise} "$control" "$runtime/$unit.lock" "$unit" "$0" "$project" "$branch" "$workerName" \
+                      "''${#restartArguments[@]}" "''${restartArguments[@]}" -- \
+                      systemd-run --user --scope --quiet --collect --expand-environment=no --unit="$unit" --slice=workers-agents.slice \
+                      --description="Sandbox of ${name}: $unit" \
+                      -p MemoryMax=${workers.agentMemory} -p MemorySwapMax=0 -p OOMPolicy=continue \
+                      -- ${workers.start} ${openChecked} bwrap "''${view[@]}" --chdir "$workdir" \
+                      --ro-bind "$runtimeState/socket" /run/worker --setenv WORKER_QUEUE_SOCKET /run/worker/queue.sock "''${agentControl[@]}" \
+                      -- ${command} "''${approvalArguments[@]}" "''${promptArguments[@]}" "$@"
+                  fi
+                ''
+              else
+                ""
+            }
             exec systemd-run --user --scope --quiet --collect --expand-environment=no --unit="$unit" --slice=workers-agents.slice \
               --description="Sandbox of ${name}: $unit" \
               -p MemoryMax=${workers.agentMemory} -p MemorySwapMax=0 -p OOMPolicy=continue \
@@ -869,8 +1045,9 @@ in
           protected = import ../../config-tool/protected.nix;
           # Set by nixos.workers on hosts that import it; null elsewhere
           workers = osConfig.hostSpec.workers.sandbox or null;
-          # A worker's role and task reach pi as additions to its system prompt
+          # A worker's role and task reach pi as additions to its system prompt; approval resumes a saved worker chat in a fresh sandbox
           promptOption = "--append-system-prompt";
+          approvalRestart = ../../workers/approval-restart.ts;
         })
       ]
       # The same sandbox with a shell instead of pi, for the user's own runs; a shell takes no instructions

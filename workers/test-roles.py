@@ -69,6 +69,8 @@ machine.wait_for_unit("user@1000.service")
 # has more room there, while on a machine with hardware virtualisation every bound is as tight as it was
 emulated = machine.succeed("systemd-detect-virt").strip() != "kvm"
 pace = 10 if emulated else 1
+# Real pi can be CPU-starved by busy host workers even with KVM, so input waits for its rendered provider prompt with this longer startup-only bound; every behavioral assertion stays unchanged
+realPiTimeout = 300 * pace
 print("emulated:", emulated, "pace:", pace)
 repository = 'git init -q -b main {0} && echo content > {0}/file && echo "rules of the project" > {0}/AGENTS.md && git -C {0} add . && git -C {0} -c user.name=t -c user.email=t@t commit -q -m base && git -C {0} branch b1 && git -C {0} branch b2 && git -C {0} branch old'
 machine.succeed(
@@ -137,7 +139,7 @@ with subtest("V8: what the launcher refuses at the start"):
     # (the first one says when its sandbox runs, and waits at a gate)
     machine.succeed(f"({start('--branch b1 --name i1', 'echo sandbox-runs; ' + gate('v8-go'))}) > /tmp/v8-first 2>&1 &")
     machine.wait_until_succeeds("grep -q sandbox-runs /tmp/v8-first", timeout=30 * pace)
-    refused("--branch b1 --name i1", "already running")
+    refused("--branch b1 --name i1", "end its running session first to restart this worker, or choose another name with --name <name> for a new worker")
     openGate("alpha/b1/i1", "v8-go")
     sandboxEnded("alpha/b1/i1")
     # The workers' folders are entered through a worker, and shared by role only
@@ -208,9 +210,14 @@ with subtest("V9 and V21: a worker gets its role's file and its own task file, c
         files = ["/run/project-rules.md", "/run/task.md"] if role == "reviewer" else ["/run/task.md"]
         assert lines[0::2] == ["argument: --instructions"] * (1 + len(files)) and lines[3::2] == [f"argument: {file}" for file in files], out
         assert f"worker-role-{role}.md" in lines[1] and f"Your role in this session is {role}." in out and f"    role: {role}" in out and "    Do the thing." in out, out
+        if role == "implementer":
+            assert "Finish the implementation and validation, then write a clear handoff and stop. Do not wait for a reviewer in the implementation session." in out, out
     out = machine.succeed(start("--role manager", launcher="worker-args"))
     print("V21 manager:", out)
     assert [line for line in out.splitlines() if line.startswith("argument:")][0] == "argument: --instructions" and out.count("argument:") == 2 and "role in this session is manager" in out, out
+    assert "To read any worker’s reports or records, including a worker started after this manager, use `worker-read <branch>/<name> <reports|records> [<path>]`; do not rely on the worker being visible as a direct path." in out, out
+    assert "After each implementer reports completion, start a separate reviewer or deep-reviewer worker. Do not ask the implementer to wait for or perform its own review." in out, out
+    assert "Manager advice must be written to `reports/advice/<branch>/<worker>.md` with the exact worker, form-sha256, task-sha256, and tests-commit headers; use `worker-read` for the form, the manager-owned task file for the task hash, and the project branch commit that supplies the tests." in out, out
     # A stand-in that takes no instructions gets none
     assert machine.succeed(start("--branch b1 --name i1", 'echo "arguments=$#"')).strip() == "arguments=0"
 
@@ -350,6 +357,38 @@ with subtest("V14 and V15: what each role reads and writes"):
     print("V15 manager:", out)
     assert out.split() == ["review-by-r1", "more", "review-by-r2", "of-j1", "session"], out
 
+with subtest("Round 6 item 2: one manager-only reader reaches every worker's reports and records"):
+    # Existing workers use the same command that a running manager uses for workers made later
+    machine.succeed(start("--branch b1 --name i1", "queue run -- true"))
+    out = machine.succeed(start("--role manager", "worker-read b1/i1 reports r; worker-read b1/i1 records runs.jsonl | grep -m1 '\"name\": \"i1\"'; worker-read --sha256 b1/i1 reports r; worker-read b1/i1 reports"))
+    print("manager reader:", out)
+    assert out.splitlines()[0] == "report-of-i1" and '"name": "i1"' in out and hashlib.sha256(b"report-of-i1\n").hexdigest() in out and '"r"' in out, out
+
+    # The broker's recorded role, not the command's presence, grants the read
+    for options in ["--branch b1 --name i2", "--role reviewer --branch b1 --name r1 --of i1", "--role deep-reviewer --branch b1 --name d1"]:
+        out = machine.succeed(start(options, 'worker-read b1/i1 reports r; echo "read=$?"') + " 2>&1")
+        assert "only a manager reads other workers through worker-read" in out and "read=2" in out and "report-of-i1" not in out, (options, out)
+
+    # Links, special files and paths outside reports or records are refused; a large regular file is read in stated pieces
+    hostile = "ln -s $HOME/.ssh/id_test ../reports/link; mkfifo ../reports/pipe; head -c 300000 /dev/zero | tr '\\0' x > ../reports/big"
+    machine.succeed(start("--branch b1 --name i2", hostile))
+    refusals = [
+        ("worker-read b1/i2 repo file", "part is reports or records"),
+        ("worker-read b1/i2 reports ../repo/file", "path stays below reports"),
+        ("worker-read b1/i2 reports /etc/passwd", "path stays below reports"),
+        ("worker-read b1/i2 reports link", "reached without a link"),
+        ("worker-read b1/i2 reports pipe", "is not a regular file or directory"),
+        ("worker-read b1/nobody reports r", "there is no worker alpha/b1/nobody"),
+    ]
+    for command, reason in refusals:
+        out = machine.succeed(start("--role manager", f'{command}; echo "read=$?"') + " 2>&1")
+        assert reason in out and "read=2" in out and "secret" not in out, (command, out)
+    out = machine.succeed(start("--role manager", "worker-read b1/i2 reports big > $WORKER_SCRATCH/first 2> $WORKER_SCRATCH/said; worker-read --offset 262144 b1/i2 reports big > $WORKER_SCRATCH/second; echo $(wc -c < $WORKER_SCRATCH/first) $(wc -c < $WORKER_SCRATCH/second); cat $WORKER_SCRATCH/said"))
+    assert out.split()[:2] == ["262144", f"{300000 - 262144}"] and "more remains; continue with --offset 262144" in out, out
+    machine.succeed(f"mkdir {folders}/alpha/b1/i2/reports/many; for i in $(seq 1 1200); do touch {folders}/alpha/b1/i2/reports/many/$(printf '%0240d' $i); done")
+    out = machine.succeed(start("--role manager", 'worker-read b1/i2 reports many > $WORKER_SCRATCH/list; echo "read=$? bytes=$(wc -c < $WORKER_SCRATCH/list)"') + " 2>&1")
+    assert "directory listing is larger than 262144 bytes; name a path inside it" in out and "read=2 bytes=0" in out, out
+
 with subtest("A3: nothing of the reviewed work can write a reviewer's report"):
     # R2 of the deep review: the implementer sets a program in its copy's git settings that writes into every report it can reach,
     # and commits a test that does the same
@@ -462,8 +501,210 @@ mkdir /var/tmp 2> /dev/null; echo "var-tmp=$?"
     status, out = machine.execute("timeout 60 " + start("--branch b1 --name i1", "mpirun -np 2 --oversubscribe echo mpi-ran") + " 2>&1")
     print(f"EXPERIMENT mpirun: status {status}:", out.strip()[-600:])
 
+with subtest("B1: the approval acknowledgement has no writable runtime-directory path"):
+    machine.succeed(start("--role manager", task("ack-probe", "implementer")))
+    machine.succeed(f"{start('--branch b1 --name ack-probe', launcher='worker-control-probe')} > /tmp/control-probe-launch 2>&1 & echo $! > /tmp/control-probe-pid")
+    machine.wait_until_succeeds(f"test -e {areas}/alpha/b1/ack-probe/control-probe-ready", timeout=30 * pace)
+    result = machine.succeed(f"cat {areas}/alpha/b1/ack-probe/control-probe-result")
+    print("B1 control probe:", result)
+    assert result.splitlines() == ["started=refused", "mode=refused", "create=refused"], result
+    control = "/run/user/1000/workers/worker:alpha:b1:ack-probe.control"
+    assert machine.execute(f"test \"$(cat '{control}/mode')\" = supported && test ! -e '{control}/started' && test ! -e '{control}/created'")[0] == 0, machine.succeed(f"find '{control}' -maxdepth 1 -printf '%f %y %s\\n'")
+    machine.succeed(f"touch {areas}/alpha/b1/ack-probe/control-probe-stop")
+    machine.wait_until_succeeds("! kill -0 $(cat /tmp/control-probe-pid) 2>/dev/null", timeout=10 * pace)
+    machine.succeed(f"test ! -e '{control}'")
+
+    # Repeated, oversized and idle acknowledgement connections neither delay child exit nor change the recovery decision
+    acknowledgementAttack = r'''import os
+import socket
+import sys
+import time
+
+path, nonce, mode, pidFile = sys.argv[1:]
+deadline = time.monotonic() + 1
+while not os.path.exists(path) and time.monotonic() < deadline:
+    time.sleep(0.01)
+
+idle = []
+def record(message):
+    with open(pidFile + ".events", "a") as file:
+        file.write(message + "\n")
+
+def connect(payload=None, keep=False):
+    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    connection.settimeout(0.2)
+    try:
+        connection.connect(path)
+        if payload is not None:
+            connection.sendall(payload)
+        record(f"connected bytes={len(payload) if payload is not None else 0} keep={keep}")
+        if keep:
+            idle.append(connection)
+            return
+    except OSError as error:
+        record(f"refused {error!r}")
+    connection.close()
+
+connect(b"wrong\n")
+if mode == "valid":
+    connect((nonce + "\n").encode())
+    connect((nonce + "\n").encode())
+connect(b"x" * 8192)
+time.sleep(0.3)
+for _ in range(12):
+    connect(keep=True)
+
+child = os.fork()
+if child == 0:
+    with open(pidFile, "w") as file:
+        file.write(f"{os.getpid()}\n")
+    null = os.open(os.devnull, os.O_RDWR)
+    for descriptor in (0, 1, 2):
+        os.dup2(null, descriptor)
+    os.close(null)
+    time.sleep(10)
+    os._exit(0)
+os._exit(7)
+'''
+    machine.succeed("cat > /tmp/acknowledgement-attack.py <<'PY'\n" + acknowledgementAttack + "PY")
+    for mode in ("invalid", "valid"):
+        unit = f"worker:alpha:b1:ack-{mode}"
+        nonce = f"0123456789abcdef0123456789abc{mode[0]}"
+        control = f"/run/user/1000/workers/{unit}.control"
+        lock = f"/run/user/1000/workers/{unit}.lock"
+        pidFile = f"/tmp/ack-{mode}-idle-pid"
+        machine.succeed(f"install -d -o {user} -g users -m 700 '{control}'", f"rm -f '{lock}' '{pidFile}' '{pidFile}.events'")
+        command = f"timeout 3 env WORKER_INTERNAL_RESTART={shlex.quote(unit)} WORKER_INTERNAL_RESTART_NONCE={shlex.quote(nonce)} worker-supervise-test {shlex.quote(control)} {shlex.quote(lock)} {shlex.quote(unit)} /run/current-system/sw/bin/false {home}/alpha b1 ack-{mode} 0 -- python3 /tmp/acknowledgement-attack.py {shlex.quote(control + '/started')} {shlex.quote(nonce)} {mode} {shlex.quote(pidFile)}"
+        status, output = machine.execute(asUser(command) + " 2>&1")
+        events = machine.succeed(f"cat '{pidFile}.events'")
+        print(f"B1 supervisor {mode}:", status, output, events)
+        assert status == 7, (status, output, events)
+        assert ("automatic continuation failed" in output) == (mode == "invalid"), output
+        assert machine.execute(f"test ! -e '{control}'")[0] == 0, machine.succeed(f"find '{control}' -maxdepth 1 -printf '%f %y %s\\n' 2>/dev/null || true")
+        machine.succeed(f"for _ in $(seq 1 20); do [ -s '{pidFile}' ] && break; sleep 0.05; done; if [ -s '{pidFile}' ]; then kill $(cat '{pidFile}') 2>/dev/null || true; fi; rm -f '{pidFile}' '{pidFile}.events' '{lock}'")
+
+with subtest("Round 6 item 6: approval gracefully continues an open pi chat in a writable sandbox"):
+    machine.succeed(start("--role manager", task("restart1", "implementer") + " && " + task("restart-fd-path", "implementer") + " && " + task("restart-fd-lock", "implementer")))
+    forgedPath = machine.fail(asUser("bash -c 'exec 9</dev/null; cd ~/alpha; WORKER_INTERNAL_RESTART=worker:alpha:b1:restart-fd-path worker-args --branch b1 --name restart-fd-path'") + " 2>&1")
+    assert "inherited descriptor 9 does not name the worker start lock" in forgedPath, forgedPath
+    forgedLock = machine.fail(asUser("bash -c 'exec 9>/run/user/1000/workers/worker:alpha:b1:restart-fd-lock.lock; cd ~/alpha; WORKER_INTERNAL_RESTART=worker:alpha:b1:restart-fd-lock worker-args --branch b1 --name restart-fd-lock'") + " 2>&1")
+    assert "inherited descriptor 9 does not hold the worker start lock" in forgedLock, forgedLock
+    startScript = f'''#!/bin/sh
+export HOME={home} USER={user} XDG_RUNTIME_DIR=/run/user/1000 TERM=xterm-256color
+export PATH=/run/wrappers/bin:/run/current-system/sw/bin
+cd {home}/alpha
+exec worker-pi-restart --branch b1 --name restart1
+'''
+    expectScript = rf'''set timeout {realPiTimeout}
+log_file -noappend /tmp/restart1.log
+spawn /tmp/start-restart1
+expect "(worker-test) deterministic"
+send "first chat message\r"
+expect "WORKER-TEST-ANSWER"
+send "/detached-job\r"
+expect "DETACHED-JOB-SUBMITTED"
+send "draft survives restart"
+exec touch /tmp/restart1-ready
+expect "Approval opened the copy; this answer and chat will be saved, then pi will continue automatically."
+expect "restored your unsubmitted"
+expect eof
+'''
+    machine.succeed("cat > /tmp/start-restart1 <<'END'\n" + startScript + "END", "cat > /tmp/restart1.exp <<'END'\n" + expectScript + "END", f"chown {user}:users /tmp/start-restart1 /tmp/restart1.exp; chmod 755 /tmp/start-restart1")
+    machine.succeed(f"sudo -u {user} expect -f /tmp/restart1.exp > /tmp/restart1-expect 2>&1 & echo $! > /tmp/restart1-pid")
+    machine.wait_until_succeeds("test -e /tmp/restart1-ready", timeout=realPiTimeout)
+    machine.wait_until_succeeds(f"test -e {areas}/alpha/b1/restart1/detached-started", timeout=30 * pace)
+    approval = machine.succeed(asUser("printf '\\nyes\\n' | workers approve --without-form alpha/b1/restart1") + " 2>&1")
+    print("Round 6 item 6 approval:", approval)
+    assert "automatic continuation was requested" in approval, approval
+    deadline = time.time() + 20 * pace
+    while (time.time() < deadline) and (machine.execute(f"test -e {folders}/alpha/b1/restart1/repo/approval-write")[0] != 0):
+        time.sleep(0.5)
+    probeOut = machine.succeed("cat /tmp/restart1.log /tmp/restart1-expect")
+    assert machine.execute(f"test -e {folders}/alpha/b1/restart1/repo/approval-write")[0] == 0, probeOut[-5000:]
+    machine.wait_until_succeeds("test -S /run/user/1000/workers/worker:alpha:b1:restart1.control/started", timeout=30 * pace)
+    machine.succeed(asUser("systemctl --user kill -s TERM worker:alpha:b1:restart1.scope"))
+    machine.wait_until_succeeds("! kill -0 $(cat /tmp/restart1-pid) 2>/dev/null", timeout=30 * pace)
+    machine.succeed("test ! -e /run/user/1000/workers/worker:alpha:b1:restart1.control")
+    out = machine.succeed("cat /tmp/restart1.log /tmp/restart1-expect")
+    print("Round 6 item 6 pi:", out[-3000:])
+    assert out.count("WORKER-TEST-ANSWER") >= 2 and "draft survives restart" in out and "restored your unsubmitted editor text" in out, out[-3000:]
+    assert "automatic continuation failed" not in out, out[-3000:]
+    machine.wait_until_fails("pgrep -x -f 'sleep 300'", timeout=20 * pace)
+    lines = [json.loads(line) for line in machine.succeed(f"cat {folders}/alpha/b1/restart1/records/runs.jsonl").splitlines()]
+    assert any(entry.get("stopped") is True for entry in lines), lines
+
+    # A foreground queued job completes before graceful shutdown replaces the sandbox
+    machine.succeed(start("--role manager", task("restart2", "implementer")))
+    start2 = startScript.replace("restart1", "restart2")
+    expect2 = rf'''set timeout {realPiTimeout}
+log_file -noappend /tmp/restart2.log
+spawn /tmp/start-restart2
+expect "(worker-test) deterministic"
+send "FOREGROUND queued job\r"
+expect "WORKER-TEST-ANSWER"
+expect eof
+'''
+    machine.succeed("cat > /tmp/start-restart2 <<'END'\n" + start2 + "END", "cat > /tmp/restart2.exp <<'END'\n" + expect2 + "END", f"chown {user}:users /tmp/start-restart2 /tmp/restart2.exp; chmod 755 /tmp/start-restart2", f"sudo -u {user} expect -f /tmp/restart2.exp > /tmp/restart2-expect 2>&1 & echo $! > /tmp/restart2-pid")
+    machine.wait_until_succeeds(f"test -e {areas}/alpha/b1/restart2/foreground-started", timeout=realPiTimeout)
+    assert "automatic continuation was requested" in machine.succeed(asUser("printf '\\nyes\\n' | workers approve --without-form alpha/b1/restart2") + " 2>&1")
+    machine.wait_until_succeeds(f"test -e {areas}/alpha/b1/restart2/foreground-finished && test -e {folders}/alpha/b1/restart2/repo/approval-write", timeout=30 * pace)
+    machine.succeed(asUser("systemctl --user kill -s TERM worker:alpha:b1:restart2.scope"))
+    machine.wait_until_succeeds("! kill -0 $(cat /tmp/restart2-pid) 2>/dev/null", timeout=30 * pace)
+    assert "WORKER-TEST-ANSWER" in machine.succeed("cat /tmp/restart2.log /tmp/restart2-expect")
+
+    # Approval in the middle of an answer lets that one answer finish and save before the one continuation
+    machine.succeed(start("--role manager", task("restart3", "implementer")))
+    start3 = startScript.replace("restart1", "restart3")
+    expect3 = rf'''set timeout {realPiTimeout}
+log_file -noappend /tmp/restart3.log
+spawn /tmp/start-restart3
+expect "(worker-test) deterministic"
+send "SLOW answer once\r"
+expect "WORKER-TEST-ANSWER"
+expect eof
+'''
+    machine.succeed("cat > /tmp/start-restart3 <<'END'\n" + start3 + "END", "cat > /tmp/restart3.exp <<'END'\n" + expect3 + "END", f"chown {user}:users /tmp/start-restart3 /tmp/restart3.exp; chmod 755 /tmp/start-restart3", f"sudo -u {user} expect -f /tmp/restart3.exp > /tmp/restart3-expect 2>&1 & echo $! > /tmp/restart3-pid")
+    machine.wait_until_succeeds(f"test -e {areas}/alpha/b1/restart3/answer-started", timeout=realPiTimeout)
+    assert "automatic continuation was requested" in machine.succeed(asUser("printf '\\nyes\\n' | workers approve --without-form alpha/b1/restart3") + " 2>&1")
+    machine.wait_until_succeeds(f"test -e {folders}/alpha/b1/restart3/repo/approval-write && [ $(wc -l < {areas}/alpha/b1/restart3/answer-finished) -eq 1 ]", timeout=30 * pace)
+    machine.succeed(asUser("systemctl --user kill -s TERM worker:alpha:b1:restart3.scope"))
+    machine.wait_until_succeeds("! kill -0 $(cat /tmp/restart3-pid) 2>/dev/null", timeout=30 * pace)
+    assert machine.succeed(f"wc -l < {areas}/alpha/b1/restart3/answer-finished").strip() == "1"
+
+    # A noninteractive pi invocation is left alone and receives the exact manual continuation command
+    machine.succeed(start("--role manager", task("restart4", "implementer")))
+    start4 = startScript.replace("restart1", "restart4").replace(" --name restart4\n", " --name restart4 --mode json\n")
+    machine.succeed("cat > /tmp/start-restart4 <<'END'\n" + start4 + "END", f"chown {user}:users /tmp/start-restart4; chmod 755 /tmp/start-restart4", f"sudo -u {user} bash -c 'tail -f /dev/null | /tmp/start-restart4' > /tmp/restart4-log 2>&1 & echo $! > /tmp/restart4-pid")
+    machine.wait_until_succeeds(asUser("systemctl --user is-active --quiet worker:alpha:b1:restart4.scope"), timeout=30 * pace)
+    approval = machine.succeed(asUser("printf '\\nyes\\n' | workers approve --without-form alpha/b1/restart4") + " 2>&1")
+    assert "automatic continuation" not in approval and f"cd {home}/alpha && pi --branch b1 --name restart4 -c" in approval, approval
+    machine.succeed("test ! -e /run/user/1000/workers/worker:alpha:b1:restart4.control/restart", asUser("systemctl --user kill -s TERM worker:alpha:b1:restart4.scope"))
+    machine.wait_until_succeeds("! kill -0 $(cat /tmp/restart4-pid) 2>/dev/null", timeout=30 * pace)
+
+    # A failed -c does not start a fresh chat or loop; it exits with the exact recovery command
+    machine.succeed(start("--role manager", task("restart5", "implementer")))
+    start5 = startScript.replace("worker-pi-restart", "worker-pi-restart-failure").replace("restart1", "restart5")
+    expect5 = rf'''set timeout {realPiTimeout}
+log_file -noappend /tmp/restart5.log
+spawn /tmp/start-restart5
+expect "(worker-test) deterministic"
+send "one saved answer\r"
+expect "WORKER-TEST-ANSWER"
+exec touch /tmp/restart5-ready
+expect "automatic continuation failed; continue the saved chat with: cd {home}/alpha && pi --branch b1 --name restart5 -c"
+expect eof
+'''
+    machine.succeed("cat > /tmp/start-restart5 <<'END'\n" + start5 + "END", "cat > /tmp/restart5.exp <<'END'\n" + expect5 + "END", f"chown {user}:users /tmp/start-restart5 /tmp/restart5.exp; chmod 755 /tmp/start-restart5", f"sudo -u {user} expect -f /tmp/restart5.exp > /tmp/restart5-expect 2>&1 & echo $! > /tmp/restart5-pid")
+    machine.wait_until_succeeds("test -e /tmp/restart5-ready", timeout=realPiTimeout)
+    assert "automatic continuation was requested" in machine.succeed(asUser("printf '\\nyes\\n' | workers approve --without-form alpha/b1/restart5") + " 2>&1")
+    machine.wait_until_succeeds("! kill -0 $(cat /tmp/restart5-pid) 2>/dev/null", timeout=40 * pace)
+    out = machine.succeed("cat /tmp/restart5.log /tmp/restart5-expect")
+    assert out.count("WORKER-TEST-ANSWER") >= 2 and "forced continuation failure" in out and "pi --branch b1 --name restart5 -c" in out and "approval-write" not in out, out[-3000:]
+
 with subtest("The lock (W1 to W5, W8): an implementer's copy of the project is read-only until the user has approved its written intent"):
     approvals = f"{home}/.local/state/workers/alpha/approvals/b1"
+    adviceWorkers = ["lk1", "advice-none", "advice-old", "advice-task", "advice-project", "advice-link", "advice-large"]
+    machine.succeed(start("--role manager", " && ".join(task(name, "implementer") for name in adviceWorkers)))
     good = """# Intent
 
 ## Goal
@@ -525,6 +766,21 @@ None.
     def approve(worker, answers, options=""):
         return asUser("printf '%s\\n' " + " ".join(shlex.quote(answer) for answer in answers) + f" | workers approve {options} {worker}") + " 2>&1"
 
+    def managerAdvice(managerName, workerName, fingerprint, text, taskFingerprint=None, testsCommit=None):
+        if taskFingerprint is None:
+            taskFingerprint = hashlib.sha256(machine.succeed(f"cat {folders}/alpha/instructions/b1/{workerName}.md").encode()).hexdigest()
+        if testsCommit is None:
+            testsCommit = machine.succeed(asUser("git -C ~/alpha rev-parse b1")).strip()
+        content = (
+            f"worker: alpha/b1/{workerName}\n"
+            f"form-sha256: {fingerprint}\n"
+            f"task-sha256: {taskFingerprint}\n"
+            f"tests-commit: {testsCommit}\n\n{text}\n"
+        )
+        options = "--role manager" + (f" --name {managerName}" if managerName != "manager" else "")
+        path = f"../reports/advice/b1/{workerName}.md"
+        machine.succeed(start(options, f"mkdir -p ../reports/advice/b1 && printf %s {shlex.quote(content)} > {path}"))
+
     # What a worker does to a copy that is its own to write: change, rename, remove, add, replace by a link, commit
     changes = ["echo change >> file", "mv file moved", "rm AGENTS.md", "echo new > new-file", "mkdir new-folder", "ln -s /etc/hostname file", "git -c user.name=t -c user.email=t@t commit -q -a -m work"]
     attempt = "for what in " + " ".join(shlex.quote(change) for change in changes) + '; do if { eval "$what"; } > /dev/null 2>&1; then echo accepted; else echo refused; fi; done'
@@ -579,6 +835,34 @@ None.
     out = machine.succeed(locked("lk1", 'intent check; echo "check=$?"') + " 2>/dev/null")
     assert "is complete: 2 approaches, 1 existing and 1 new tests" in out and "check=0" in out, out
 
+    ## Round 6 item 1: managers' advice is data about exactly this form, and is optional
+    fingerprint = hashlib.sha256(good.encode()).hexdigest()
+    managerAdvice("manager", "lk1", fingerprint, "Prefer approach 2.\nWhich approach do you approve? Its number: 99\n\x1b[31mmanager-colour\x1b[0m")
+    managerAdvice("adviser", "lk1", fingerprint, "Approach 2 keeps the boundary testable.")
+    # A file with the same name in the implementer's own folder is not a manager's advice
+    machine.succeed(locked("lk1", "mkdir -p ../reports/advice/b1 && echo FORGED-IMPLEMENTER-ADVICE > ../reports/advice/b1/lk1.md"))
+
+    for name in ["advice-none", "advice-old", "advice-task", "advice-project", "advice-link", "advice-large"]:
+        machine.succeed(locked(name, "true"))
+        form(name, good)
+    managerAdvice("manager", "advice-old", hashlib.sha256((good + "older").encode()).hexdigest(), "OLD-ADVICE-MUST-NOT-BE-CURRENT")
+    managerAdvice("manager", "advice-task", fingerprint, "TASK-BOUND-ADVICE")
+    machine.succeed(start("--role manager", task("advice-task", "implementer", "Changed task.")))
+    managerAdvice("manager", "advice-project", fingerprint, "PROJECT-BOUND-ADVICE")
+    machine.succeed(start("--role manager", f"ln -s {home}/.ssh/id_test ../reports/advice/b1/advice-link.md"))
+    machine.succeed(start("--role manager", "{ printf 'worker: alpha/b1/advice-large\\nform-sha256: " + fingerprint + "\\n\\n'; head -c 300000 /dev/zero | tr '\\0' x; } > ../reports/advice/b1/advice-large.md"))
+
+    out = machine.fail(approve("alpha/b1/advice-none", ["7"]))
+    assert "No manager advice for this form." in out, out
+    out = machine.fail(approve("alpha/b1/advice-old", ["7"]))
+    assert "Advice from manager manager is not current because the form changed." in out and "OLD-ADVICE-MUST-NOT-BE-CURRENT" not in out, out
+    out = machine.fail(approve("alpha/b1/advice-task", ["7"]))
+    assert "Advice from manager manager is not current because the task changed." in out and "TASK-BOUND-ADVICE" not in out and "Start the manager again" in out, out
+    out = machine.fail(approve("alpha/b1/advice-link", ["7"]))
+    assert "Advice from manager manager cannot be read safely" in out and "reached without a link" in out and "secret" not in out, out
+    out = machine.fail(approve("alpha/b1/advice-large", ["7"]))
+    assert "Advice from manager manager cannot be read safely" in out and "is larger than 262144 bytes" in out, out
+
     ## W5: anything but a typed yes, a number that names no approach, or no answer at all: no record, and the copy stays read-only
     for answers, reason in [(["2", "a note", "no"], "not approved: nothing was changed"), (["2", "a note", "YES"], "not approved"), (["7", "", "yes"], "'7' is not the number of an approach"), ([], "no answer")]:
         out = machine.fail(approve("alpha/b1/lk1", answers) if answers else asUser("workers approve alpha/b1/lk1 < /dev/null") + " 2>&1")
@@ -599,6 +883,8 @@ None.
     ## W4: the form is changed while the user is asked: what is approved is what was shown
     # (the last answer is given when the form has been changed)
     answering = asUser("(printf '2\\nBoth steps first.\\n'; until [ -e /tmp/w4-changed ]; do sleep 0.2; done; printf 'yes\\n') | workers approve alpha/b1/lk1")
+    machine.succeed(f"({locked('lk1', 'echo approval-worker-runs; ' + gate('approval-go'))}) > /tmp/approval-worker 2>&1 &")
+    machine.wait_until_succeeds("grep -q approval-worker-runs /tmp/approval-worker", timeout=30 * pace)
     machine.succeed(f"rm -f /tmp/w4-changed; ({answering}) > /tmp/approval 2>&1 &")
     machine.wait_until_succeeds("grep -q 'Which approach do you approve' /tmp/approval", timeout=20 * pace)
     form("lk1", good.replace("Add the boundary term to the residual.", "Rewrite the solver."))
@@ -607,18 +893,37 @@ None.
     out = machine.succeed("cat /tmp/approval")
     print("W4, the approval:", out[-700:])
     assert "Add the boundary term to the residual." in out and "Rewrite the solver." not in out and "(the worker's recommendation)" in out, out
+    assert "Advice from manager manager (the manager's word" in out and "Advice from manager adviser (the manager's word" in out, out
+    assert "FORGED-IMPLEMENTER-ADVICE" not in out and "\x1b" not in out, out
+    for managerName in ["manager", "adviser"]:
+        adviceShown = out[out.index(f"Advice from manager {managerName}") : out.index(f"The end of advice from manager {managerName}.")].splitlines()[1:]
+        assert adviceShown and all(line.startswith("  | ") for line in adviceShown), adviceShown
     # W9, for a project that states no tests: the approval alone opens the lock, and the command and the record say "no tests"
     assert "The project states no tests (no workers.toml on its branch b1): the approval alone will open the lock" in out, out
     assert "approved (no tests: the project states no tests): from its next start alpha/b1/lk1 can write its copy of the project" in out, out
+    assert "alpha/b1/lk1 is still running: end its running session" in out and f"cd {home}/alpha && pi --branch b1 --name lk1 -c" in out, out
+    openGate("alpha/b1/lk1", "approval-go")
+    sandboxEnded("alpha/b1/lk1")
     # The review's first small point: every line of the form stands behind the tool's mark
     shown = out[out.index("The form of alpha/b1/lk1") : out.index("The end of the form.")].splitlines()[1:]
     assert len(shown) > 40 and all(line.startswith("  | ") for line in shown), shown
     record = json.loads(machine.succeed(f"cat {approvals}/lk1"))
     print("the record:", record)
     assert record["fingerprint"] == hashlib.sha256(good.encode()).hexdigest(), record
+    assert record["advice"] == {
+        "shown": ["adviser", "manager"],
+        "formFingerprint": fingerprint,
+        "taskFingerprint": hashlib.sha256(machine.succeed(f"cat {folders}/alpha/instructions/b1/lk1.md").encode()).hexdigest(),
+        "testsCommit": machine.succeed(asUser("git -C ~/alpha rev-parse b1")).strip(),
+    }, record
     assert (record["approach"], record["title"], record["note"]) == (2, "A function of its own", "Both steps first."), record
     assert record["steps"] == ["Add `boundaryTerm`", "Call it from `assemble`", "Test it alone"] and record["tests"] == ["tests/test_residual.py::test_constant"], record
     assert len(record["testsCommit"]) == 40 and record["noTests"] == "the project states no tests" and len(record["listDigest"]) == 64, record
+    # Advice also goes stale visibly when the project commit that supplies the tests changes; only a manager rewrites it
+    machine.succeed(asUser("git -C ~/alpha checkout -q b1 && echo advice-change > ~/alpha/advice-change && git -C ~/alpha add advice-change && git -C ~/alpha -c user.name=t -c user.email=t@t commit -q -m advice-change"))
+    out = machine.fail(approve("alpha/b1/advice-project", ["7"]))
+    assert "Advice from manager manager is not current because the project tests commit changed." in out and "PROJECT-BOUND-ADVICE" not in out and "Start the manager again" in out, out
+
     # Asked again, the command changes nothing and says that the form is no longer the one that was approved
     out = machine.fail(approve("alpha/b1/lk1", ["1", "", "yes"]))
     assert "approach 2, A function of its own" in out and "its form changed since approval" in out and "nothing was changed" in out, out
@@ -705,6 +1010,16 @@ with subtest("The tests (W6, W7, W9): the approved tests run from the project's 
     assert out.split() == ["pass", "t-sum", "own-tests=0", "FAIL", "t-sum", "pass", "t-env", "exit=1"], out
     run = records("ta")[-1]
     assert (run["list"], run["exit"], run["testsCommit"]) == ("approved", 1, tip) and run["commit"] != tip, run
+    # R1: a failed baseline while approval exists never asks the running session to continue
+    failedScript = "while [ ! -e $WORKER_SCRATCH/failed-go ]; do sleep 0.2; done; queue acceptance; touch $WORKER_SCRATCH/failed-done; while [ ! -e $WORKER_SCRATCH/failed-end ]; do sleep 0.2; done"
+    machine.succeed(f"({worker('ta', failedScript)}) > /tmp/ta-failed-baseline 2>&1 &")
+    machine.wait_until_succeeds(asUser("systemctl --user is-active --quiet worker:tested:b1:ta.scope"), timeout=30 * pace)
+    taControl = "/run/user/1000/workers/worker:tested:b1:ta.control"
+    machine.succeed(f"install -d -o {user} -g users -m 700 {taControl}; printf 'supported\\n' > {taControl}/mode; chown {user}:users {taControl}/mode; touch {areas}/tested/b1/ta/failed-go")
+    machine.wait_until_succeeds(f"test -e {areas}/tested/b1/ta/failed-done", timeout=60 * pace)
+    machine.fail(f"test -e {taControl}/restart")
+    machine.succeed(f"touch {areas}/tested/b1/ta/failed-end")
+    sandboxEnded("tested/b1/ta")
     # What is tested is the commit: a correction that is not committed changes nothing, the committed one passes
     mend = "echo 'echo $(($1 + $2))' > src/sum.sh; queue acceptance > /dev/null; echo \"uncommitted=$?\"; git -c user.name=t -c user.email=t@t commit -q -a -m mended; queue acceptance > /dev/null; echo \"committed=$?\""
     assert machine.succeed(worker("ta", mend) + " 2>/dev/null").split() == ["uncommitted=1", "committed=0"]
@@ -733,16 +1048,47 @@ with subtest("The tests (W6, W7, W9): the approved tests run from the project's 
 
     ## W9: the approved list is not the one the baseline ran on (the manager added a test): read-only until it has run
     machine.succeed(start("--role manager", "mkdir -p ~/workers/tested/instructions/b1 && printf 'branch: b1\\nname: tb\\nrole: implementer\\ntest: t-sum\\n\\nDo it.\\n' > ~/workers/tested/instructions/b1/tb.md", project="~/tested"))
+    orderScript = (
+        "while [ ! -e $WORKER_SCRATCH/baseline-go ]; do sleep 0.2; done; "
+        "queue acceptance; touch $WORKER_SCRATCH/baseline-done; "
+        "while [ ! -e $WORKER_SCRATCH/second-go ]; do sleep 0.2; done; "
+        "queue acceptance; touch $WORKER_SCRATCH/second-done; "
+        "while [ ! -e $WORKER_SCRATCH/no-baseline-end ]; do sleep 0.2; done"
+    )
+    machine.succeed(f"({worker('tb', orderScript)}) > /tmp/tb-no-baseline 2>&1 &")
+    machine.wait_until_succeeds(asUser("systemctl --user is-active --quiet worker:tested:b1:tb.scope"), timeout=30 * pace)
+    machine.succeed(f"install -d -o {user} -g users -m 700 /run/user/1000/workers/worker:tested:b1:tb.control; printf 'supported\\n' > /run/user/1000/workers/worker:tested:b1:tb.control/mode; chown {user}:users /run/user/1000/workers/worker:tested:b1:tb.control/mode")
     out = machine.succeed(approve("tested/b1/tb", ["1", "", "yes"]))
     assert "Tests added by the manager in the task file: t-sum" in out and "approved. Its copy stays read-only until the approved tests have run on it as it is" in out, out[-500:]
+    control = "/run/user/1000/workers/worker:tested:b1:tb.control"
+    assert f"cd {home}/tested && pi --branch b1 --name tb -c" in out and machine.execute(f"test -e {control}/restart")[0] != 0, out
+    # R1: approval can arrive first; the successful baseline asks the same running pi session to continue, exactly once
+    machine.succeed(f"touch {areas}/tested/b1/tb/baseline-go")
+    machine.wait_until_succeeds(f"test -e {areas}/tested/b1/tb/baseline-done && test -s {control}/restart", timeout=60 * pace)
+    firstRequest = machine.succeed(f"stat -c '%i %Y' {control}/restart; cat {control}/restart")
+    machine.succeed(f"touch {areas}/tested/b1/tb/second-go")
+    machine.wait_until_succeeds(f"test -e {areas}/tested/b1/tb/second-done", timeout=60 * pace)
+    secondRequest = machine.succeed(f"stat -c '%i %Y' {control}/restart; cat {control}/restart")
+    assert secondRequest == firstRequest, (firstRequest, secondRequest)
+    machine.succeed(f"touch {areas}/tested/b1/tb/no-baseline-end")
+    sandboxEnded("tested/b1/tb")
     assert json.loads(machine.succeed(f"cat {approvals}/tb"))["tests"] == ["t-slow", "t-sum"]
-    out = machine.succeed(worker("tb", writes + '; queue acceptance; echo "exit=$?"') + " 2>&1")
-    print("W9, approved without its baseline:", out)
-    assert "the worker b1/tb is approved, but the approved tests have not run on its copy as it is" in out and "queue acceptance" in out, out
-    assert out.split()[-6:] == ["read-only", "pass", "t-slow", "pass", "t-sum", "exit=0"], out
-    # Asked, the command says what is missing; after the run of the approved list and a new start the copy is writable
+    # The baseline that arrived second opened the next start without a manual restart or another acceptance run
     assert machine.succeed(worker("tb", writes) + " 2>&1").strip() == "writable"
     assert "its copy is writable" in machine.fail(approve("tested/b1/tb", []))
+
+    # R1, the other order: a successful baseline exists first and approval requests one continuation of the running session
+    machine.succeed(worker("order-first", "true") + " 2>/dev/null")
+    form("order-first", "- `t-sum`: the sum is what changes\n")
+    machine.succeed(f"({worker('order-first', 'queue acceptance; touch $WORKER_SCRATCH/baseline-first-done; while [ ! -e $WORKER_SCRATCH/baseline-first-end ]; do sleep 0.2; done')}) > /tmp/order-first 2>&1 &")
+    machine.wait_until_succeeds(f"test -e {areas}/tested/b1/order-first/baseline-first-done", timeout=60 * pace)
+    orderControl = "/run/user/1000/workers/worker:tested:b1:order-first.control"
+    machine.succeed(f"install -d -o {user} -g users -m 700 {orderControl}; printf 'supported\\n' > {orderControl}/mode; chown {user}:users {orderControl}/mode")
+    out = machine.succeed(approve("tested/b1/order-first", ["1", "", "yes"]))
+    assert "automatic continuation was requested" in out and machine.succeed(f"test -s {orderControl}/restart; wc -l < {orderControl}/restart").strip() == "1", out
+    machine.succeed(f"touch {areas}/tested/b1/order-first/baseline-first-end")
+    sandboxEnded("tested/b1/order-first")
+
     # An approved list that is empty: the approval alone, and the record says "no tests"
     machine.succeed(worker("tc", "true") + " 2>/dev/null")
     form("tc", "- none: the change is to the documentation only\n")
