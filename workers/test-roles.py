@@ -357,37 +357,24 @@ with subtest("V14 and V15: what each role reads and writes"):
     print("V15 manager:", out)
     assert out.split() == ["review-by-r1", "more", "review-by-r2", "of-j1", "session"], out
 
-with subtest("Round 6 item 2: one manager-only reader reaches every worker's reports and records"):
-    # Existing workers use the same command that a running manager uses for workers made later
+with subtest("B1: one live manager reads every managed artefact of a later worker"):
     machine.succeed(start("--branch b1 --name i1", "queue run -- true"))
     out = machine.succeed(start("--role manager", "worker-read b1/i1 reports r; worker-read b1/i1 records runs.jsonl | grep -m1 '\"name\": \"i1\"'; worker-read --sha256 b1/i1 reports r; worker-read b1/i1 reports"))
-    print("manager reader:", out)
     assert out.splitlines()[0] == "report-of-i1" and '"name": "i1"' in out and hashlib.sha256(b"report-of-i1\n").hexdigest() in out and '"r"' in out, out
-
-    # The broker's recorded role, not the command's presence, grants the read
-    for options in ["--branch b1 --name i2", "--role reviewer --branch b1 --name r1 --of i1", "--role deep-reviewer --branch b1 --name d1"]:
-        out = machine.succeed(start(options, 'worker-read b1/i1 reports r; echo "read=$?"') + " 2>&1")
-        assert "only a manager reads other workers through worker-read" in out and "read=2" in out and "report-of-i1" not in out, (options, out)
-
-    # Links, special files and paths outside reports or records are refused; a large regular file is read in stated pieces
-    hostile = "ln -s $HOME/.ssh/id_test ../reports/link; mkfifo ../reports/pipe; head -c 300000 /dev/zero | tr '\\0' x > ../reports/big"
-    machine.succeed(start("--branch b1 --name i2", hostile))
-    refusals = [
-        ("worker-read b1/i2 repo file", "part is reports or records"),
-        ("worker-read b1/i2 reports ../repo/file", "path stays below reports"),
-        ("worker-read b1/i2 reports /etc/passwd", "path stays below reports"),
-        ("worker-read b1/i2 reports link", "reached without a link"),
-        ("worker-read b1/i2 reports pipe", "is not a regular file or directory"),
-        ("worker-read b1/nobody reports r", "there is no worker alpha/b1/nobody"),
-    ]
-    for command, reason in refusals:
-        out = machine.succeed(start("--role manager", f'{command}; echo "read=$?"') + " 2>&1")
-        assert reason in out and "read=2" in out and "secret" not in out, (command, out)
-    out = machine.succeed(start("--role manager", "worker-read b1/i2 reports big > $WORKER_SCRATCH/first 2> $WORKER_SCRATCH/said; worker-read --offset 262144 b1/i2 reports big > $WORKER_SCRATCH/second; echo $(wc -c < $WORKER_SCRATCH/first) $(wc -c < $WORKER_SCRATCH/second); cat $WORKER_SCRATCH/said"))
-    assert out.split()[:2] == ["262144", f"{300000 - 262144}"] and "more remains; continue with --offset 262144" in out, out
-    machine.succeed(f"mkdir {folders}/alpha/b1/i2/reports/many; for i in $(seq 1 1200); do touch {folders}/alpha/b1/i2/reports/many/$(printf '%0240d' $i); done")
-    out = machine.succeed(start("--role manager", 'worker-read b1/i2 reports many > $WORKER_SCRATCH/list; echo "read=$? bytes=$(wc -c < $WORKER_SCRATCH/list)"') + " 2>&1")
-    assert "directory listing is larger than 262144 bytes; name a path inside it" in out and "read=2 bytes=0" in out, out
+    manager = task("late-reader", "implementer", branch="b2") + ";touch $WORKER_SCRATCH/ready;" + gate("go") + ";worker-read --workers;worker-read b2/late-reader folder;worker-read b2/late-reader repo untracked;worker-read b2/late-reader reports head;worker-read b2/late-reader records runs.jsonl|grep -m1 late-reader;worker-read b2/late-reader diff file;worker-read b2/late-reader refs;for r in sessions scratch;do worker-read b2/late-reader $r big>$WORKER_SCRATCH/a 2>$WORKER_SCRATCH/e;worker-read --offset 262144 b2/late-reader $r big>$WORKER_SCRATCH/b;echo $r=$(wc -c<$WORKER_SCRATCH/a),$(wc -c<$WORKER_SCRATCH/b);cat $WORKER_SCRATCH/e;done;worker-read b2/late-reader diff large>$WORKER_SCRATCH/a 2>$WORKER_SCRATCH/e;echo limit=$?,$(wc -c<$WORKER_SCRATCH/a);cat $WORKER_SCRATCH/e"
+    machine.succeed(f"rm -f /tmp/reader-*-ran;({start('--role manager --name reader-manager', manager)})>/tmp/reader 2>&1 &")
+    machine.wait_until_succeeds(f"test -e {areas}/alpha/manager/reader-manager/ready", timeout=30 * pace)
+    later = "s=$(command -v bash);printf '#!%s\\ntouch /tmp/reader-external-ran\\necho HOSTILE-EXTERNAL\\n' \"$s\">external;printf '#!%s\\ntouch /tmp/reader-textconv-ran\\necho HOSTILE-TEXTCONV\\n' \"$s\">textconv;chmod +x external textconv;git config diff.external $PWD/external;git config diff.evil.textconv $PWD/textconv;echo 'file diff=evil'>.gitattributes;echo base>large;git add large;git -c user.name=t -c user.email=t@t commit -q -m reader -- large;git tag reader-tag;git rev-parse HEAD>../reports/head;echo late>>file;git add file;echo later>>file;echo uncommitted>untracked;head -c 300000 /dev/zero|tr '\\0' L>large;head -c 300000 /dev/zero|tr '\\0' S>~/.pi/agent/sessions/big;head -c 300000 /dev/zero|tr '\\0' G>$WORKER_SCRATCH/big;queue run -- true"
+    machine.succeed(start("--branch b2 --name late-reader", later))
+    openGate("alpha/manager/reader-manager", "go")
+    sandboxEnded("alpha/manager/reader-manager")
+    out = machine.succeed("cat /tmp/reader")
+    print("B1 reader:", out)
+    head = machine.succeed(f"cat {folders}/alpha/b2/late-reader/reports/head").strip()
+    assert '"b2/late-reader"' in out and all(f'"{x}"' in out for x in ["records", "repo", "reports", "sessions"]) and "uncommitted" in out and '"name": "late-reader"' in out, out
+    assert "index d95f3ad..22fd997" in out and "+late\n+later" in out and f"{head} refs/heads/worker/b2/late-reader" in out and f"{head} refs/tags/reader-tag" in out, out
+    assert "sessions=262144,37856" in out and "scratch=262144,37856" in out and "limit=2,0" in out and "diff is larger than 262144 bytes" in out, out
+    assert "HOSTILE-" not in out and machine.succeed("test ! -e /tmp/reader-external-ran -a ! -e /tmp/reader-textconv-ran;echo safe").strip() == "safe", out
 
 with subtest("A3: nothing of the reviewed work can write a reviewer's report"):
     # R2 of the deep review: the implementer sets a program in its copy's git settings that writes into every report it can reach,

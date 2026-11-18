@@ -169,6 +169,10 @@ class Status:
         _specification_ = importlib.util.spec_from_file_location("approve", config["approve"])
         self.approve = importlib.util.module_from_spec(_specification_)
         _specification_.loader.exec_module(self.approve)
+        # The one parser for persistent worker starts
+        _specification_ = importlib.util.spec_from_file_location("startSpec", config["startSpec"])
+        self.startSpec = importlib.util.module_from_spec(_specification_)
+        _specification_.loader.exec_module(self.startSpec)
         # This program's notes on its last look: processor times, and the answers that need git
         self.notes = os.path.join(self.runtime, "status-notes.json")
         try:
@@ -733,6 +737,12 @@ class Status:
         _role_ = self._word(os.path.join(self.state, project, "roles", branch, name))
         _role_ = _role_ if (_role_ in ("implementer", "reviewer", "deep-reviewer", "manager")) else "implementer"
         _worker_ = {"project": project, "branch": branch, "name": name, "role": _role_}
+        try:
+            self.startSpec.load(self.state, _full_)
+            _worker_["command"] = {"value": self.startSpec.shortCommand(_full_), "source": "recorded"}
+        except self.startSpec.Refused as _refusal_:
+            if os.path.lexists(self.startSpec.recordPath(self.state, _full_)):
+                self.problems.append(str(_refusal_))
         _places_ = {
             "copy": os.path.join(_folder_, "repo"),
             "reports": os.path.join(_folder_, "reports"),

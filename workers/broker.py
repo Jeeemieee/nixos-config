@@ -258,42 +258,226 @@ class Broker:
         request: Annotated[dict, "A checked manager read request"],
         output: Annotated[int, "The client's output descriptor"],
     ):
-        """Read one reports/records path of this project, without adding a mount to the manager"""
+        """List or read one managed worker path of this project without adding a mount"""
         ## Step 1. Check the authority and the closed request
         if (self.identity.get("role") != "manager"):
             raise Refused("only a manager reads other workers through worker-read")
         if not self.workersRoot or not self.rolesRoot:
             raise Refused("this manager has no project worker root")
-        if request["environment"] or (request["folder"] != "/") or (len(request["command"]) != 6):
-            raise Refused("a worker-read request has exactly its worker, part, path, offset and read mode")
-        _branch_, _name_, _part_, _path_, _offsetText_, _readMode_ = request["command"]
-        if not WORKER_NAME.fullmatch(_branch_) or not WORKER_NAME.fullmatch(_name_):
-            raise Refused("the worker is <branch>/<name>, each a checked worker name")
-        if (_part_ not in ("reports", "records")):
-            raise Refused("the part is reports or records")
-        _pathParts_ = _path_.split("/") if _path_ else []
-        if _path_.startswith("/") or any((_item_ in ("", ".", "..")) for _item_ in _pathParts_):
-            raise Refused(f"the path stays below {_part_}")
-        if not _offsetText_.isdigit() or (_readMode_ not in ("read", "sha256")):
-            raise Refused("the offset is a non-negative byte count and the read mode is read or sha256")
-        _offset_ = int(_offsetText_)
+        if (request["environment"] or (request["folder"] != "/")):
+            raise Refused("a worker-read request has no environment and uses the root folder")
 
-        ## Step 2. Require a recorded worker of this project
+        ## Step 2. List the workers recorded for this project at request time
+        if (request["command"] == ["workers"]):
+            _lines_ = []
+            _size_ = 0
+            _rolesDescriptor_ = self._openBelow(self.rolesRoot, [])
+            try:
+                with os.scandir(_rolesDescriptor_) as _branches_:
+                    for _branchEntry_ in _branches_:
+                        if (not WORKER_NAME.fullmatch(_branchEntry_.name) or not _branchEntry_.is_dir(follow_symlinks=False)):
+                            continue
+                        try:
+                            _branchDescriptor_ = self._openBelow(self.rolesRoot, [_branchEntry_.name])
+                        except Refused:
+                            continue
+                        try:
+                            with os.scandir(_branchDescriptor_) as _names_:
+                                for _nameEntry_ in _names_:
+                                    if (not WORKER_NAME.fullmatch(_nameEntry_.name) or not _nameEntry_.is_file(follow_symlinks=False)):
+                                        continue
+                                    try:
+                                        _roleDescriptor_ = self._openBelow(self.rolesRoot, [_branchEntry_.name, _nameEntry_.name])
+                                        _roleStatus_ = os.fstat(_roleDescriptor_)
+                                        _role_ = os.read(_roleDescriptor_, 64).decode(errors="replace").strip()
+                                        os.close(_roleDescriptor_)
+                                    except Refused:
+                                        continue
+                                    if stat.S_ISREG(_roleStatus_.st_mode) and (_role_ in ("implementer", "reviewer", "deep-reviewer", "manager")):
+                                        _line_ = (json.dumps(f"{_branchEntry_.name}/{_nameEntry_.name}", ensure_ascii=True) + "\n").encode()
+                                        _size_ += len(_line_)
+                                        if (_size_ > self.config["maxReadBytes"]):
+                                            raise Refused(f"the worker listing is larger than {self.config['maxReadBytes']} bytes")
+                                        _lines_.append(_line_)
+                        finally:
+                            os.close(_branchDescriptor_)
+            finally:
+                os.close(_rolesDescriptor_)
+            _data_ = b"".join(sorted(_lines_))
+            self._output(output, _data_)
+            return {"bytes": len(_data_), "more": False}
+
+        ## Step 3. Check one worker, root, path and read form
+        if (len(request["command"]) != 6):
+            raise Refused("a worker-read request is a worker listing or exactly its worker, root, path, offset and read mode")
+        _branch_, _name_, _part_, _path_, _offsetText_, _readMode_ = request["command"]
+        if (not WORKER_NAME.fullmatch(_branch_) or not WORKER_NAME.fullmatch(_name_)):
+            raise Refused("the worker is <branch>/<name>, each a checked worker name")
+        _roots_ = ("folder", "reports", "records", "repo", "sessions", "scratch")
+        if (_part_ not in (*_roots_, "diff", "refs")):
+            raise Refused("the root is folder, reports, records, repo, sessions or scratch, or the operation is diff or refs")
+        _pathParts_ = _path_.split("/") if _path_ else []
+        _shownRoot_ = "repo" if (_part_ == "diff") else _part_
+        if (_path_.startswith("/") or any((_item_ in ("", ".", "..")) for _item_ in _pathParts_)):
+            raise Refused(f"the path stays below {_shownRoot_}")
+        if not _offsetText_.isdigit():
+            raise Refused("the offset is a non-negative byte count")
+        if (_readMode_ not in ("read", "sha256")):
+            raise Refused("the read mode is read or sha256, never write")
+        _offset_ = int(_offsetText_)
+        if ((_part_ == "refs") and _path_):
+            raise Refused("refs takes no path")
+        if (_part_ in ("diff", "refs")) and ((_readMode_ != "read") or (_offset_ != 0)):
+            raise Refused(f"{_part_} is one bounded result without --sha256 or --offset")
+
+        ## Step 4. Require a recorded worker of this project
+        _roleDescriptor_ = None
         try:
             _roleDescriptor_ = self._openBelow(self.rolesRoot, [_branch_, _name_])
             _roleStatus_ = os.fstat(_roleDescriptor_)
             _role_ = os.read(_roleDescriptor_, 64).decode(errors="replace").strip()
-            os.close(_roleDescriptor_)
         except Refused:
             _roleStatus_, _role_ = None, ""
-        if (_roleStatus_ is None) or not stat.S_ISREG(_roleStatus_.st_mode) or (_role_ not in ("implementer", "reviewer", "deep-reviewer", "manager")):
+        finally:
+            if (_roleDescriptor_ is not None):
+                os.close(_roleDescriptor_)
+        if ((_roleStatus_ is None) or not stat.S_ISREG(_roleStatus_.st_mode) or (_role_ not in ("implementer", "reviewer", "deep-reviewer", "manager"))):
             raise Refused(f"there is no worker {self.identity['project']}/{_branch_}/{_name_}")
 
-        ## Step 3. Open the requested path once, without following a link
-        _relative_ = [_branch_, _name_, _part_, *_pathParts_]
-        _shown_ = os.path.join(self.workersRoot, *_relative_)
+        ## Step 5. Produce fixed Git views only in a bounded, read-only sandbox
+        if (_part_ in ("diff", "refs")):
+            _repoParts_ = [_branch_, _name_, "repo"]
+            _repo_ = os.path.join(self.workersRoot, *_repoParts_)
+            try:
+                _repoDescriptor_ = self._openBelow(self.workersRoot, _repoParts_)
+                _repoStatus_ = os.fstat(_repoDescriptor_)
+                os.close(_repoDescriptor_)
+            except Refused:
+                raise Refused(f"there is no repository {_repo_} that is reached without a link")
+            if not stat.S_ISDIR(_repoStatus_.st_mode):
+                raise Refused(f"{_repo_} is not a directory")
+            _git_ = [
+                self.config["git"],
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "--no-pager",
+            ]
+            if (_part_ == "diff"):
+                _git_ += [
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-color",
+                    "--no-renames",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
+                    "--abbrev=7",
+                    "--binary",
+                    "HEAD",
+                    "--",
+                    *([_path_] if _path_ else []),
+                ]
+            else:
+                _git_ += ["for-each-ref", "--format=%(objectname) %(refname)"]
+            _unit_ = f"worker-read-{os.getpid()}-{threading.get_native_id()}-{time.monotonic_ns()}"
+            _sandbox_ = [
+                self.config["systemdRun"],
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "--expand-environment=no",
+                f"--unit={_unit_}",
+                "--slice=workers-jobs.slice",
+                "-p",
+                "MemoryMax=128M",
+                "-p",
+                "MemorySwapMax=0",
+                "-p",
+                f"RuntimeMaxSec={self.config['requestSeconds']}",
+                "-p",
+                "TimeoutStopSec=5",
+                "--",
+                *self.config["openChecked"],
+                self.config["bwrap"],
+                "--unshare-all",
+                "--die-with-parent",
+                "--ro-bind",
+                "/nix/store",
+                "/nix/store",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--tmpfs",
+                "/tmp",
+                "--ro-bind-checked",
+                self.workersRoot,
+                "/".join(_repoParts_),
+                _repo_,
+                "--chdir",
+                _repo_,
+                "--clearenv",
+                "--",
+                *_git_,
+            ]
+            _process_ = subprocess.Popen(_sandbox_, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            _data_ = bytearray()
+            _deadline_ = time.monotonic() + self.config["requestSeconds"]
+            _refusal_ = None
+            while True:
+                _left_ = _deadline_ - time.monotonic()
+                if (_left_ <= 0):
+                    _refusal_ = f"the {_part_} did not finish within {self.config['requestSeconds']} seconds"
+                    break
+                _readable_, _, _ = select.select([_process_.stdout], [], [], _left_)
+                if not _readable_:
+                    _refusal_ = f"the {_part_} did not finish within {self.config['requestSeconds']} seconds"
+                    break
+                _chunk_ = os.read(_process_.stdout.fileno(), min(65536, (self.config["maxReadBytes"] + 1) - len(_data_)))
+                if not _chunk_:
+                    break
+                _data_.extend(_chunk_)
+                if (len(_data_) > self.config["maxReadBytes"]):
+                    _refusal_ = f"the {_part_} is larger than {self.config['maxReadBytes']} bytes"
+                    if (_part_ == "diff"):
+                        _refusal_ += "; narrow it to a path"
+                    break
+            if (_refusal_ is not None):
+                subprocess.run([self.config["systemctl"], "--user", "kill", "--kill-whom=all", f"{_unit_}.scope"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                _process_.wait()
+                raise Refused(_refusal_)
+            try:
+                _status_ = _process_.wait(timeout=max(0.1, _deadline_ - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                subprocess.run([self.config["systemctl"], "--user", "kill", "--kill-whom=all", f"{_unit_}.scope"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                _process_.wait()
+                raise Refused(f"the {_part_} did not finish within {self.config['requestSeconds']} seconds")
+            if (_status_ != 0):
+                raise Refused(f"git could not produce the {_part_} safely")
+            _result_ = bytes(_data_)
+            self._output(output, _result_)
+            return {"bytes": len(_result_), "more": False}
+
+        ## Step 6. Open one managed path once, without following a link
+        if (_part_ == "scratch"):
+            _identityBranch_ = self.identity.get("branch")
+            _identityName_ = self.identity.get("name")
+            if (os.path.basename(self.scratch) != _identityName_) or (os.path.basename(os.path.dirname(self.scratch)) != _identityBranch_):
+                raise Refused("this manager has no trusted project scratch root")
+            _root_ = os.path.dirname(os.path.dirname(self.scratch))
+            _relative_ = [_branch_, _name_, *_pathParts_]
+        else:
+            _root_ = self.workersRoot
+            _relative_ = [_branch_, _name_]
+            if (_part_ != "folder"):
+                _relative_.append(_part_)
+            _relative_ += _pathParts_
+        _shown_ = os.path.join(_root_, *_relative_)
         try:
-            _descriptor_ = self._openBelow(self.workersRoot, _relative_)
+            _descriptor_ = self._openBelow(_root_, _relative_)
         except Refused:
             raise Refused(f"there is no path {_shown_} that is reached without a link")
         try:
@@ -353,9 +537,9 @@ class Broker:
         """Open a path below a root without following a link at any level"""
         _descriptor_ = None
         try:
-            _descriptor_ = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            _descriptor_ = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
             for _index_, _part_ in enumerate(parts):
-                _flags_ = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY
+                _flags_ = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC
                 if (_index_ < (len(parts) - 1)):
                     _flags_ |= os.O_DIRECTORY
                 _next_ = os.open(_part_, _flags_, dir_fd=_descriptor_)

@@ -174,8 +174,13 @@ def write_fake_approve(path):
     )
 
 
+# The remembered-start helper that status.py loads; set from --start-spec in main()
+START_SPEC = None
+
+
 def status_config(root, approve, git_program):
     return {
+        "startSpec": START_SPEC,
         "approve": str(approve),
         "approveConfig": {},
         "git": str(git_program),
@@ -369,7 +374,10 @@ def main():
     parser.add_argument("--status", required=True)
     parser.add_argument("--sample-session", required=True)
     parser.add_argument("--git", required=True)
+    parser.add_argument("--start-spec", required=True)
     arguments = parser.parse_args()
+    global START_SPEC
+    START_SPEC = arguments.start_spec
 
     # Put the approved sample beside the imported status module without reading a real session
     status_copy_root = tempfile.TemporaryDirectory()

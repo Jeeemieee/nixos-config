@@ -112,6 +112,13 @@ in
         text = builtins.readFile ../../workers/acceptance-job.sh;
       };
 
+      # The one parser and writer for persistent worker starts
+      startSpecProgram = checked ../../workers/start-spec.py;
+      startSpecCommand = [
+        "${pkgs.python3}/bin/python3"
+        "-I"
+        "${startSpecProgram}"
+      ];
       # The check of an implementer's intent form: the worker runs it inside its sandbox, `workers approve` outside
       intentCheck = checked ../../workers/intent-check.py;
       # What `workers approve` starts, by fixed paths
@@ -154,6 +161,7 @@ in
         builtins.toJSON {
           approve = "${approveProgram}";
           approveConfig = approveSettings;
+          startSpec = "${startSpecProgram}";
           git = "${pkgs.git}/bin/git";
           findmnt = "${pkgs.util-linux}/bin/findmnt";
           inherit (approveSettings) helper;
@@ -269,6 +277,8 @@ in
           FOUND_LARGE_BYTES=${toString (cfg.foundLargeMiB * 1024 * 1024)}
           APPROVE=${lib.escapeShellArg (lib.concatStringsSep " " approveCommand)}
           STATUS=${lib.escapeShellArg statusCommand}
+          START_SPEC=${lib.escapeShellArg (lib.concatStringsSep " " startSpecCommand)}
+          PI=${lib.escapeShellArg "/etc/profiles/per-user/${cfg.user}/bin/pi"}
           WATCH=${watch}/bin/workers-watch
         ''
         + builtins.readFile ../../workers/workers.sh;
@@ -461,6 +471,7 @@ in
           tmpfsBytes = lib.mapAttrs (_: size: size * 1024 * 1024) cfg.tmpfsMiB;
           inherit (cfg) agentMemory;
           start = "${start}";
+          startSpec = lib.concatStringsSep " " startSpecCommand;
           supervise = "${python} ${checked ../../workers/supervise.py}";
           prepare = "${prepareCopy}/bin/prepare-copy";
           readChecked = "${python} ${checked ../../workers/read-checked.py}";
@@ -850,6 +861,80 @@ in
           user = "${user}"
         ''
         + builtins.readFile ../../workers/test-git.py;
+      };
+
+      # Remembered worker starts in a focused virtual machine, on plain folders
+      checks.workers-starts = pkgs.testers.runNixOSTest {
+        name = "workers-starts";
+        skipTypeCheck = true;
+        nodes.machine =
+          { config, pkgs, ... }:
+          let
+            # The worker command records which user or system profile launcher ran, what Pi receives, and the two share modes
+            commandProbe =
+              profile:
+              pkgs.writeShellScript "worker-start-command-${profile}-probe" ''
+                echo ${lib.escapeShellArg profile} > "$WORKER_SCRATCH/pi-launcher"
+                : > "$WORKER_SCRATCH/pi-arguments"
+                for argument in "$@"; do printf '%s\n' "$argument" >> "$WORKER_SCRATCH/pi-arguments"; done
+                if ${pkgs.coreutils}/bin/touch ${lib.escapeShellArg "/home/${user}/shared data/read only/from-worker"} 2> /dev/null; then
+                  echo writable
+                else
+                  echo read-only
+                fi > "$WORKER_SCRATCH/share-modes"
+                if (printf written > ${lib.escapeShellArg "/home/${user}/shared data/write space/from-worker"}) 2> /dev/null; then
+                  echo writable
+                else
+                  echo read-only
+                fi >> "$WORKER_SCRATCH/share-modes"
+              '';
+            # The host-side start hook proves a remembered command exists before the sandbox command executes
+            startProbe = pkgs.writeShellScript "worker-start-before-probe" ''
+              case "$WORKER_UNIT" in
+                worker:*)
+                  id=''${WORKER_UNIT#worker:}
+                  id=''${id//:/\/}
+                  /run/current-system/sw/bin/workers command "$id" > "/tmp/start-before-''${id//\//-}"
+                  ;;
+              esac
+              exec ${config.hostSpec.workers.sandbox.start} "$@"
+            '';
+            piProbe =
+              profile:
+              topLevel.flake.lib.mkSandbox pkgs {
+                name = "pi";
+                command = "${commandProbe profile}";
+                workers = config.hostSpec.workers.sandbox // {
+                  start = "${startProbe}";
+                };
+                protected.guarded = [ "protected" ];
+              };
+          in
+          {
+            imports = [ topLevel.flake.modules.nixos.workers ];
+            users.users.${user} = {
+              isNormalUser = true;
+              uid = 1000;
+              linger = true;
+              packages = [ (piProbe "user-profile") ];
+            };
+            hostSpec.workers = {
+              inherit user;
+              roleFiles = standInRoles;
+              totalMemory = "1G";
+              agentsMemory = "768M";
+              agentMemory = "512M";
+            };
+            environment.systemPackages = [
+              (piProbe "system-profile")
+              pkgs.git
+            ];
+          };
+        globalTimeout = emulatedTimeout;
+        testScript = ''
+          user = "${user}"
+        ''
+        + builtins.readFile ../../workers/test-starts.py;
       };
 
       # The roles and the start-up checks in a virtual machine, on plain folders

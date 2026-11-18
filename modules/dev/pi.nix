@@ -205,11 +205,16 @@ let
         reviewed=
         scratchAction=
         scratchLabel=
+        registerStart=0
         # The workers' folders and scratch areas: shared by the launcher itself, per role, and never by hand
         workersRoot=$HOME/workers
         areasRoot=$HOME/scratch/workers
         while [ "$#" -gt 0 ]; do
           case "$1" in
+            --register-start)
+              registerStart=1
+              shift
+              ;;
             --branch | --name | --role | --of | --snapshot | --rollback)
               [ "$#" -ge 2 ] || deny "$1 needs a value"
               restartWrapper+=("$1" "$2")
@@ -365,8 +370,8 @@ let
         topReadOnly=()
         ${
           pkgs.lib.optionalString (workers == null) ''
-            if [ -n "$branch$workerName$role$reviewed$scratchAction$scratchLabel" ]; then
-              deny "--branch, --name, --role, --of and the snapshot options need the worker setup, which this machine does not have"
+            if [ -n "$branch$workerName$role$reviewed$scratchAction$scratchLabel" ] || [ "$registerStart" = 1 ]; then
+              deny "--register-start, --branch, --name, --role, --of and the snapshot options need the worker setup, which this machine does not have"
             fi
           ''
         }${
@@ -409,7 +414,7 @@ let
               "$project"/* | *" $project"/*) deny "refusing $project: it contains the workers' folders; start ${name} in a folder inside it" ;;
             esac
 
-            if [ -z "$branch$workerName$role$reviewed$scratchAction" ]; then
+            if [ -z "$branch$workerName$role$reviewed$scratchAction" ] && [ "$registerStart" = 0 ]; then
               ## An ordinary session: the project as it is, without a worker's folder
               case "$workdir/" in
                 "$workersRoot"/* | "$areasRoot"/*) deny "refusing $workdir: a worker's folder is entered through its worker; start ${name} in the project with --branch and --name" ;;
@@ -475,6 +480,11 @@ let
               folder=$folders/$branch/$workerName
               area=$areas/$branch/$workerName
 
+              # Registration describes a start; snapshot actions do not start Pi and cannot become part of one
+              if [ "$registerStart" = 1 ] && [ -n "$scratchAction" ]; then
+                deny "snapshot actions cannot be remembered as a worker start"
+              fi
+
               # Snapshots of this worker's scratch area: taken, listed and rolled back here, outside the sandbox
               if [ -n "$scratchAction" ]; then
                 [ "''${#helper[@]}" -gt 0 ] || deny "scratch areas are plain folders on this machine: there are no snapshots"
@@ -497,6 +507,26 @@ let
                 (cd / && git ls-remote --exit-code --heads "$project" "refs/heads/$branch" > /dev/null 2>&1) \
                   || deny "the project $project has no branch '$branch': create it first"
               fi
+
+              # Persist only normalized worker identity, approved shares and safe repeatable Pi options
+              startShares=()
+              for ((index = 1; index < ''${#roots[@]}; index += 1)); do
+                if [ "''${writable[index]}" = 1 ]; then shareMode=rw; else shareMode=ro; fi
+                startShares+=("$shareMode" "''${roots[index]}")
+              done
+              reviewTarget=-
+              [ -z "$reviewed" ] || reviewTarget=$reviewed
+              shareCount=$((''${#startShares[@]} / 2))
+              rememberMode=${if name == "pi" then "2" else "0"}
+              [ "$registerStart" = 0 ] || rememberMode=1
+              ${workers.startSpec} write "$state" "$project" "$role" "$branch" "$workerName" "$reviewTarget" "$rememberMode" "$shareCount" \
+                "''${startShares[@]}" -- "$@" \
+                || deny "the trusted start specification for $projectName/$branch/$workerName could not be written"
+              if [ "$unlock" = 1 ] && [ "$rememberMode" != 0 ]; then
+                echo "${name}: --unlock is used only for this invocation and is not remembered" >&2
+              fi
+              if [ "$registerStart" = 1 ]; then exit 0; fi
+
               # ':' cannot be part of a name, so two workers never share a unit name
               unit=worker:$projectName:$branch:$workerName
               # The unit's name is the worker's: a second sandbox under a name that runs is refused, before anything is written, since

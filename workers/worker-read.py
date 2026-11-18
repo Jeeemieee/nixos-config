@@ -1,5 +1,7 @@
 # A manager's read-only route to every worker of its project, through this sandbox's broker
-#   worker-read [--sha256] [--offset <bytes>] <branch>/<name> <reports|records> [<path>]
+#   worker-read --workers
+#   worker-read [--sha256] [--offset <bytes>] <branch>/<name> <folder|reports|records|repo|sessions|scratch> [<path>]
+#   worker-read <branch>/<name> <diff|refs> [<path for diff>]
 # A directory is listed as one JSON string per entry. A regular file is written as bytes, in bounded pieces.
 import json
 import os
@@ -10,7 +12,8 @@ import sys
 from typing import Annotated
 
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,47}")
-USAGE = "usage: worker-read [--sha256] [--offset <bytes>] <branch>/<name> <reports|records> [<path>]"
+ROOTS = ("folder", "reports", "records", "repo", "sessions", "scratch")
+USAGE = "usage: worker-read --workers | worker-read [--sha256] [--offset <bytes>] <branch>/<name> <folder|reports|records|repo|sessions|scratch> [<path>] | worker-read <branch>/<name> <diff|refs> [<path for diff>]"
 
 
 def fail(
@@ -25,6 +28,8 @@ def main():
     _arguments_ = sys.argv[1:]
     _digest_ = False
     _offset_ = 0
+    _offsetSet_ = False
+    _workers_ = False
     while _arguments_ and _arguments_[0].startswith("--"):
         _option_ = _arguments_.pop(0)
         if (_option_ == "--sha256"):
@@ -38,20 +43,33 @@ def main():
                 fail("--offset is a non-negative byte count")
             if (_offset_ < 0):
                 fail("--offset is a non-negative byte count")
+            _offsetSet_ = True
+        elif (_option_ == "--workers"):
+            _workers_ = True
         else:
             fail(USAGE)
-    if (len(_arguments_) not in (2, 3)):
-        fail(USAGE)
-    _worker_, _part_ = _arguments_[:2]
-    _path_ = _arguments_[2] if (len(_arguments_) == 3) else ""
-    _names_ = _worker_.split("/")
-    if (len(_names_) != 2) or not all(NAME.fullmatch(_name_) for _name_ in _names_):
-        fail("the worker is <branch>/<name>, each 1 to 48 letters, digits, '.', '_' or '-'")
-    if (_part_ not in ("reports", "records")):
-        fail("the part is reports or records")
-    _parts_ = _path_.split("/") if _path_ else []
-    if _path_.startswith("/") or any((_part_ in ("", ".", "..")) for _part_ in _parts_):
-        fail(f"the path stays below {_part_}")
+    if _workers_:
+        if (_arguments_ or _digest_ or _offsetSet_):
+            fail("--workers is used by itself")
+        _command_ = ["workers"]
+    else:
+        if (len(_arguments_) not in (2, 3)):
+            fail(USAGE)
+        _worker_, _part_ = _arguments_[:2]
+        _path_ = _arguments_[2] if (len(_arguments_) == 3) else ""
+        _names_ = _worker_.split("/")
+        if (len(_names_) != 2) or not all(NAME.fullmatch(_name_) for _name_ in _names_):
+            fail("the worker is <branch>/<name>, each 1 to 48 letters, digits, '.', '_' or '-'")
+        if (_part_ not in (*ROOTS, "diff", "refs")):
+            fail("the root is folder, reports, records, repo, sessions or scratch, or the operation is diff or refs")
+        _parts_ = _path_.split("/") if _path_ else []
+        if (_path_.startswith("/") or any((_item_ in ("", ".", "..")) for _item_ in _parts_)):
+            fail(f"the path stays below {'repo' if (_part_ == 'diff') else _part_}")
+        if ((_part_ == "refs") and _path_):
+            fail("refs takes no path")
+        if ((_part_ in ("diff", "refs")) and (_digest_ or _offsetSet_)):
+            fail(f"{_part_} is one bounded result without --sha256 or --offset")
+        _command_ = [*_names_, _part_, _path_, str(_offset_), "sha256" if _digest_ else "read"]
 
     ## Step 2. Send the closed request to this sandbox's broker
     _socket_ = os.environ.get("WORKER_QUEUE_SOCKET")
@@ -59,7 +77,7 @@ def main():
         fail("this is not a worker sandbox with a broker; nothing was read")
     _request_ = {
         "mode": "worker-read",
-        "command": [*_names_, _part_, _path_, str(_offset_), "sha256" if _digest_ else "read"],
+        "command": _command_,
         "folder": "/",
         "environment": {},
     }

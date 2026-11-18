@@ -16,6 +16,9 @@
 #   workers status [--json]                       what every worker does and how far it is, with the origin of every value: measured,
 #                                                 recorded, derived, or claimed by an agent (workers/status.py)
 #   workers watch [<options>]                     the same as a live overview in the terminal; it only displays (workers-dashboard/)
+#   workers command <project>/<branch>/<name>     print the trusted long command remembered for a worker
+#   workers start [--continue] <project>/<branch>/<name>
+#                                                 revalidate and execute that remembered start, optionally continuing its chat
 #   workers approve [--without-form | --revoke] <project>/<branch>/<name>
 #                                                 an implementer's copy of the project is read-only until you approve its intent:
 #                                                 the form is shown, you choose an approach and type yes (workers/approve.py)
@@ -37,6 +40,7 @@ runtime=${XDG_RUNTIME_DIR:?}/workers
 validName() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$ ]]; }
 read -r -a helper <<< "$HELPER"
 read -r -a status <<< "$STATUS"
+read -r -a startSpec <<< "$START_SPEC"
 
 # <project>/<branch>/<name> into the three names, each checked
 worker() {
@@ -140,6 +144,22 @@ case "$action" in
   watch)
     # A program of its own, which asks the status's program for its document; WATCH comes from the system configuration
     exec "$WATCH" "${@:2}"
+    ;;
+  command)
+    [ "$#" -eq 2 ] || die "usage: workers command <project>/<branch>/<name>"
+    exec "${startSpec[@]}" command "$state" "$2"
+    ;;
+  start)
+    startOptions=()
+    if [ "${2:-}" = --continue ]; then
+      [ "$#" -eq 3 ] || die "usage: workers start [--continue] <project>/<branch>/<name>"
+      workerId=$3
+      startOptions=(--continue)
+    else
+      [ "$#" -eq 2 ] || die "usage: workers start [--continue] <project>/<branch>/<name>"
+      workerId=$2
+    fi
+    exec "${startSpec[@]}" start "$state" "$PI" "$workerId" "${startOptions[@]}"
     ;;
   list)
     # Of every worker, its commits that nobody else holds and whether it is removable: from the status's program
@@ -467,5 +487,5 @@ case "$action" in
       echo "The working tree, the index and the current branch are as they were. Files that the project ignores are not recorded; a manager sees them, read-only, when started with: pi --role manager --allow-ro $project"
     fi
     ;;
-  *) die "usage: workers list | remove [--force] <project>/<branch>/<name> | restore <project>/<branch>/<name> | remove-session <project>-<digest> | take [--branch <name>] [<manager>] | found [--with-large-files] | approve [--without-form | --revoke] <project>/<branch>/<name> | status [--json] | watch [<options>]" ;;
+  *) die "usage: workers list | command <project>/<branch>/<name> | start <project>/<branch>/<name> | remove [--force] <project>/<branch>/<name> | restore <project>/<branch>/<name> | remove-session <project>-<digest> | take [--branch <name>] [<manager>] | found [--with-large-files] | approve [--without-form | --revoke] <project>/<branch>/<name> | status [--json] | watch [<options>]" ;;
 esac

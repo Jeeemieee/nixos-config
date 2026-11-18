@@ -61,7 +61,7 @@ in
 
         ## Step 4. The required outcomes of round 4, including the status producer's first call
         python3 work/tests/round4.py --normal ${normal}/bin/workers-watch --commanded ${commanded}/bin/workers-watch \
-          --status ${../workers/status.py} --sample-session ${../workers/sample-session.jsonl} --git ${pkgs.git}/bin/git \
+          --status ${../workers/status.py} --sample-session ${../workers/sample-session.jsonl} --git ${pkgs.git}/bin/git --start-spec ${../workers/start-spec.py} \
           | tee round4-results.txt || failed=1
 
         ## Step 5. The hierarchy, wrapping and semantic palette of round 5
