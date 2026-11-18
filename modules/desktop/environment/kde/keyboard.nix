@@ -73,25 +73,42 @@
         ## Part 4. Brave window placement
         # Let KWin restore Brave windows by their names because Wayland gives the browser no placement control
         # plasma-manager stores each target under the internal name Desktop_<position>
-        window-rules = lib.imap1 (n: name: {
-          description = "Brave windows named \"${name}: ...\" belong on desktop ${toString n}";
-          match = {
-            window-class = {
-              value = "brave-browser";
-              type = "exact";
-              match-whole = false;
+        window-rules =
+          lib.imap1 (n: name: {
+            description = "Brave windows named \"${name}: ...\" belong on desktop ${toString n}";
+            match = {
+              window-class = {
+                value = "brave-browser";
+                type = "exact";
+                match-whole = false;
+              };
+              title = {
+                value = "^${lib.escapeRegex name}: ";
+                type = "regex";
+              };
             };
-            title = {
-              value = "^${lib.escapeRegex name}: ";
-              type = "regex";
+            # Keep the rule forced so naming an existing window moves it immediately and remains effective
+            apply.desktops = {
+              value = "Desktop_${toString n}";
+              apply = "force";
             };
-          };
-          # Keep the rule forced so naming an existing window moves it immediately and remains effective
-          apply.desktops = {
-            value = "Desktop_${toString n}";
-            apply = "force";
-          };
-        }) desktops;
+          }) desktops
+          ++ [
+            # Bitwarden's SSH approval must appear on whichever desktop asked for it, not on the desktop where Bitwarden started
+            # An empty desktop list is KWin's "All Desktops"; the class is matched case-insensitively because its case differs between X11 and Wayland
+            {
+              description = "Bitwarden on all desktops, so that its approval appears where it is asked for";
+              match.window-class = {
+                value = "(?i)bitwarden";
+                type = "regex";
+                match-whole = false;
+              };
+              apply.desktops = {
+                value = "";
+                apply = "force";
+              };
+            }
+          ];
 
         # Restore Plasma's centred default if a machine had previously saved maximised placement
         # Keep Plasma's default Meta shortcuts for maximising and half-screen tiling

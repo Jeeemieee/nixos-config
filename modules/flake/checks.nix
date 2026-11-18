@@ -151,6 +151,10 @@
           normalUsers = lib.filterAttrs (_: account: account.isNormalUser) cfg.users.users;
           bravePolicies = builtins.fromJSON cfg.environment.etc."brave/policies/managed/extra.json".text;
           braveDefaults = builtins.fromJSON cfg.environment.etc."brave/policies/managed/default.json".text;
+          # The window rules that place Brave windows by name, one per named desktop
+          braveRules = builtins.filter (
+            rule: (rule.match.window-class.value or null) == "brave-browser"
+          ) user.programs.plasma.window-rules;
           thunderbird = user.programs.thunderbird.profiles.default;
           wifiProfiles = cfg.networking.networkmanager.ensureProfiles.profiles;
           eduroam = wifiProfiles.eduroam."802-1x";
@@ -279,13 +283,19 @@
           user.programs.plasma.enable
           && user.programs.plasma.workspace.lookAndFeel == "org.kde.breezedark.desktop";
         # Require private named desktops, their Meta+digit shortcut and one Brave placement rule each
+        # Only the Brave rules are counted: other window rules, such as Bitwarden's, are not per desktop
         assert
           user.programs.plasma.kwin.virtualDesktops.names != [ ]
-          &&
-            builtins.length user.programs.plasma.window-rules
-            == builtins.length user.programs.plasma.kwin.virtualDesktops.names;
+          && builtins.length braveRules == builtins.length user.programs.plasma.kwin.virtualDesktops.names;
         # A named Brave window is kept on its desktop, so that naming an existing window moves it
-        assert lib.all (rule: rule.apply.desktops.apply == "force") user.programs.plasma.window-rules;
+        assert lib.all (rule: rule.apply.desktops.apply == "force") braveRules;
+        # Bitwarden's SSH approval appears on the desktop that asks: Bitwarden is forced onto all desktops (an empty list)
+        assert lib.any (
+          rule:
+          (rule.match.window-class.value or null) == "(?i)bitwarden"
+          && rule.apply.desktops.value == ""
+          && rule.apply.desktops.apply == "force"
+        ) user.programs.plasma.window-rules;
         # Restore Brave when the user opens it, not at login
         # Require the policy, replacement launchers and whole-browser exit before Plasma closes windows
         assert
