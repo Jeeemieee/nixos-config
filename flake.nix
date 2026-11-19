@@ -4,8 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
-    # The development-environment blocks in dev-env/ (PETSc 3.25, CUDA); the hosts use nixpkgs
-    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # The development-environment blocks, a flake of their own in dev-env/ that projects use directly (?dir=dev-env)
+    dev-env.url = "path:./dev-env";
+    # Their package set (PETSc 3.25, CUDA); the hosts use nixpkgs. It follows the blocks' own pin, so the checks test
+    # what projects get; this lock keeps a copy of that pin, which the dev-env-lock-in-step check compares
+    nixpkgs-unstable.follows = "dev-env/nixpkgs";
 
     # pi, which 26.05 ships too old; its own pin, because pi is released far more often than the blocks should move
     nixpkgs-pi.url = "github:NixOS/nixpkgs/nixos-unstable";

@@ -313,14 +313,16 @@ update() {
   [ -e flake.nix ] || die "update is for nixos-config"
   local what=${1:-} inputs=()
   # Everything that is not one of the separately kept pins
-  mapfile -t system < <(nixCommand flake metadata --json "path:$root" | jq -r '.locks.nodes.root.inputs | keys[]' | grep -vxE 'nixpkgs-pi|nixpkgs-search|nixpkgs-unstable|nixos-secrets')
+  mapfile -t system < <(nixCommand flake metadata --json "path:$root" | jq -r '.locks.nodes.root.inputs | keys[]' | grep -vxE 'nixpkgs-pi|nixpkgs-search|nixpkgs-unstable|nixos-secrets|dev-env')
   case "$what" in
     pi) inputs=(nixpkgs-pi) ;;
     search) inputs=(nixpkgs-search) ;;
     secrets) inputs=(nixos-secrets) ;;
     dev)
       echo "config: this moves the development environments (PETSc, CUDA); a project keeps its versions until it runs 'nix flake update blocks'"
-      inputs=(nixpkgs-unstable)
+      # The blocks' own lock first, which projects get; then this repository's copy of it (dev-env-lock-in-step)
+      nixCommand flake update --flake "path:$root/dev-env"
+      inputs=(dev-env)
       ;;
     system) inputs=("${system[@]}") ;;
     all) inputs=("${system[@]}" nixpkgs-pi nixpkgs-search nixos-secrets) ;;
@@ -353,7 +355,7 @@ update() {
 
   echo
   echo "config: running the checks on the updated configuration ..."
-  runChecks "$(folderTree)" || die "the checks fail with these versions; nothing is committed. Undo with: git checkout flake.lock modules/dev/pi.nix"
+  runChecks "$(folderTree)" || die "the checks fail with these versions; nothing is committed. Undo with: git checkout flake.lock dev-env/flake.lock modules/dev/pi.nix"
   echo "config: the checks pass. Review with 'git diff', then: config commit \"<message>\""
 }
 

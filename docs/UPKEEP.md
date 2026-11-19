@@ -66,7 +66,7 @@ After a commit in `nixos-secrets`: `config update secrets` in this repository, c
 
 ## Updates
 
-`config update <what>` changes the pins, shows the old and new dates of every changed input and the versions of pi and SearXNG, and runs the checks. Review with `git diff`, then `config commit "<message>"`. If the checks fail, nothing is committed; `git checkout flake.lock modules/dev/pi.nix` undoes the update.
+`config update <what>` changes the pins, shows the old and new dates of every changed input and the versions of pi and SearXNG, and runs the checks. Review with `git diff`, then `config commit "<message>"`. If the checks fail, nothing is committed; `git checkout flake.lock dev-env/flake.lock modules/dev/pi.nix` undoes the update.
 
 | What | Moves |
 | --- | --- |
@@ -74,7 +74,7 @@ After a commit in `nixos-secrets`: `config update secrets` in this repository, c
 | `extensions` | pi's extensions to their newest versions on npm, with their hashes, in `modules/dev/pi.nix`, and the versions that the `pi-config` check expects pi to report; `pi-chatgpt-limit` is not on npm and stays |
 | `search` | SearXNG (`nixpkgs-search`): when search engines stop answering |
 | `system` | NixOS and everything else that is not one of the separate pins |
-| `dev` | The development environments (`nixpkgs-unstable`: PETSc, CUDA). A project keeps its versions until it runs `nix flake update blocks` |
+| `dev` | The development environments (the blocks' `nixpkgs` in `dev-env/flake.lock`, then this repository's copy of it: PETSc, CUDA). A project keeps its versions until it runs `nix flake update blocks`, and gets them only after the commit is pushed |
 | `secrets` | The pin of `nixos-secrets`, after a commit there |
 | `all` | `system`, `pi`, `extensions`, `search` and `secrets`; not `dev` |
 

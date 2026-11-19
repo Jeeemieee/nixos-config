@@ -4,10 +4,15 @@ Development environment from Nix building blocks, loaded by direnv.
 
 ## First use
 
-1. Choose the blocks in `flake.nix`: `python`, `cpp`, `openfoam`, and at most one of
+1. Choose the blocks in `environment/nix/flake.nix`: `python`, `cpp`, `openfoam`, and at most one of
    `numerics-cpu` and `numerics-cuda`. Extra tools go into `packages`.
-2. Run `direnv allow`, then `nix-direnv-reload`. The first load downloads the tools and writes `flake.lock`.
+2. Run `direnv allow`, then `nix-direnv-reload`. The first load downloads the tools and writes
+   `environment/nix/flake.lock`.
 3. After every change of `flake.nix` or `flake.lock`, run `nix-direnv-reload` again: the environment is not reloaded by itself.
+
+`environment/nix/` holds only `flake.nix` and `flake.lock`. `.envrc` enters it as a folder of its own, so only
+those two files are copied into the Nix store, not the project. Other environment files, such as Docker's, go
+beside it in `environment/`.
 
 ## Python packages
 
@@ -41,9 +46,8 @@ With the `exclude-dependencies` list, uv does not check whether a package from P
 accepts the shell's numpy or scipy version; a package that needs another version fails
 when it is imported, not when it is installed.
 
-The project must be a Git repository with `.venv/` and `.direnv/` ignored (the
-`.gitignore` here does that); otherwise every reload copies the whole folder, virtual
-environment included, into the Nix store.
+Keep `.venv/` and `.direnv/` ignored (the `.gitignore` here does that), and keep every other
+file out of `environment/nix/`: whatever lies there is copied into the Nix store at every reload.
 
 ## CUDA
 

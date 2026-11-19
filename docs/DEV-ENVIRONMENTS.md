@@ -14,7 +14,7 @@ A project gets its tools from building blocks that are defined once, in `dev-env
 
 A project chooses any of `python`, `cpp` and `openfoam`, and at most one numerics block. Both numerics blocks together, or an unknown name, fail with a message. Extra tools go into `packages`.
 
-The blocks use the `nixpkgs-unstable` input, independent of the hosts' package set. The CUDA packages are unfree; their names are allowed inside `dev-env/cuda-overlay.nix` only, not on the hosts' allowlist. The first use of `numerics-cuda` on a machine builds PETSc with CUDA (about a quarter of an hour).
+The blocks are a flake of their own, `dev-env/flake.nix`, whose only input is `nixpkgs` (`nixos-unstable`), independent of the hosts' package set. A project's lock therefore holds only `blocks` and that `nixpkgs`, not this repository's other inputs. This repository's `nixpkgs-unstable` follows the blocks' pin, so the `dev-env-*` checks test exactly what projects get; its lock keeps a copy of that pin, and the `dev-env-lock-in-step` check fails when the copy and `dev-env/flake.lock` differ. `lib.pkgs` is the blocks' package set, for a project that builds a package of its own with the shell's Python. The CUDA packages are unfree; their names are allowed inside `dev-env/cuda-overlay.nix` only, not on the hosts' allowlist. The first use of `numerics-cuda` on a machine builds PETSc with CUDA (about a quarter of an hour).
 
 The `openfoam` block takes OpenFOAM as nixpkgs packages it, v2512, which the binary cache serves: nothing is compiled, and it takes 2.5 GiB in the Nix store. A newer release than nixpkgs has can be had by giving `dev-env/openfoam.nix` the release's version and source; it is then compiled on the machine, about 65 minutes on 8 cores for v2606 (measured 2026-11-14), at the first use and again after most updates of `nixpkgs-unstable`. The release the checks expect is written in `dev-env/checks.nix`. ParaView is a program of the desktop ([APPS.md](APPS.md)), not part of the block, and `paraFoam` is not provided.
 
@@ -22,10 +22,14 @@ The `openfoam` block takes OpenFOAM as nixpkgs packages it, v2512, which the bin
 
 ```bash
 mkdir ~/projects/<name> && cd ~/projects/<name> && git init
-nix flake init -t github:Jeeemieee/nixos-config#project
+nix flake init -t "github:Jeeemieee/nixos-config?dir=dev-env#project"
 ```
 
-Choose the blocks in `flake.nix`, then `direnv allow` and `nix-direnv-reload`; run `nix-direnv-reload` again after every change of `flake.nix` or `flake.lock`, since the environment is not reloaded by itself (see [MIMIR-VM.md](MIMIR-VM.md), direnv). The template's `README.md` describes the Python steps: `uv venv --system-site-packages` once, then `uv add <package>`; the numerics packages come from the shell and are listed under `exclude-dependencies` in `pyproject.toml`, so uv does not install its own copies.
+The template keeps the environment in `environment/`: `environment/nix/` holds only `flake.nix` and `flake.lock`, and `.envrc` enters it as a path flake of that folder (`use flake "path:$PWD/environment/nix"`). Entering the shell then copies those two files into the Nix store, not the project; a flake at the top of a Git repository copies every tracked file at every evaluation (58 MiB for `pyVarVal`). What tools look for at the top stays there: `pyproject.toml`, `setup.py`, `uv.lock`, `.envrc`, `AGENTS.md`, `workers.toml`, `.gitignore`, `README.md`.
+
+A project's flake names the blocks as `inputs.blocks.url = "github:Jeeemieee/nixos-config?dir=dev-env";`. The old address without `?dir=dev-env` still works, but its lock carries every input of this repository.
+
+Choose the blocks in `environment/nix/flake.nix`, then `direnv allow` and `nix-direnv-reload`; run `nix-direnv-reload` again after every change of `flake.nix` or `flake.lock`, since the environment is not reloaded by itself (see [MIMIR-VM.md](MIMIR-VM.md), direnv). The template's `README.md` describes the Python steps: `uv venv --system-site-packages` once, then `uv add <package>`; the numerics packages come from the shell and are listed under `exclude-dependencies` in `pyproject.toml`, so uv does not install its own copies.
 
 Update the blocks of a project with `nix flake update blocks`, then delete `.venv` and create it again.
 
@@ -37,7 +41,7 @@ Update the blocks of a project with `nix flake update blocks`, then delete `.ven
 - `UV_PYTHON` is the shell's Python and `UV_PYTHON_DOWNLOADS=never`: uv never downloads a Python
 - `openfoam`: OpenFOAM's own `etc/bashrc` is sourced. It puts the programs and `wmake` on `PATH`, sets `WM_*` and `FOAM_*`, and puts OpenFOAM's libraries and those of Scotch, FFTW, Boost and Open MPI on `LD_LIBRARY_PATH`, which every program started from the shell sees. OpenFOAM needs that: it loads libraries by name, also the project's own. OpenFOAM itself is read-only in the Nix store. `wmake` installs your own solvers and libraries into OpenFOAM's user folder (`FOAM_USER_APPBIN`, `FOAM_USER_LIBBIN`), which comes first on both paths for every program of the shell. It must therefore never be a folder that an agent can write and your own terminal then searches, so the block chooses it:
   - in your own terminal: `~/.local/share/openfoam/v2512/`, shared by all your projects, wherever their cases lie. pi never shares a hidden folder of the home, so no agent can write it;
-  - inside a pi sandbox (recognised by its home folder in memory): `.openfoam/` in the project, the nearest folder upwards with a `flake.nix`. The agent compiles and tests there; add `.openfoam/` to the project's `.gitignore`, as the template does;
+  - inside a pi sandbox (recognised by its home folder in memory): `.openfoam/` in the project, the nearest folder upwards with a `flake.nix`, or else the folder the shell was entered from (with the `environment/nix` layout and direnv, the project's top folder). The agent compiles and tests there; add `.openfoam/` to the project's `.gitignore`, as the template does;
   - `OPENFOAM_USER_DIR`, if you set it, wins over both.
 
   The sources of your solvers live wherever you develop them. After an agent wrote or changed one, run `wmake` in it yourself: that builds your copy, and is the moment to look at what changed. direnv carries variables only: the aliases of an OpenFOAM shell (`run`, `tut`, `src`, `wmSet`) exist in `nix develop`, not under direnv; use `cd "$FOAM_RUN"` and the like
