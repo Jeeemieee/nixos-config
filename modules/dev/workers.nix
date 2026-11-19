@@ -119,6 +119,13 @@ in
         "-I"
         "${startSpecProgram}"
       ];
+      # The bundle client also supplies the broker's fixed creator inside the checked repository sandbox
+      workerBundleProgram = checked ../../workers/worker-bundle.py;
+      workerBundleCommand = [
+        "${pkgs.python3}/bin/python3"
+        "-I"
+        "${workerBundleProgram}"
+      ];
       # The check of an implementer's intent form: the worker runs it inside its sandbox, `workers approve` outside
       intentCheck = checked ../../workers/intent-check.py;
       # What `workers approve` starts, by fixed paths
@@ -196,6 +203,8 @@ in
           maxRequestBytes = 1048576;
           # One piece of a manager's read of another worker; larger regular files are read with another offset
           maxReadBytes = maxTextBytes;
+          # A bundle is streamed through the broker, never retained there as a whole
+          maxBundleBytes = cfg.bundleMiB * 1024 * 1024;
           # A request arrives at once or not at all, so the whole of it has this long; connections without one are few
           requestSeconds = 10;
           maxConnections = 16;
@@ -216,6 +225,8 @@ in
           approve = approveCommand;
           acceptanceJob = "${acceptanceJob}/bin/acceptance-job";
           jobMeasure = "${jobMeasure}";
+          workerBundleCreate = workerBundleCommand ++ [ "--create" ];
+          workerBundleHistory = workerBundleCommand ++ [ "--project-history" ];
         }
       );
 
@@ -291,6 +302,11 @@ in
       # A manager's read-only route to every worker's reports and records, including workers made after this sandbox started
       workerRead = pkgs.writeShellScriptBin "worker-read" ''
         exec ${python} ${checked ../../workers/worker-read.py} "$@"
+      '';
+
+      # A manager's bounded route to one worker's committed branch
+      workerBundle = pkgs.writeShellScriptBin "worker-bundle" ''
+        exec ${lib.concatStringsSep " " workerBundleCommand} "$@"
       '';
 
       # The worker's own command for the check of its form
@@ -447,6 +463,11 @@ in
           default = 10;
           description = "An untracked file larger than this is left out by `workers found`, and named, unless it is asked to record large files too.";
         };
+        bundleMiB = lib.mkOption {
+          type = lib.types.ints.positive;
+          default = 1024;
+          description = "Largest Git bundle a manager may receive from one worker, in MiB; the broker streams it without retaining it as a whole.";
+        };
         holdDays = lib.mkOption {
           type = lib.types.ints.positive;
           default = 14;
@@ -501,6 +522,7 @@ in
         environment.systemPackages = [
           queue
           workerRead
+          workerBundle
           intent
           workersTool
         ];
@@ -736,6 +758,13 @@ in
       # The dashboard's program (workers-dashboard/), whose reader judges the status document in two of the checks (W13)
       # Built without a status command: the checks give it the document as a file
       watchProgram = "${import ../../workers-dashboard/package.nix pkgs { }}/bin/workers-watch";
+      # Kept outside the already near-limit VM script, but checked independently before that script can load it
+      bundleTestProgram =
+        pkgs.runCommand "test-bundle.py" { nativeBuildInputs = [ pkgs.python3Packages.pyflakes ]; }
+          ''
+            pyflakes ${../../workers/test-bundle.py}
+            cp ${../../workers/test-bundle.py} "$out"
+          '';
       # Inside a build on a host without hardware virtualisation the test machines are emulated and many times slower; the
       # test driver's own limit of an hour is too short there
       emulatedTimeout = 6 * 3600;
@@ -991,6 +1020,8 @@ in
               totalMemory = "1G";
               agentsMemory = "768M";
               agentMemory = "512M";
+              # Small only in this VM, so the bundle refusal is practical to reach
+              bundleMiB = 1;
             };
             environment.systemPackages = [
               (standIn config)
@@ -1069,6 +1100,7 @@ in
         testScript = ''
           user = "${user}"
           watchProgram = "${watchProgram}"
+          bundleTest = "${bundleTestProgram}"
           # A session file with entries of the to-do extension, as `workers status` reads them
           sampleSession = ${builtins.toJSON (builtins.readFile ../../workers/sample-session.jsonl)}
         ''

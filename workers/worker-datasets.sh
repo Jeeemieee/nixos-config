@@ -2,6 +2,7 @@
 #   worker-datasets ensure <project> <branch> <name>              create what is missing and mount it: the worker's folder, its scratch area,
 #                                                                 and the project's instructions and archive folders
 #   worker-datasets ensure-area <project> <branch> <name>         the scratch area alone, for a session without a worker's folder
+#   worker-datasets ensure-knowledge <project> <branch>           the project's common knowledge and one branch's knowledge
 #   worker-datasets snapshot <project> <branch> <name> <label>    snapshot the scratch area
 #   worker-datasets rollback <project> <branch> <name> <label>    return it to that snapshot; later snapshots of it are destroyed
 #   worker-datasets drop <project> <branch> <name> <label>        destroy that snapshot
@@ -57,10 +58,17 @@ checkAncestors() {
 
 # Mount a dataset at its own mount point unless it is mounted, and check where it arrived
 mountDataset() {
-  local dataset=$1 path
+  local dataset=$1 path relative
   path=$(zfs get -H -o value mountpoint "$dataset")
   if [[ $path = "$WORKERS_PATH/"* ]]; then
-    checkAncestors "$WORKERS_PATH" "${path#"$WORKERS_PATH/"}"
+    relative=${path#"$WORKERS_PATH/"}
+    checkAncestors "$WORKERS_PATH" "$relative"
+    # Knowledge paths are stable user entry points: never recreate one that was moved or replaced
+    if [[ $relative =~ ^[^/]+/knowledge/[^/]+$ ]]; then
+      [ ! -L "$path" ] || die "refusing: $path is reached through a link"
+      [ -d "$path" ] || die "refusing: $path is missing or moved"
+      [ "$(realpath -e -- "$path" 2> /dev/null)" = "$path" ] || die "refusing: $path is reached through a link"
+    fi
   elif [[ $path = "$SCRATCH_PATH/"* ]]; then
     checkAncestors "$SCRATCH_PATH" "${path#"$SCRATCH_PATH/"}"
   else
@@ -92,6 +100,20 @@ createOwned() {
   fi
 }
 
+# Make one knowledge leaf without ever mounting over an existing ordinary path
+createKnowledge() {
+  local project=$1 relative=$1/knowledge/$2 dataset=$WORKERS_DATASET/$1/knowledge/$2 path=$WORKERS_PATH/$1/knowledge/$2
+  if exists "$dataset"; then
+    [ "$(zfs get -H -o value mountpoint "$dataset")" = "$path" ] || die "refusing: $path is missing or moved"
+  else
+    checkAncestors "$WORKERS_PATH" "$relative"
+    [ ! -e "$path" ] && [ ! -L "$path" ] || die "refusing: $path already exists without its knowledge dataset"
+    install -d -o root -g root -m 755 -- "$path"
+  fi
+  createOwned "$WORKERS_DATASET" "$WORKERS_PATH" "$relative" "$FOLDER_QUOTA"
+  [ "$(stat -c '%U %a' -- "$path")" = "$OWNER 700" ] || die "refusing: $path does not belong to $OWNER with mode 700"
+}
+
 action=${1:-}
 checkParent "$WORKERS_DATASET" "$WORKERS_PATH"
 checkParent "$SCRATCH_DATASET" "$SCRATCH_PATH"
@@ -120,6 +142,18 @@ if [ "$action" = mount-all ]; then
   exit 0
 fi
 
+if [ "$action" = ensure-knowledge ]; then
+  [ "$#" = 3 ] || die "usage: worker-datasets ensure-knowledge <project> <branch>"
+  project=$2
+  branch=$3
+  validName "$project" || die "invalid project name '$project'"
+  validName "$branch" || die "invalid branch name '$branch'"
+  case "$branch" in manager | archive | instructions | knowledge | common | plain | old) die "'$branch' cannot be a knowledge branch name" ;; esac
+  createKnowledge "$project" common
+  createKnowledge "$project" "$branch"
+  exit 0
+fi
+
 [ "$#" -ge 4 ] || die "usage: worker-datasets ensure|ensure-area|retire|restore|drop-area|snapshot|rollback|drop|list <project> <branch> <name> [<label>]"
 project=$2
 branch=$3
@@ -129,7 +163,7 @@ validName "$project" || die "invalid project name '$project'"
 validName "$branch" || die "invalid branch name '$branch'"
 validName "$name" || die "invalid worker name '$name'"
 # These are folders beside the branches; old is the user's own, never a worker's
-case "$branch" in instructions | archive | old) die "'$branch' cannot be a branch name: the project's folder of that name is in its place" ;; esac
+case "$branch" in instructions | archive | knowledge | old) die "'$branch' cannot be a branch name: the project's folder of that name is in its place" ;; esac
 # The manager and ordinary sessions use these two internal names, not branch names
 if [ "$branch" = plain ] && [ "$action" = ensure ]; then
   die "'plain' cannot be a branch name: it is reserved for ordinary sessions"

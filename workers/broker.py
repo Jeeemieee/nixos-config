@@ -22,7 +22,7 @@ import threading
 import time
 from typing import Annotated
 
-MODES = ("run", "run-parallel", "timing", "exclusive", "acceptance", "acceptance-all", "status", "worker-read")
+MODES = ("run", "run-parallel", "timing", "exclusive", "acceptance", "acceptance-all", "status", "worker-read", "worker-bundle")
 # The modes whose command is not the request's: the broker takes it from the approval and from the project (see _acceptance)
 ACCEPTANCE = ("acceptance", "acceptance-all")
 FIELDS = {"mode", "command", "folder", "environment"}
@@ -142,6 +142,9 @@ class Broker:
                 if (_request_["mode"] == "worker-read"):
                     self._reply(connection, {"read": self._workerRead(_request_, _descriptors_[1])})
                     return
+                if (_request_["mode"] == "worker-bundle"):
+                    self._reply(connection, {"bundle": self._workerBundle(_request_, _descriptors_[1])})
+                    return
                 with self.lock:
                     self.counter += 1
                     _number_ = self.counter
@@ -252,6 +255,236 @@ class Broker:
         """Whether the client closed its end: it sends nothing after its request, so readable means closed"""
         _readable_, _, _ = select.select([connection], [], [], 0)
         return bool(_readable_)
+
+    def _projectExclusions(self):
+        """Read bounded recent branch histories from this worker identity's trusted user project"""
+        ## Step 1. Read the launcher-owned project path beside this project's role records
+        if not self.rolesRoot:
+            raise Refused("this manager has no trusted project state")
+        _main_ = os.path.join(os.path.dirname(self.rolesRoot), "main")
+        try:
+            _descriptor_ = os.open(_main_, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                _status_ = os.fstat(_descriptor_)
+                _data_ = os.read(_descriptor_, 4097)
+            finally:
+                os.close(_descriptor_)
+        except OSError:
+            raise Refused("the trusted path of this manager's project could not be read")
+        if not stat.S_ISREG(_status_.st_mode) or (len(_data_) > 4096):
+            raise Refused("the trusted path of this manager's project is not one bounded regular file")
+        try:
+            _project_ = _data_.decode().removesuffix("\n")
+        except UnicodeDecodeError:
+            raise Refused("the trusted path of this manager's project is not valid Unicode")
+        if not _project_.startswith("/") or ("\n" in _project_) or (os.path.basename(_project_) != self.identity.get("project")):
+            raise Refused("the trusted path does not name this manager's project")
+
+        ## Step 2. Ask that repository for bounded recent branch histories inside its own checked sandbox
+        _projectPath_ = _project_.lstrip("/")
+        _sandbox_ = [
+            *self.config["openChecked"],
+            self.config["bwrap"],
+            "--unshare-all",
+            "--die-with-parent",
+            "--ro-bind",
+            "/nix/store",
+            "/nix/store",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--ro-bind-checked",
+            "/",
+            _projectPath_,
+            "/project",
+            "--chdir",
+            "/project",
+            "--clearenv",
+            "--",
+            *self.config["workerBundleHistory"],
+            self.config["git"],
+        ]
+        try:
+            _listing_ = subprocess.run(
+                _sandbox_,
+                cwd="/",
+                capture_output=True,
+                text=True,
+                timeout=self.config["requestSeconds"],
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            raise Refused("the recent branch histories of the user's project could not be read")
+        if (_listing_.returncode != 0):
+            raise Refused("the recent branch histories of the user's project could not be read")
+        _lines_ = _listing_.stdout.splitlines()
+        if (len(_lines_) > 65536):
+            raise Refused("the user's project returned too many recent branch commits")
+        _exclusions_ = set()
+        for _object_ in _lines_:
+            if (len(_object_) not in (40, 64)) or any(_letter_ not in "0123456789abcdef" for _letter_ in _object_):
+                raise Refused("the user's project returned a malformed branch history")
+            _exclusions_.add(_object_)
+        if not _exclusions_:
+            raise Refused("the user's project has no branch history to exclude from the bundle")
+        return sorted(_exclusions_)
+
+    def _workerBundle(
+        self,
+        request: Annotated[dict, "A checked manager bundle request"],
+        output: Annotated[int, "The client's output descriptor"],
+    ):
+        """Stream one worker ref, excluding trusted project history the worker has"""
+        ## Step 1. Check the authority and the one exact target ref
+        if (self.identity.get("role") != "manager"):
+            raise Refused("only a manager receives another worker's bundle")
+        if not self.workersRoot or not self.rolesRoot:
+            raise Refused("this manager has no project worker root")
+        if (request["environment"] or (request["folder"] != "/")):
+            raise Refused("a worker-bundle request has no environment and uses the root folder")
+        if (len(request["command"]) != 3):
+            raise Refused("a worker-bundle request is exactly its branch, worker name and ref")
+        _branch_, _name_, _reference_ = request["command"]
+        if not WORKER_NAME.fullmatch(_branch_) or not WORKER_NAME.fullmatch(_name_):
+            raise Refused("the worker is <branch>/<name>, each a checked worker name")
+        _expected_ = f"worker/{_branch_}/{_name_}"
+        if (_reference_ != _expected_):
+            raise Refused(f"the requested ref is {_expected_}, never another ref")
+
+        ## Step 2. Require a recorded worker of this project and read exclusions only from the user project
+        _roleDescriptor_ = None
+        try:
+            _roleDescriptor_ = self._openBelow(self.rolesRoot, [_branch_, _name_])
+            _roleStatus_ = os.fstat(_roleDescriptor_)
+            _role_ = os.read(_roleDescriptor_, 64).decode(errors="replace").strip()
+        except Refused:
+            _roleStatus_, _role_ = None, ""
+        finally:
+            if (_roleDescriptor_ is not None):
+                os.close(_roleDescriptor_)
+        if ((_roleStatus_ is None) or not stat.S_ISREG(_roleStatus_.st_mode) or (_role_ not in ("implementer", "reviewer", "deep-reviewer", "manager"))):
+            raise Refused(f"there is no worker {self.identity['project']}/{_branch_}/{_name_}")
+        _exclusions_ = self._projectExclusions()
+
+        ## Step 3. Run the fixed creator with the checked repository descriptor, no network and finite resources
+        _repoParts_ = [_branch_, _name_, "repo"]
+        _repo_ = os.path.join(self.workersRoot, *_repoParts_)
+        _unit_ = f"worker-bundle-{os.getpid()}-{threading.get_native_id()}-{time.monotonic_ns()}"
+        _sandbox_ = [
+            self.config["systemdRun"],
+            "--user",
+            "--scope",
+            "--quiet",
+            "--collect",
+            "--expand-environment=no",
+            f"--unit={_unit_}",
+            "--slice=workers-jobs.slice",
+            "-p",
+            "MemoryMax=128M",
+            "-p",
+            "MemorySwapMax=0",
+            "-p",
+            f"RuntimeMaxSec={self.config['requestSeconds']}",
+            "-p",
+            "TimeoutStopSec=5",
+            "--",
+            *self.config["openChecked"],
+            self.config["bwrap"],
+            "--unshare-all",
+            "--die-with-parent",
+            "--ro-bind",
+            "/nix/store",
+            "/nix/store",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--ro-bind-checked",
+            self.workersRoot,
+            "/".join(_repoParts_),
+            _repo_,
+            "--chdir",
+            _repo_,
+            "--clearenv",
+            "--",
+            *self.config["workerBundleCreate"],
+            self.config["git"],
+            _reference_,
+        ]
+        _process_ = subprocess.Popen(_sandbox_, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        _candidateInput_ = ("\n".join(_exclusions_) + "\n").encode()
+        self._output(_process_.stdin.fileno(), _candidateInput_)
+        _process_.stdin.close()
+
+        ## Step 4. Relay bounded pieces immediately, retaining only a short diagnostic from errors
+        _bytes_ = 0
+        _error_ = bytearray()
+        _deadline_ = time.monotonic() + self.config["requestSeconds"]
+        _streams_ = {_process_.stdout.fileno(): "output", _process_.stderr.fileno(): "error"}
+        _refusal_ = None
+        while _streams_ and (_refusal_ is None):
+            _left_ = _deadline_ - time.monotonic()
+            if (_left_ <= 0):
+                _refusal_ = f"the bundle did not finish within {self.config['requestSeconds']} seconds"
+                break
+            _readable_, _, _ = select.select(list(_streams_), [], [], _left_)
+            if not _readable_:
+                _refusal_ = f"the bundle did not finish within {self.config['requestSeconds']} seconds"
+                break
+            for _descriptor_ in _readable_:
+                _chunk_ = os.read(_descriptor_, 65536)
+                if not _chunk_:
+                    del _streams_[_descriptor_]
+                    continue
+                if (_streams_[_descriptor_] == "error"):
+                    _room_ = 8192 - len(_error_)
+                    if (_room_ > 0):
+                        _error_.extend(_chunk_[:_room_])
+                    continue
+                _limit_ = self.config["maxBundleBytes"]
+                _room_ = _limit_ - _bytes_
+                if (_room_ > 0):
+                    _part_ = _chunk_[:_room_]
+                    self._output(output, _part_)
+                    _bytes_ += len(_part_)
+                if (len(_chunk_) > _room_):
+                    _refusal_ = f"the bundle is larger than {_limit_} bytes, the configured limit"
+                    break
+
+        ## Step 5. Stop an over-limit or late scope, then classify the creator's bounded result
+        if (_refusal_ is not None):
+            subprocess.run(
+                [self.config["systemctl"], "--user", "kill", "--kill-whom=all", f"{_unit_}.scope"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            _process_.wait()
+            raise Refused(_refusal_)
+        try:
+            _status_ = _process_.wait(timeout=max(0.1, _deadline_ - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            subprocess.run(
+                [self.config["systemctl"], "--user", "kill", "--kill-whom=all", f"{_unit_}.scope"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            _process_.wait()
+            raise Refused(f"the bundle did not finish within {self.config['requestSeconds']} seconds")
+        _errorText_ = _error_.decode(errors="replace")
+        if (_status_ == 3):
+            raise Refused(f"the worker copy has no committed ref {_reference_}")
+        if (_status_ == 4) and ("no-shared-project-commit" in _errorText_):
+            raise Refused("the worker's copy shares no commit with the user's project")
+        if (_status_ != 0):
+            raise Refused("git could not create the bundle safely")
+        return {"bytes": _bytes_, "ref": _reference_}
 
     def _workerRead(
         self,

@@ -219,6 +219,104 @@ with subtest("Round 6 item 4: every project and branch level above a worker belo
     out = machine.fail(asUser(f"sudo -n {helper} ensure-area owned-area b1 w1") + " 2>&1")
     assert f"refusing: {areas}/owned-area" in out and f"sudo chown root:root {areas}/owned-area && sudo chmod 755 {areas}/owned-area" in out, out
 
+with subtest("B3: project knowledge is user-owned, bounded, persistent and isolated"):
+    project = "knowledge-a"
+    otherProject = "knowledge-b"
+    projectPath = f"{folders}/{project}"
+    knowledgePath = f"{projectPath}/knowledge"
+    commonPath = f"{knowledgePath}/common"
+    branchPath = f"{knowledgePath}/b1"
+    otherCommonPath = f"{folders}/{otherProject}/knowledge/common"
+    commonDataset = f"rpool/workers/{project}/knowledge/common"
+    branchDataset = f"rpool/workers/{project}/knowledge/b1"
+
+    # The user's existing old/ folder is a neighbour of knowledge/ and must not change
+    machine.succeed(
+        f"install -d -o root -g root -m 755 {projectPath}",
+        f"install -d -o {user} -g users -m 755 {projectPath}/old",
+        f"printf kept-by-the-user > {projectPath}/old/marker",
+        f"chown {user}:users {projectPath}/old/marker",
+    )
+    oldState = lambda: machine.succeed(
+        f"stat -c '%U:%G:%a:%i' {projectPath}/old {projectPath}/old/marker; "
+        f"sha256sum {projectPath}/old/marker; find {projectPath}/old -mindepth 1 -maxdepth 1 -printf '%f\\n' | sort"
+    )
+    oldBefore = oldState()
+
+    # One branch request makes common and that branch, but no unrequested branch
+    machine.succeed(asUser(f"sudo -n {helper} ensure-knowledge {project} b1"))
+    machine.fail(f"test -e {knowledgePath}/b2")
+    machine.succeed(asUser(f"sudo -n {helper} ensure-knowledge {project} b2"))
+    listing = machine.succeed(f"zfs list -H -o name,quota,mounted,mountpoint -r rpool/workers/{project}")
+    print("B3 knowledge datasets:", listing)
+    for expected in [
+        f"{commonDataset}\t64M\tyes\t{commonPath}",
+        f"{branchDataset}\t64M\tyes\t{branchPath}",
+        f"rpool/workers/{project}/knowledge/b2\t64M\tyes\t{knowledgePath}/b2",
+    ]:
+        assert expected in listing, expected
+    owners = machine.succeed(
+        f"stat -c '%U %a' {projectPath} {knowledgePath} {commonPath} {branchPath} {knowledgePath}/b2"
+    ).split()
+    assert owners == ["root", "755", "root", "755", user, "700", user, "700", user, "700"], owners
+    machine.succeed(
+        asUser(f"echo common-material > {commonPath}/paper && echo branch-material > {branchPath}/reference")
+    )
+
+    # The knowledge grouping name can never become a worker branch or scratch namespace
+    commonState = lambda: machine.succeed(
+        f"stat -c '%U:%G:%a:%i' {commonPath} {commonPath}/paper; sha256sum {commonPath}/paper; "
+        f"find {commonPath} -mindepth 1 -maxdepth 1 -printf '%f\\n' | sort"
+    )
+    commonBefore = commonState()
+    message = "'knowledge' cannot be a branch name: the project's folder of that name is in its place"
+    for arguments in [
+        f"ensure {project} knowledge common",
+        f"ensure-area {project} knowledge common",
+    ]:
+        out = machine.fail(asUser(f"sudo -n {helper} {arguments}") + " 2>&1")
+        assert message in out, out
+    assert commonState() == commonBefore, (commonBefore, commonState())
+
+    # A second project's fixed namespace is separate and cannot be selected by traversal
+    machine.succeed(asUser(f"sudo -n {helper} ensure-knowledge {otherProject} b1"))
+    machine.succeed(asUser(f"echo other-project > {otherCommonPath}/private"))
+    out = machine.fail(asUser(f"sudo -n {helper} ensure-knowledge {project} ../{otherProject}") + " 2>&1")
+    assert "invalid branch name" in out, out
+    machine.succeed(
+        f"test \"$(findmnt -rn -o SOURCE --mountpoint {commonPath})\" = {commonDataset}",
+        f"test \"$(findmnt -rn -o SOURCE --mountpoint {otherCommonPath})\" = rpool/workers/{otherProject}/knowledge/common",
+        f"test -z \"$(find -L {knowledgePath} -xdev -samefile {otherCommonPath} -print -quit)\"",
+    )
+
+    # The dynamic backup list and recursive snapshot rule include knowledge like other worker folders
+    machine.succeed(f"cat > /tmp/knowledge-backup-list <<'END'\n{backupList}\nEND\nchmod +x /tmp/knowledge-backup-list")
+    backedUp = machine.succeed("/tmp/knowledge-backup-list").split()
+    for expected in [commonPath, branchPath, f"{knowledgePath}/b2", otherCommonPath]:
+        assert expected in backedUp, (expected, backedUp)
+    machine.succeed("rm -f /var/cache/private/sanoid/datasets.txt /var/cache/sanoid/datasets.txt; systemctl start --wait sanoid.service")
+    snapshots = machine.succeed("zfs list -H -t snapshot -o name | grep autosnap || true")
+    assert f"{commonDataset}@autosnap" in snapshots and f"{branchDataset}@autosnap" in snapshots, snapshots
+
+    # An existing dataset is never silently remounted at a missing, moved or linked source path
+    machine.succeed(f"zfs unmount {commonDataset}; rmdir {commonPath}")
+    out = machine.fail(asUser(f"sudo -n {helper} ensure-knowledge {project} b1") + " 2>&1")
+    assert commonPath in out and "missing or moved" in out, out
+    machine.succeed(f"install -d -o root -g root -m 755 {commonPath}; zfs mount {commonDataset}")
+
+    machine.succeed(f"zfs unmount {branchDataset}; mv {branchPath} {branchPath}.moved")
+    out = machine.fail(asUser(f"sudo -n {helper} ensure-knowledge {project} b1") + " 2>&1")
+    assert branchPath in out and "missing or moved" in out, out
+    machine.succeed(f"mv {branchPath}.moved {branchPath}; zfs mount {branchDataset}")
+
+    machine.succeed(f"zfs unmount {branchDataset}; mv {branchPath} {branchPath}.real; ln -s /var/lib/target {branchPath}")
+    out = machine.fail(asUser(f"sudo -n {helper} ensure-knowledge {project} b1") + " 2>&1")
+    assert branchPath in out and "reached through a link" in out, out
+    machine.succeed(f"rm {branchPath}; mv {branchPath}.real {branchPath}; zfs mount {branchDataset}")
+
+    machine.succeed(f"grep -qx common-material {commonPath}/paper; grep -qx branch-material {branchPath}/reference")
+    assert oldState() == oldBefore, (oldBefore, oldState())
+
 with subtest("V16a: the first start creates the worker's folder and scratch area, each a dataset with its limit"):
     out = machine.succeed(worker("b1", "w1", "pwd; env | grep -E '^(WORKER|UV)_' | sort; ls ~; ls ~/workers/alpha ~/workers/alpha/b1; ls ~/workers/alpha/b1/w1"))
     print("V16a inside:", out)
@@ -685,6 +783,9 @@ with subtest("After a reboot the workers' datasets are mounted again, after thei
     boot()
     print(machine.succeed("systemctl status worker-datasets-mount.service --no-pager | head -n 4; findmnt -rn -t zfs -o TARGET | sort"))
     machine.succeed("systemctl is-active worker-datasets-mount.service")
-    machine.succeed(f"grep -qx r {folders}/alpha/b1/w1/reports/report && grep -qx one {areas}/alpha/b1/w1/results/one && grep -qx task {folders}/alpha/instructions/b1/w1.md")
+    machine.succeed(
+        f"grep -qx r {folders}/alpha/b1/w1/reports/report && grep -qx one {areas}/alpha/b1/w1/results/one && grep -qx task {folders}/alpha/instructions/b1/w1.md",
+        f"grep -qx common-material {folders}/knowledge-a/knowledge/common/paper && grep -qx branch-material {folders}/knowledge-a/knowledge/b1/reference",
+    )
     machine.succeed(worker("b1", "w1", "echo after-reboot > $WORKER_SCRATCH/again"))
     print(machine.succeed("zfs list -o name,used,quota,mounted -r rpool | head -n 40"))

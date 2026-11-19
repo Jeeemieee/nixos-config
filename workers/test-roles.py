@@ -376,6 +376,10 @@ with subtest("B1: one live manager reads every managed artefact of a later worke
     assert "sessions=262144,37856" in out and "scratch=262144,37856" in out and "limit=2,0" in out and "diff is larger than 262144 bytes" in out, out
     assert "HOSTILE-" not in out and machine.succeed("test ! -e /tmp/reader-external-ran -a ! -e /tmp/reader-textconv-ran;echo safe").strip() == "safe", out
 
+with subtest("B4: a live manager receives a later worker bundle"):
+    exec(compile(open(bundleTest).read(), bundleTest, "exec"), globals())
+    globals()["runBundleTest"](machine, user, home, folders, areas, asUser, start, task, gate, openGate, sandboxEnded)
+
 with subtest("A3: nothing of the reviewed work can write a reviewer's report"):
     # R2 of the deep review: the implementer sets a program in its copy's git settings that writes into every report it can reach,
     # and commits a test that does the same
