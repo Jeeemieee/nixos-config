@@ -1,14 +1,17 @@
 # Disk layout and snapshots
 
-`modules/storage/disk.nix` defines `nixos.disk`: the encrypted ZFS system disk for physical machines, with its snapshot policy. `modules/boot/uefi.nix` defines `nixos.boot`: UEFI boot with systemd-boot. The laptop host `mimir` uses them; the test VM `mimir-vm` keeps its own simple disk.
+`modules/storage/disk.nix` defines `nixos.disk`: the encrypted ZFS system disk for physical machines, with its snapshot policy. `modules/boot/uefi.nix` defines `nixos.boot`: UEFI boot with systemd-boot. The physical hosts `mimir` and `odin` use them; the test VM `mimir-vm` keeps its own simple disk.
 
-## Layout
+## Physical layouts
 
-| Part | Size | Contents |
-| --- | --- | --- |
-| EFI partition (`/boot`) | 1 GiB | Boot loader, kernels; not encrypted |
-| Swap | `hostSpec.disk.swapSize`, default 32 GiB | Encrypted with a new random key at every boot; no hibernation |
-| LUKS container `crypt` | The rest | ZFS pool `rpool` |
+| Host | EFI (`/boot`) | After EFI | Swap | Encrypted system |
+| --- | --- | --- | --- | --- |
+| `mimir` | 1 GiB | No gap | 32 GiB, new random key at every boot | LUKS container `crypt` in all remaining space, holding ZFS pool `rpool` |
+| `odin` | 2 GiB | 200 GiB genuinely unallocated for a later Windows installation | 32 GiB, new random key at every boot | LUKS container `crypt` in all remaining space, holding the same ZFS recipe |
+
+Odin is installed **NixOS first** with the existing destructive whole-disk installer. Disko gives swap an explicit start after the gap; no temporary partition occupies it. Windows 11 is installed second and may create only its Microsoft reserved, Windows and recovery partitions in that unallocated extent. See [ODIN-INSTALL.md](ODIN-INSTALL.md). Neither host supports hibernation.
+
+## ZFS datasets
 
 | Dataset | Mounted at | Snapshots (sanoid) |
 | --- | --- | --- |
@@ -19,7 +22,11 @@
 | `rpool/scratch/workers` | `~/scratch/workers` | None. Raw output of agent workers; the top folder belongs to root |
 | `rpool/workers` | `~/workers` | Hourly for 24 hours, daily for 7 days, also for every dataset created below it. Agent workers' copies of projects, reports and sessions; limited to `workersQuota`; the top folder belongs to root |
 
-The sizes are options of `hostSpec.disk` without defaults, because they depend on the disk. On `mimir` (2 TB, 1863 GiB; about 1770 GiB usable after the boot partition, swap and ZFS's own reserve of a thirty-second of the pool): 600 GiB reserved for `/home`, at most 250 GiB for the Nix store, 600 GiB for scratch and 200 GiB for `~/workers`. If every limit were reached while `/home` is at its reservation, about 120 GiB would be left. The disk is not split: a limit is the most a dataset may grow to, and unused space stays available to the others; the reservation is a minimum, and `/home` can grow beyond it.
+The sizes are options of `hostSpec.disk` without defaults, because they depend on the disk. On `mimir` (2 TB, 1863 GiB; about 1770 GiB usable after the boot partition, swap and ZFS's own reserve of a thirty-second of the pool): 600 GiB reserved for `/home`, at most 250 GiB for the Nix store, 600 GiB for scratch and 200 GiB for `~/workers`. If every limit were reached while `/home` is at its reservation, about 120 GiB would be left.
+
+On `odin`, for the approved 1 TB plan after the 2 GiB EFI partition, 200 GiB Windows gap and 32 GiB swap: 200 GiB is reserved for `/home`, `/nix` is limited to 150 GiB, scratch to 275 GiB, and the unused shared workers dataset to 1 GiB. The game-disk layout is deliberately not declared yet.
+
+The ZFS disk is not split: a limit is the most a dataset may grow to, and unused space stays available to the others; the reservation is a minimum, and `/home` can grow beyond it.
 
 The two workers datasets hold what the worker tools create ([WORKERS.md](WORKERS.md)): below `rpool/workers` a dataset per worker with its own limit, and below `rpool/scratch/workers` a scratch area per worker with its own limit. Their top folders belong to root, so that nothing running as the user can rename or replace what is mounted below them; the user cannot create folders there without `sudo`.
 
@@ -34,7 +41,7 @@ What agents write outside those datasets, and what limits it:
 
 All datasets use zstd compression and no access-time updates. ZFS's cache is capped at 4 GiB. The pool is scrubbed monthly (every block is read and its checksum verified) and trimmed weekly.
 
-The disk passphrase is typed at every boot. It is not in nixos-secrets, which live on the encrypted disk. The boot waits for it as long as it takes: the pool is imported only after the encrypted container is open. (Without that order NixOS lets the import retry for one minute beside the prompt, and a passphrase typed later ended in the emergency mode; the `disk-layout` check types it after 75 seconds.) `hostSpec.disk.device` has no default and the formatting script cannot be built without it; the installer sets it to the one disk it can see (see [INSTALL.md](INSTALL.md)). The installed system finds its partitions by label, not by device name.
+The disk passphrase is typed at every boot. It is not in nixos-secrets, which live on the encrypted disk. The boot waits for it as long as it takes: the pool is imported only after the encrypted container is open. (Without that order NixOS lets the import retry for one minute beside the prompt, and a passphrase typed later ended in the emergency mode; the `disk-layout` check types it after 75 seconds.) `hostSpec.disk.device` normally has no default and the formatting script cannot be built without it; the installer sets it to the one disk it can see (see [INSTALL.md](INSTALL.md)). Odin keeps its real target under `hostSpec.odin.systemDiskById` and the installer refuses until it is set and matches the selected disk. The installed systems find their partitions by label, not by device name.
 
 ## Snapshots are not backups
 
@@ -57,7 +64,7 @@ List snapshots and the space they hold: `zfs list -t snapshot -o name,used,refer
 
 ## Validation
 
-The `disk-layout` check (`nix flake check`) uses disko's install test: in a virtual machine it formats an empty disk with this layout, installs a minimal system, boots it from that disk with UEFI, types the test passphrase at the prompt, and checks that
+The `disk-layout` check (`nix flake check`) uses disko's install test: in a virtual machine it formats an empty disk with the ordinary layout, installs a minimal system, boots it from that disk with UEFI, types the test passphrase at the prompt, and checks that
 
 1. the pool is healthy and sits on the opened LUKS container
 2. the six datasets are mounted, compressed and without access-time updates
@@ -68,6 +75,8 @@ The `disk-layout` check (`nix flake check`) uses disko's install test: in a virt
 7. the two workers folders belong to root, and the user can neither create something in them nor rename them (control: he can do both with a folder of his own)
 8. a dataset created later below `rpool/workers` gets snapshots without a rule of its own; one below scratch gets none
 
-The test takes about six minutes on this machine, because Nix's build users cannot use KVM here; the result is cached until the layout changes. Its installer machine prints a `boot.zfs.forceImportRoot` warning: that is disko's throwaway installer, the installed system sets it to `false`.
+`odin-disk-layout` reuses that complete install-and-boot test with Odin's 2 GiB EFI partition and a smaller stand-in gap. It reads the GPT and independently proves that only EFI, swap and LUKS partitions exist and that the sectors between EFI and swap are unallocated. `odin-config` separately asserts the production 200 GiB gap and the exact swap start.
 
-Not covered by the check: the real disk and firmware, Secure Boot, and a full desktop system on this layout; those are tested in the install rehearsal.
+The tests take about six minutes each on this machine, because Nix's build users cannot use KVM here; results are cached until the layout changes. Their installer machine prints a `boot.zfs.forceImportRoot` warning: that is disko's throwaway installer, the installed system sets it to `false`.
+
+Not covered by the checks: the real disks and firmware, the Windows installer, Secure Boot with both operating systems, or a full game workload. Those require the installation rehearsal and the physical desktop.

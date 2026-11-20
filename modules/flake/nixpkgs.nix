@@ -22,6 +22,9 @@
               "discord"
               "spotify"
               "zoom"
+              # Steam's client is proprietary; Proton-GE and the other gaming tools are free
+              "steam"
+              "steam-unwrapped"
               # Allow the proprietary graphics and dock drivers required by the laptop hardware
               "nvidia-x11"
               "nvidia-settings"

@@ -1,9 +1,11 @@
 # Mimir: personal NixOS configuration
 
-NixOS configuration for `jeeemieee`. Two hosts share one workstation profile: `mimir`, the laptop (not installed yet), and `mimir-vm`, a test VM that is removed once the laptop has migrated.
+NixOS configuration for `jeeemieee`. Three hosts share one workstation profile: `mimir`, the laptop; `mimir-vm`, its temporary test VM; and `odin`, the prepared gaming desktop.
 
 - **[Mimir, the laptop](docs/MIMIR.md)**: what the laptop host is made of, its hardware, and what is tested where
 - **[Mimir VM](docs/MIMIR-VM.md)**: build, launch, change and validate the VM
+- **[Odin, the gaming desktop](docs/ODIN.md)**: gaming, AMD graphics, dual boot, backup and restricted remote access
+- **[Installing Odin](docs/ODIN-INSTALL.md)**: NixOS first, Windows 11 second in the reserved gap, then Secure Boot
 - **[Applications](docs/APPS.md)**: installed programs and how to add more
 - **[Development environments](docs/DEV-ENVIRONMENTS.md)**: per-project Python, C/C++/Fortran, PETSc and CUDA from building blocks
 - **[Several agents on one machine](docs/WORKERS.md)**: a copy, a folder and a scratch area per pi worker, a job queue that runs each job in its worker's view, roles, and limits on memory and cores
@@ -20,14 +22,14 @@ Every file under `modules/` is a [flake-parts](https://flake.parts) module, disc
 
 | Path | Contents |
 | --- | --- |
-| `modules/hosts/` | `mimir` (laptop) and `mimir-vm` (test VM): names, hardware and state versions |
-| `modules/profiles/` | `workstation`: the account, desktop, applications and services of every personal machine |
+| `modules/hosts/` | `mimir` (laptop), `mimir-vm` (test VM) and `odin` (gaming desktop): composition, hardware facts and state versions |
+| `modules/profiles/` | `workstation`: the shared account, desktop, applications and services; `gaming`: Odin's launchers and AMD support |
 | `modules/hardware/`, `modules/users/` | Laptop services, NVIDIA, DisplayLink; the login password from secrets |
 | `modules/apps/` | Desktop applications, fonts and default applications |
 | `modules/desktop/` | KDE Plasma and PipeWire audio |
 | `modules/dev/` | The pi coding agent and its sandbox, VSCodium, direnv, the Git identity, GitHub access and the SSH hosts |
-| `modules/storage/`, `modules/boot/` | Encrypted ZFS disk with snapshots and its per-host sizes (`hostSpec.disk`), UEFI boot, Secure Boot |
-| `modules/services/` | VPN clients, Wi-Fi, rootless Docker, libvirt, the backup and the local search |
+| `modules/storage/`, `modules/boot/` | Encrypted ZFS disk with snapshots and per-host geometry (`hostSpec.disk`), including Odin's Windows gap; UEFI boot and Secure Boot |
+| `modules/services/` | VPN clients, Wi-Fi, rootless Docker, libvirt, backup, local search and Odin's Tailscale-only SSH server |
 | `modules/security/` | Machine age identity and sops-nix secrets |
 | `modules/install/`, `install/` | The installer and the `install` tool; the disk validation and its test cases |
 | `config-tool/` | The `config` command and the list of protected files (plain files, not modules) |

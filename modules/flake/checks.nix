@@ -130,9 +130,152 @@
         "discord"
         "spotify"
         "zoom"
+        "steam"
+        "steam-unwrapped"
         "nvidia-x11"
         "nvidia-settings"
         "displaylink"
+      ];
+
+      # Reduce each host to the settings that decide whether another machine can enter
+      ingressOf = cfg: {
+        ssh = cfg.services.openssh.enable;
+        globalTcp = cfg.networking.firewall.allowedTCPPorts;
+        globalUdp = cfg.networking.firewall.allowedUDPPorts;
+        globalTcpRanges = cfg.networking.firewall.allowedTCPPortRanges;
+        globalUdpRanges = cfg.networking.firewall.allowedUDPPortRanges;
+        interfaces = cfg.networking.firewall.interfaces;
+        trusted = cfg.networking.firewall.trustedInterfaces;
+        password = cfg.services.openssh.settings.PasswordAuthentication or null;
+        keyboard = cfg.services.openssh.settings.KbdInteractiveAuthentication or null;
+        root = cfg.services.openssh.settings.PermitRootLogin or null;
+        users = cfg.services.openssh.settings.AllowUsers or null;
+      };
+
+      # The two current hosts admit nothing at all
+      closedIngressPolicy =
+        policy:
+        !policy.ssh
+        && policy.globalTcp == [ ]
+        && policy.globalUdp == [ ]
+        && policy.globalTcpRanges == [ ]
+        && policy.globalUdpRanges == [ ]
+        && policy.interfaces == { }
+        && policy.trusted == [ "lo" ];
+
+      closedIngress = {
+        ssh = false;
+        globalTcp = [ ];
+        globalUdp = [ ];
+        globalTcpRanges = [ ];
+        globalUdpRanges = [ ];
+        interfaces = { };
+        trusted = [ "lo" ];
+        password = null;
+        keyboard = null;
+        root = null;
+        users = null;
+      };
+
+      # Controls cover an added port, every unsafe SSH mode, another user and another interface
+      closedIngressControls = [
+        (closedIngress // { globalTcp = [ 22 ]; })
+        (
+          closedIngress
+          // {
+            ssh = true;
+            password = true;
+          }
+        )
+        (
+          closedIngress
+          // {
+            ssh = true;
+            root = "yes";
+          }
+        )
+        (
+          closedIngress
+          // {
+            ssh = true;
+            users = [ "another-user" ];
+          }
+        )
+        (
+          closedIngress
+          // {
+            interfaces = {
+              eth0.allowedTCPPorts = [ 22 ];
+            };
+          }
+        )
+      ];
+
+      # Odin's only exception is key-only SSH through the Tailscale interface
+      odinIngressPolicy =
+        policy:
+        policy.ssh
+        && policy.globalTcp == [ ]
+        && policy.globalUdp == [ ]
+        && policy.globalTcpRanges == [ ]
+        && policy.globalUdpRanges == [ ]
+        &&
+          policy.interfaces == {
+            tailscale0 = {
+              allowedTCPPorts = [ 22 ];
+              allowedUDPPorts = [ ];
+              allowedTCPPortRanges = [ ];
+              allowedUDPPortRanges = [ ];
+            };
+          }
+        && policy.trusted == [ "lo" ]
+        && policy.password == false
+        && policy.keyboard == false
+        && policy.root == "no"
+        && policy.users == [ "jeeemieee" ];
+
+      odinIngress = {
+        ssh = true;
+        globalTcp = [ ];
+        globalUdp = [ ];
+        globalTcpRanges = [ ];
+        globalUdpRanges = [ ];
+        interfaces = {
+          tailscale0 = {
+            allowedTCPPorts = [ 22 ];
+            allowedUDPPorts = [ ];
+            allowedTCPPortRanges = [ ];
+            allowedUDPPortRanges = [ ];
+          };
+        };
+        trusted = [ "lo" ];
+        password = false;
+        keyboard = false;
+        root = "no";
+        users = [ "jeeemieee" ];
+      };
+
+      odinIngressControls = [
+        (odinIngress // { globalTcp = [ 22 ]; })
+        (odinIngress // { password = true; })
+        (odinIngress // { root = "yes"; })
+        (
+          odinIngress
+          // {
+            users = [
+              "jeeemieee"
+              "another-user"
+            ];
+          }
+        )
+        (
+          odinIngress
+          // {
+            interfaces = odinIngress.interfaces // {
+              eth0.allowedTCPPorts = [ 22 ];
+            };
+          }
+        )
       ];
 
       ## Part 2. Shared workstation policy
@@ -170,21 +313,13 @@
           builtins.attrNames config.flake.nixosConfigurations == [
             "mimir"
             "mimir-vm"
+            "odin"
           ];
         assert !cfg.services.displayManager.autoLogin.enable;
         assert builtins.attrNames normalUsers == [ "jeeemieee" ];
         assert cfg.users.users.root.hashedPassword == "!";
         assert cfg.security.sudo.enable && cfg.security.sudo.wheelNeedsPassword;
-        assert !cfg.services.openssh.enable;
         assert cfg.networking.firewall.enable;
-        # Keep every incoming port closed and trust only the machine's loopback interface
-        assert
-          cfg.networking.firewall.allowedTCPPorts == [ ] && cfg.networking.firewall.allowedUDPPorts == [ ];
-        assert
-          cfg.networking.firewall.allowedTCPPortRanges == [ ]
-          && cfg.networking.firewall.allowedUDPPortRanges == [ ];
-        assert
-          cfg.networking.firewall.interfaces == { } && cfg.networking.firewall.trustedInterfaces == [ "lo" ];
         # A trusted user of the Nix daemon is as good as root, and every pi sandbox reaches the daemon
         assert cfg.nix.settings.trusted-users == [ "root" ];
         assert lib.assertMsg (guardedSettings host == [ ])
@@ -363,7 +498,12 @@
           && lib.hasInfix "--autostart" user.xdg.configFile."autostart/bitwarden.desktop".text;
         assert cfg.virtualisation.libvirtd.enable;
         # Keep the real backup absent from profile hosts that do not explicitly import it
-        assert host.config.networking.hostName == "mimir" || cfg.services.restic.backups == { };
+        assert
+          builtins.elem host.config.networking.hostName [
+            "mimir"
+            "odin"
+          ]
+          || cfg.services.restic.backups == { };
         # Tailscale joins with the host's key, and only after the secrets are installed
         assert cfg.services.tailscale.authKeyFile == cfg.sops.secrets.tailscale_authkey.path;
         assert builtins.elem "sops-install-secrets.service"
@@ -448,6 +588,8 @@
           vm = config.flake.nixosConfigurations.mimir-vm.config;
         in
         assert workstationPolicy config.flake.nixosConfigurations.mimir-vm;
+        assert closedIngressPolicy (ingressOf vm);
+        assert builtins.all (policy: !(closedIngressPolicy policy)) closedIngressControls;
         assert vm.virtualisation.forwardPorts == [ ];
         assert builtins.attrNames vm.virtualisation.sharedDirectories == [ "nix-store" ];
         assert vm.virtualisation.sharedDirectories.nix-store.source == "/nix/store";
@@ -466,6 +608,8 @@
           account = mimir.users.users.jeeemieee;
         in
         assert workstationPolicy config.flake.nixosConfigurations.mimir;
+        assert closedIngressPolicy (ingressOf mimir);
+        assert builtins.all (policy: !(closedIngressPolicy policy)) closedIngressControls;
         # The password comes from nixos-secrets only, and accounts cannot be changed outside the configuration
         assert !mimir.users.mutableUsers;
         assert account.hashedPasswordFile == mimir.sops.secrets.user_password_hash.path;
@@ -557,6 +701,110 @@
         ];
         assert mimir.hardware.bluetooth.enable && mimir.services.smartd.enable;
         pkgs.runCommand "mimir-config-check" { } ''
+          touch "$out"
+        '';
+
+      # Check the desktop host's exact composition, gaming stack, disk gap, backup and ingress exception
+      checks.odin-config =
+        let
+          odinHost = config.flake.nixosConfigurations.odin;
+          odin = odinHost.config;
+          account = odin.users.users.jeeemieee;
+          user = odin.home-manager.users.jeeemieee;
+          packageNames = map lib.getName (odin.environment.systemPackages ++ user.home.packages);
+          partitions = odin.disko.devices.disk.main.content.partitions;
+          backup = odin.services.restic.backups.home;
+          savePath = "/home/jeeemieee/game-saves/ludusavi";
+        in
+        assert workstationPolicy odinHost;
+        assert odin.networking.hostName == "odin";
+        assert odin.hardware.cpu.intel.updateMicrocode;
+        assert builtins.elem "kvm-intel" odin.boot.kernelModules;
+        # Unknown production facts stay explicit, while real values remain valid after installation preparation
+        assert
+          odin.hostSpec.odin.systemDiskById == null
+          || lib.hasPrefix "/dev/disk/by-id/" odin.hostSpec.odin.systemDiskById;
+        assert
+          odin.hostSpec.odin.hostId == null
+          || builtins.match "[0-9a-fA-F]{8}" odin.hostSpec.odin.hostId != null;
+        assert builtins.all (device: device != "") odin.hostSpec.odin.networkDevices;
+        # NixOS goes first: EFI, a real unallocated Windows gap, then swap and encrypted ZFS
+        assert odin.hostSpec.disk.efiSizeMiB == 2048;
+        assert odin.hostSpec.disk.dualBoot.enable;
+        assert odin.hostSpec.disk.dualBoot.windowsGapSizeMiB == 200 * 1024;
+        assert partitions.ESP.start == "1M" && partitions.ESP.size == "2048M";
+        assert partitions.swap.start == "206849M" && partitions.swap.size == "32G";
+        assert
+          builtins.attrNames partitions == [
+            "ESP"
+            "luks"
+            "swap"
+          ];
+        # The declared AMD gaming stack and applications
+        assert odin.programs.steam.enable;
+        assert builtins.length odin.programs.steam.extraCompatPackages == 1;
+        assert (builtins.head odin.programs.steam.extraCompatPackages).pname == "proton-ge-bin";
+        assert odin.programs.gamescope.enable && odin.programs.gamemode.enable;
+        assert odin.hardware.steam-hardware.enable;
+        assert odin.hardware.graphics.enable && odin.hardware.graphics.enable32Bit;
+        assert odin.hardware.enableRedistributableFirmware;
+        assert builtins.all (name: builtins.elem name packageNames) [
+          "heroic"
+          "lutris"
+          "ludusavi"
+          "mangohud"
+        ];
+        assert user.programs.mangohud.enable;
+        assert
+          user.xdg.desktopEntries.reboot-windows.exec == "systemctl reboot --boot-loader-entry=auto-windows";
+        # The daily save export is below /home and therefore included by the existing backup
+        assert lib.hasInfix "ludusavi backup" (
+          lib.concatStringsSep " " user.systemd.user.services.ludusavi-backup.Service.ExecStart
+        );
+        assert lib.hasInfix savePath (
+          lib.concatStringsSep " " user.systemd.user.services.ludusavi-backup.Service.ExecStart
+        );
+        assert user.systemd.user.timers.ludusavi-backup.Timer.OnCalendar == "daily";
+        assert user.systemd.user.timers.ludusavi-backup.Timer.Persistent;
+        assert lib.hasPrefix "/home/" savePath && !(lib.hasPrefix "/home/jeeemieee/scratch/" savePath);
+        assert
+          backup.paths == [ "/home" ]
+          &&
+            backup.extraBackupArgs == [
+              "--one-file-system"
+              "--exclude-caches"
+            ];
+        assert !(builtins.elem savePath backup.exclude);
+        assert builtins.all (path: builtins.elem path backup.exclude) [
+          "/home/*/.local/share/Steam/steamapps"
+          "/home/*/.steam/steam/steamapps"
+          "/home/*/Games"
+        ];
+        # Production secrets remain host-specific and no generated test value enters this host
+        assert !odin.users.mutableUsers;
+        assert account.hashedPasswordFile == odin.sops.secrets.user_password_hash.path;
+        assert
+          builtins.attrNames odin.sops.secrets == [
+            "restic_env"
+            "restic_password"
+            "tailscale_authkey"
+            "user_password_hash"
+            "wifi_env"
+          ];
+        assert lib.hasSuffix "/secrets/odin.yaml" odin.sops.secrets.tailscale_authkey.sopsFile;
+        assert lib.hasSuffix "/ssh/odin_authorized_keys" odin.hostSpec.tailscaleSsh.authorizedKeysFile;
+        assert odin.users.users.jeeemieee.openssh.authorizedKeys.keyFiles == [ ];
+        assert lib.hasInfix "ssh/odin_authorized_keys is missing" odin.systemd.services.sshd.preStart;
+        # The one reviewed ingress exception and controls for every forbidden widening
+        assert odinIngressPolicy (ingressOf odin);
+        assert builtins.all (policy: !(odinIngressPolicy policy)) odinIngressControls;
+        # This desktop has no worker or laptop-specific hardware composition
+        assert !(odin.systemd.services ? worker-datasets-mount);
+        assert
+          !(odin.hardware ? nvidia-container-toolkit) || !odin.hardware.nvidia-container-toolkit.enable;
+        assert !(builtins.elem "nvidia" odin.services.xserver.videoDrivers);
+        assert !(builtins.elem "displaylink" odin.services.xserver.videoDrivers);
+        pkgs.runCommand "odin-config-check" { } ''
           touch "$out"
         '';
 

@@ -29,6 +29,7 @@
     # Protect settings where a wrong change can lose data or access
     "modules/security"
     "modules/services/backup.nix"
+    "modules/services/tailscale-ssh-server.nix"
     "modules/storage"
     "modules/install"
     "install"

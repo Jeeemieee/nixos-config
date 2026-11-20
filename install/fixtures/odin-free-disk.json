@@ -1,0 +1,17 @@
+{
+  "blockdevices": [
+    {
+      "name": "nvme0n1",
+      "path": "/dev/nvme0n1",
+      "type": "disk",
+      "size": 1000204886016,
+      "ro": false,
+      "model": "Example SSD 1TB",
+      "serial": "ODINEXAMPLE123",
+      "mountpoints": [
+        null
+      ],
+      "fstype": null
+    }
+  ]
+}

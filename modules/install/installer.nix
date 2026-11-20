@@ -16,7 +16,46 @@ let
   topLevel = config;
 
   # List only hosts that import nixos.disk and are safe to install through this workflow
-  hosts = [ "mimir" ];
+  hosts = [
+    "mimir"
+    "odin"
+  ];
+
+  # Keep each refusal independent so the check can prove that no missing input is hidden by another
+  missingOdinFacts =
+    {
+      systemDiskById,
+      hostId,
+      networkDevices,
+      keyExists,
+      secretsExist,
+    }:
+    lib.optional (
+      systemDiskById == null
+    ) "hostSpec.odin.systemDiskById in modules/hosts/odin/default.nix"
+    ++ lib.optional (hostId == null) "hostSpec.odin.hostId in modules/hosts/odin/default.nix"
+    ++ lib.optional (
+      networkDevices == [ ]
+    ) "hostSpec.odin.networkDevices in modules/hosts/odin/default.nix"
+    ++ lib.optional (!keyExists) "ssh/odin_authorized_keys in the nixos-secrets input"
+    ++ lib.optional (!secretsExist) "secrets/odin.yaml in the nixos-secrets input";
+
+  missingFactsOf =
+    host:
+    if host != "odin" then
+      [ ]
+    else
+      let
+        cfg = config.flake.nixosConfigurations.odin.config;
+      in
+      missingOdinFacts {
+        inherit (cfg.hostSpec.odin) systemDiskById hostId networkDevices;
+        keyExists = builtins.pathExists cfg.hostSpec.tailscaleSsh.authorizedKeysFile;
+        secretsExist = builtins.pathExists "${inputs.nixos-secrets}/secrets/odin.yaml";
+      };
+
+  # Publish payloads only for hosts whose production inputs exist; the command gives the actionable refusal first
+  readyHosts = builtins.filter (host: missingFactsOf host == [ ]) hosts;
 
   # Give the selected target one fixed device name inside the isolated VM
   installDevice = "/dev/disk/by-id/virtio-target";
@@ -252,6 +291,8 @@ in
             formatScript=${lib.getExe (diskScriptsOf host).destroyFormatMount}
             mountScript=${lib.getExe (diskScriptsOf host).mount}
             unmountScript=${lib.getExe (diskScriptsOf host).unmount}
+            missingFacts=${lib.escapeShellArg (lib.concatStringsSep "\n" (missingFactsOf host))}
+            expectedDisk=${lib.escapeShellArg ((targetOf host).config.hostSpec.odin.systemDiskById or "")}
             ;;
         '';
 
@@ -292,6 +333,13 @@ in
               *) fail "unknown host $host; known hosts: ${lib.concatStringsSep ", " hosts}" ;;
             esac
 
+            # Refuse missing Odin facts and private files before creating installer state, a target or a payload
+            if { [ "$command" = start ] || [ "$command" = system ]; } && [ -n "$missingFacts" ]; then
+              echo "install: $host is not ready to install; provide:" >&2
+              while IFS= read -r missing; do echo "  - $missing" >&2; done <<< "$missingFacts"
+              exit 1
+            fi
+
             ## Step 3. Prepare the host's persistent installer handover folder
             state=''${XDG_STATE_HOME:-$HOME/.local/state}/nixos-install/$host
             share=$state/share
@@ -320,6 +368,10 @@ in
                 if [ "$kind" = disk ]; then
                   [ -b "$target" ] || fail "$target is not a block device"
                   device=$(realpath "$target")
+                  if [ -n "$expectedDisk" ]; then
+                    [ -e "$expectedDisk" ] || fail "the configured system disk $expectedDisk does not exist"
+                    [ "$device" = "$(realpath "$expectedDisk")" ] || fail "$target is not hostSpec.odin.systemDiskById ($expectedDisk)"
+                  fi
                   description=$(lsblk --json --bytes -o NAME,PATH,TYPE,SIZE,RO,MODEL,SERIAL,MOUNTPOINTS,FSTYPE "$device")
                   verdict=$(jq -r --arg minBytes ${toString minimumBytes} -f ${../../install/validate-disk.jq} <<< "$description")
                   [ "$verdict" = ok ] || fail "$verdict"
@@ -416,7 +468,7 @@ in
         packages = {
           install = installHost;
         }
-        // lib.genAttrs' hosts (host: lib.nameValuePair "install-payload-${host}" (payloadOf host));
+        // lib.genAttrs' readyHosts (host: lib.nameValuePair "install-payload-${host}" (payloadOf host));
 
         # Refuse every target except a free, whole, writable, large enough disk with a serial number
         checks.install-disk-validation =
@@ -434,8 +486,9 @@ in
                   *) echo "FAIL $1: expected $2, got: $actual"; exit 1 ;;
                 esac
               }
-              ## Step 3. Cover the accepted disk and every refusal reason
+              ## Step 3. Cover both accepted host-sized disks and every refusal reason
               expect free-disk "ok"
+              expect odin-free-disk "ok"
               expect system-disk "refused: * is in use (*"
               expect mounted-partition "refused: * is in use (*"
               expect active-swap "refused: * is in use (*"
@@ -445,6 +498,72 @@ in
               expect read-only "refused: * is read-only"
               touch "$out"
             '';
+
+        # Refuse Odin until every production fact and private input named by the handoff exists
+        checks.install-odin-preflight =
+          let
+            complete = {
+              systemDiskById = "/dev/disk/by-id/test";
+              hostId = "8425e349";
+              networkDevices = [ "eth0" ];
+              keyExists = true;
+              secretsExist = true;
+            };
+          in
+          assert
+            missingFactsOf "odin" == [
+              "hostSpec.odin.systemDiskById in modules/hosts/odin/default.nix"
+              "hostSpec.odin.hostId in modules/hosts/odin/default.nix"
+              "hostSpec.odin.networkDevices in modules/hosts/odin/default.nix"
+              "ssh/odin_authorized_keys in the nixos-secrets input"
+              "secrets/odin.yaml in the nixos-secrets input"
+            ];
+          assert missingOdinFacts complete == [ ];
+          assert
+            missingOdinFacts (complete // { systemDiskById = null; }) == [
+              "hostSpec.odin.systemDiskById in modules/hosts/odin/default.nix"
+            ];
+          assert
+            missingOdinFacts (complete // { hostId = null; }) == [
+              "hostSpec.odin.hostId in modules/hosts/odin/default.nix"
+            ];
+          assert
+            missingOdinFacts (complete // { networkDevices = [ ]; }) == [
+              "hostSpec.odin.networkDevices in modules/hosts/odin/default.nix"
+            ];
+          assert
+            missingOdinFacts (complete // { keyExists = false; }) == [
+              "ssh/odin_authorized_keys in the nixos-secrets input"
+            ];
+          assert
+            missingOdinFacts (complete // { secretsExist = false; }) == [
+              "secrets/odin.yaml in the nixos-secrets input"
+            ];
+          pkgs.runCommand "install-odin-preflight-check" { nativeBuildInputs = [ installHost ]; } ''
+            ## Step 1. Run the real command and require refusal before an image is created
+            if install-host start odin --image "$PWD/target.raw" > actual 2>&1; then
+              echo "FAIL: the incomplete Odin host was accepted"
+              exit 1
+            fi
+            test ! -e "$PWD/target.raw"
+
+            ## Step 2. Require the build handover to refuse for the same reason, before creating installer state
+            if install-host system odin > actual-system 2>&1; then
+              echo "FAIL: the incomplete Odin payload build was accepted"
+              exit 1
+            fi
+            test ! -e "$HOME/.local/state/nixos-install/odin"
+
+            ## Step 3. Require every actionable destination in both refusals
+            grep -F "odin is not ready to install" actual
+            grep -F "odin is not ready to install" actual-system
+            grep -F "hostSpec.odin.systemDiskById in modules/hosts/odin/default.nix" actual
+            grep -F "hostSpec.odin.hostId in modules/hosts/odin/default.nix" actual
+            grep -F "hostSpec.odin.networkDevices in modules/hosts/odin/default.nix" actual
+            grep -F "ssh/odin_authorized_keys in the nixos-secrets input" actual
+            grep -F "secrets/odin.yaml in the nixos-secrets input" actual
+            touch "$out"
+          '';
 
         # Build the command and all installer dependencies as a flake check
         checks.install-tool = installHost;

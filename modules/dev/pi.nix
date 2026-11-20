@@ -259,7 +259,7 @@ let
         done
 
         # Pi options that affect a resumed interactive chat are kept; one-time session selectors and initial messages are not repeated
-        ${pkgs.lib.optionalString (approvalRestart != null) ''
+        ${pkgs.lib.optionalString (workers != null && approvalRestart != null) ''
           restartPi=()
           restartReason=
           restartScan=("$@")
@@ -1157,10 +1157,19 @@ in
         environment.PI_SKIP_VERSION_CHECK = "1";
         declared = [ ".pi/agent/AGENTS.md" ];
       };
+      # A host without the worker subsystem still builds the ordinary pi launcher
+      noWorkersLauncher = mkSandbox pkgs {
+        name = "pi-no-workers";
+        command = "${pkgs.coreutils}/bin/true";
+        approvalRestart = ../../workers/approval-restart.ts;
+      };
       extensions = mkExtensions pkgs;
       settingsFile = pkgs.writeText "pi-settings.json" (builtins.toJSON (settingsFor extensions));
     in
     {
+      # Keep approval continuation out of the ordinary launcher on hosts without workers
+      checks.pi-no-workers = noWorkersLauncher;
+
       # The sandbox must expose the project and ~/.pi, and hide the rest of the home, session sockets and host processes
       checks.pi-sandbox =
         pkgs.runCommand "pi-sandbox-check"

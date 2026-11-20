@@ -17,6 +17,10 @@ in
       # Use one short name for the host-specific disk choices
       cfg = config.hostSpec.disk;
 
+      # GPT begins at 1 MiB; an enabled Windows gap starts after EFI and ends where swap begins
+      espStartMiB = 1;
+      swapStartMiB = espStartMiB + cfg.efiSizeMiB + cfg.dualBoot.windowsGapSizeMiB;
+
       # Look up the account that owns the writable scratch dataset
       scratchOwner = config.users.users.${cfg.scratchUser};
       # Build this path directly because accounts and file systems depend on each other during evaluation
@@ -46,6 +50,19 @@ in
           type = lib.types.str;
           example = "/dev/disk/by-id/nvme-Example_2TB_SERIAL";
           description = "The disk to install on, by its stable /dev/disk/by-id path. It has no default: the disk is erased when the layout is applied.";
+        };
+        efiSizeMiB = lib.mkOption {
+          type = lib.types.ints.positive;
+          default = 1024;
+          description = "Size of the EFI system partition in MiB.";
+        };
+        dualBoot = {
+          enable = lib.mkEnableOption "an unallocated gap between EFI and swap for a later Windows installation";
+          windowsGapSizeMiB = lib.mkOption {
+            type = lib.types.ints.positive;
+            default = 200 * 1024;
+            description = "Size in MiB of the unallocated gap reserved for Windows partitions.";
+          };
         };
         swapSize = lib.mkOption {
           type = lib.types.str;
@@ -103,7 +120,8 @@ in
               partitions = {
                 # Reserve a private UEFI system partition for boot files
                 ESP = {
-                  size = "1G";
+                  start = "${toString espStartMiB}M";
+                  size = "${toString cfg.efiSizeMiB}M";
                   type = "EF00";
                   content = {
                     type = "filesystem";
@@ -114,6 +132,8 @@ in
                 };
                 # Use a fresh random swap key each boot because hibernation is deliberately unavailable
                 swap = {
+                  # A fixed start leaves a real unallocated range; ordinary hosts use the next free sector
+                  start = if cfg.dualBoot.enable then "${toString swapStartMiB}M" else "0";
                   size = cfg.swapSize;
                   content = {
                     type = "swap";
@@ -363,9 +383,42 @@ in
           }
         ];
       };
+
+      # Reuse the same install-and-boot test with a small stand-in for Odin's real 200 GiB gap
+      odinTestHost = testHost.extendModules {
+        modules = [
+          (
+            { lib, ... }:
+            {
+              networking.hostName = lib.mkForce "odindisktest";
+              hostSpec.disk = {
+                efiSizeMiB = 2048;
+                dualBoot = {
+                  enable = true;
+                  windowsGapSizeMiB = 256;
+                };
+              };
+              disko.tests.extraChecks = lib.mkAfter ''
+                ## Step 9. Prove the dual-boot layout leaves a real unallocated gap
+                import json
+                table = json.loads(machine.succeed("sfdisk --json /dev/vda"))["partitiontable"]
+                parts = {part["name"]: part for part in table["partitions"]}
+                assert set(parts) == {"disk-main-ESP", "disk-main-swap", "disk-main-luks"}, parts
+                sector_size = int(machine.succeed("blockdev --getss /dev/vda"))
+                esp = parts["disk-main-ESP"]
+                swap = parts["disk-main-swap"]
+                assert esp["start"] * sector_size == 1024 * 1024, esp
+                assert esp["size"] * sector_size == 2048 * 1024 * 1024, esp
+                assert (swap["start"] - esp["start"] - esp["size"]) * sector_size == 256 * 1024 * 1024, table
+              '';
+            }
+          )
+        ];
+      };
     in
     {
-      # Publish disko's destructive install-and-boot test as the disk-layout check
+      # Publish destructive install-and-boot tests for the ordinary and dual-boot layouts
       checks.disk-layout = testHost.config.system.build.installTest;
+      checks.odin-disk-layout = odinTestHost.config.system.build.installTest;
     };
 }

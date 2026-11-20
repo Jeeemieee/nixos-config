@@ -7,17 +7,19 @@ Encrypted data lives in the private [nixos-secrets](https://github.com/Jeeemieee
 | Secret | File | Readable by | Used by |
 | --- | --- | --- | --- |
 | `wifi_env` | `secrets/shared.yaml` | admin, recovery, personal machines | `nixos.wifi`: NetworkManager profiles for eduroam, `home`, `gebbeken` and `hotspot` |
-| `user_password_hash` | `secrets/shared.yaml` | admin, recovery, personal machines | `nixos.login-password` (on `mimir`): the account's password, with immutable accounts |
+| `user_password_hash` | `secrets/shared.yaml` | admin, recovery, personal machines | `nixos.login-password` (on `mimir` and `odin`): the account's password, with immutable accounts |
 | `tailscale_authkey` | `secrets/<hostname>.yaml` | admin, recovery, that machine | `nixos.vpn`: `services.tailscale.authKeyFile` |
-| `restic_env` | `secrets/<hostname>.yaml` | admin, recovery, that machine | `nixos.backup` (on `mimir`): the backup server's address and login, as an environment file (`RESTIC_REPOSITORY`, `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`) |
-| `restic_password` | `secrets/<hostname>.yaml` | admin, recovery, that machine | `nixos.backup` (on `mimir`): this machine's own key to the backup repository; see [BACKUP.md](BACKUP.md) |
+| `restic_env` | `secrets/<hostname>.yaml` | admin, recovery, that machine | `nixos.backup` (on `mimir` and `odin`): the backup server's address and machine-specific login, as an environment file (`RESTIC_REPOSITORY`, `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`) |
+| `restic_password` | `secrets/<hostname>.yaml` | admin, recovery, that machine | `nixos.backup` (on `mimir` and `odin`): that machine's own key to its backup repository login; see [BACKUP.md](BACKUP.md) |
 | `message` | `secrets/test.yaml` | development, mimir-vm, recovery | `nixos.secrets-test`: harmless bootstrap test |
 
 `pi/AGENTS.md` in the same repository is a plain file, private but not secret: the instructions for the pi coding agent, linked read-only to `~/.pi/agent/AGENTS.md` (see [MIMIR-VM.md](MIMIR-VM.md#declared-configuration)). It ends up in the world-readable Nix store, which is fine for something that is not a secret.
 
+`ssh/odin_authorized_keys` is another plain private-input file. It contains only the OpenSSH public key admitted by Odin's Tailscale-only server; the private half remains in Bitwarden. The Nix store is world-readable, so secret material must never be placed there. Odin's private SSH client entry belongs in `ssh/config` and uses its Tailscale DNS name rather than a public-repository address.
+
 Per-machine secrets are read from `secrets/${networking.hostName}.yaml`. Every secret is decrypted at boot into `/run/secrets/<name>`, root-owned with mode `0400`. The login password is the exception: it is decrypted into `/run/secrets-for-users` while the accounts are created, before any service runs. The machine's key must then already be on disk and enrolled, so a new machine's key is generated and enrolled during its installation, not at its first boot; without it the account has no password.
 
-`secrets/mimir.yaml` exists before the laptop does: it is encrypted for the admin and recovery keys only, and the laptop's recipient is added when it is installed. Services that need them (`tailscaled-autoconnect`, `NetworkManager-ensure-profiles`) require and start after `sops-install-secrets.service`, so a failed decryption shows as a failed unit instead of a silent login without a key or empty Wi-Fi profiles.
+`secrets/mimir.yaml` and `secrets/odin.yaml` exist before their machines do: each is initially encrypted for the admin and recovery keys, and the machine's recipient is added after `install-format` creates its identity. Odin gets its own Tailscale key, rest-server login and restic key; it does not reuse Mimir's credentials. Services that need secrets require and start after `sops-install-secrets.service`, so a failed decryption shows as a failed unit instead of silently running without credentials.
 
 The public repository only holds placeholders: network names, identities and passphrases are substituted into the NetworkManager profiles from the decrypted `wifi_env` at boot. A host that imports `nixos.wifi`, `nixos.vpn` or `nixos.backup` has their secrets; without its key enrolled, `sops-install-secrets` fails at boot.
 
@@ -33,7 +35,7 @@ Real credentials are allowed in the VM: logging in by hand would store equivalen
 
 - Admin (editing) key: `~/.config/sops/age/admin.age`, passphrase-protected; passphrase in Bitwarden ("nixos-secrets admin age key"). On every rule except the test secret
 - Recovery key: Bitwarden only ("nixos-secrets recovery age key"); on every rule; never stored on a machine. Restore and recovery-only decryption tested on 2026-10-19
-- Machine identity: `/var/lib/sops-nix/key.txt` (root-owned, mode `0600`, directory `0700`), made on the laptop by the installer before the first boot (`install-format`, [INSTALL.md](INSTALL.md)) and in the test VM by `sops-age-key.service` at its first boot; never reuse it for another machine. Replacing the VM disk creates a new identity that needs enrolling; rebuilding with the same disk preserves it
+- Machine identity: `/var/lib/sops-nix/key.txt` (root-owned, mode `0600`, directory `0700`), made on each physical target by the installer before the first boot (`install-format`, [INSTALL.md](INSTALL.md)) and in the test VM by `sops-age-key.service` at its first boot; never reuse it for another machine. Replacing a disk creates a new identity that needs enrolling; rebuilding with the same disk preserves it
 - Old development key: `~/.config/sops/age/nixos-secrets-dev.agekey` on Ubuntu; only for the test secret, to be retired. It lived on a machine where agents ran unsandboxed, so it is not trusted for real secrets
 - Keep private keys and plaintext outside both Git repositories and the Nix store, including ignored files
 - Git on Ubuntu uses the plaintext `store` credential helper. On NixOS there is no token: GitHub is reached over SSH with a key that lives in Bitwarden (see [APPS.md](APPS.md#github-access)). Revoke the Ubuntu token on GitHub after the migration
@@ -73,6 +75,8 @@ The checks relevant here:
 - `mimir-vm-config` asserts the key source and permissions, Tailscale's key file and ordering, the eduroam settings, that Wi-Fi names and passphrases are placeholders, and the ordering of the profile service
 - `mimir-vm-eduroam-ca` compares the eduroam CA bundle with the official fingerprints
 - `mimir-vm-system` builds the VM's whole system closure
+- `odin-config` asserts Odin's five-secret set, host-specific `secrets/odin.yaml`, approved public-key path and missing-key refusal
+- `odin-system` builds the complete production composition with generated test-only private input overrides; `install-odin-preflight` proves the real installer refuses while the production files or facts are absent
 
 Decryption itself cannot be checked at build time; it is proven only in a VM whose recipient is enrolled. A fresh disk generates a new identity that the pinned ciphertext does not include, so `sops-install-secrets` fails there until it is enrolled; that is expected, not a fault.
 

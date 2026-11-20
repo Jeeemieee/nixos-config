@@ -56,6 +56,26 @@ VSCodium (`homeManager.vscode`, `vscodium`) is described in [MIMIR-VM.md](MIMIR-
 
 It also sets `GTK_USE_PORTAL=1`: a GTK or Firefox-based program that asks for the standard file dialog gets Plasma's, the one with the path bar and your places. Seen to work with Zotero. A program that builds its own dialog keeps it: GIMP (seen), Blender. In GIMP's dialog `Ctrl+L` shows a field for a path.
 
+## Gaming on Odin
+
+`nixos.gaming` (`modules/profiles/gaming.nix`) is imported by Odin only. Accounts, installed games, launcher libraries and prefixes remain machine state.
+
+| Program or integration | Declaration | Unfree | Purpose and state |
+| --- | --- | --- | --- |
+| Steam and Valve Proton | `programs.steam.enable` | yes (`steam`, `steam-unwrapped`) | Main store and compatibility layer; account, library and per-game choices are manual |
+| Proton-GE | `programs.steam.extraCompatPackages`, `proton-ge-bin` | no | Optional per-game alternative for compatibility faults; not forced globally |
+| Gamescope | `programs.gamescope.enable` | no | Per-game compositor for scaling, refresh-rate control and fullscreen faults |
+| GameMode | `programs.gamemode.enable` | no | Temporary game-focused scheduling and performance policy |
+| MangoHud | Home Manager's `programs.mangohud` | no | Optional frame-time, utilisation and temperature overlay |
+| Heroic | Home package `heroic` | no | Epic and GOG launcher; account, games and prefixes are manual |
+| Lutris | Home package `lutris` | no | Battle.net and other non-Steam launchers in separate prefixes |
+| Ludusavi | Home package and daily persistent user timer | no | Exports discovered saves to `~/game-saves/ludusavi`, inside the backup |
+| Steam hardware rules | `hardware.steam-hardware.enable` | no | Valve devices and general controller udev access |
+| AMD graphics | `amdgpu`, Mesa RADV, 32-bit graphics and redistributable firmware | no | Native games and Proton; AMDVLK and proprietary AMD OpenGL are absent |
+| Reboot into Windows | Plasma entry `reboot-windows.desktop` | no | Authenticated one-shot reboot through systemd-boot's `auto-windows` entry |
+
+Steam's normal `steamapps` directories and `~/Games` are excluded from Odin's restic backup. Keep custom game libraries outside `/home`, or add their exact path to the exclusions first. Launcher settings and the Ludusavi export remain included. See [ODIN.md](ODIN.md) and [BACKUP.md](BACKUP.md).
+
 ## Services
 
 System services come from NixOS modules in `modules/services/`, imported by the workstation profile (`modules/profiles/workstation.nix`); the backup only by the laptop.
@@ -69,6 +89,7 @@ System services come from NixOS modules in `modules/services/`, imported by the 
 | Wi-Fi, eduroam | `nixos.wifi` | NetworkManager profiles from `wifi_env` in nixos-secrets; eduroam per the University of Twente's CAT profile (see [SECRETS.md](SECRETS.md#eduroam)) | Other networks joined by hand |
 | SearXNG | `nixos.search` | `services.searx` on `127.0.0.1:8877`, from the `nixpkgs-search` pin (see [Search](#search)) | A generated key in `/var/lib/searx-secret` |
 | libvirt, virt-manager | `nixos.libvirt` | `virtualisation.libvirtd`, `programs.virt-manager`; users need the `libvirtd` group, set by the workstation profile | VMs, networks, storage pools |
+| Odin SSH server | `nixos.tailscale-ssh-server` | OpenSSH with no global firewall port; TCP 22 only on `tailscale0`, one user, public keys only | Host keys; approved user public key from private input |
 
 Docker is rootless because membership of a `docker` group is equivalent to root: any process of that user could start a container that mounts the whole disk. Rootless containers only have the user's own permissions. `mimir-vm-config` rejects a root daemon or `docker` group members. The `libvirtd` group is similarly powerful and must stay out of sandboxes.
 
