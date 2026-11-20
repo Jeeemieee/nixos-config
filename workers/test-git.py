@@ -41,6 +41,13 @@ def manager(script):
     return start("--role manager", script)
 
 
+def bundle(worker):
+    """Receive one worker branch through the manager's broker"""
+    branch, name = worker.split("/")
+    path = f"$WORKER_SCRATCH/{branch}-{name}.bundle"
+    return f"worker-bundle {worker} > {path} && git fetch -q {path} worker/{worker}:refs/workers/{worker}"
+
+
 def tip(branch="main"):
     return machine.succeed(asUser(f"git -C ~/alpha rev-parse {branch}")).strip()
 
@@ -89,8 +96,10 @@ with subtest("V11: the manager merges in its own copy, the workers fetch from it
         implementer("i2", "echo b > b && git add b && git commit -q -m 'add b'"),
     )
     merge = (
-        f"git fetch -q {folders}/alpha/b1/i1/repo worker/b1/i1:refs/workers/b1/i1 && git fetch -q {folders}/alpha/b1/i2/repo worker/b1/i2:refs/workers/b1/i2"
-        " && git checkout -q b1 && git merge -q --no-edit refs/workers/b1/i1 && git merge -q --no-edit refs/workers/b1/i2"
+        bundle("b1/i1")
+        + " && "
+        + bundle("b1/i2")
+        + " && git checkout -q b1 && git merge -q --no-edit refs/workers/b1/i1 && git merge -q --no-edit refs/workers/b1/i2"
         " && git checkout -q main && git merge -q --no-edit b1 && ls; pwd;"
         f' touch ~/alpha/x 2>/dev/null; echo "project-write=$?"; touch ~/alpha/.git/x 2>/dev/null; echo "history-write=$?"; touch {folders}/alpha/b1/i1/repo/x 2>/dev/null; echo "worker-write=$?";'
         " git log --all --format='%an <%ae> / %cn <%ce>' | sort -u"
@@ -135,7 +144,7 @@ with subtest("V11: the manager merges in its own copy, the workers fetch from it
     # A second round: the manager takes the user's commit into its copy, merges new work, and only the new work is staged
     machine.succeed(
         implementer("i1", "echo c > c && git add c && git commit -q -m 'add c'"),
-        manager(f"git fetch -q origin && git merge -q --no-edit origin/main && git fetch -q {folders}/alpha/b1/i1/repo worker/b1/i1:refs/workers/b1/i1 && git merge -q --no-edit refs/workers/b1/i1"),
+        manager("git fetch -q origin && git merge -q --no-edit origin/main && " + bundle("b1/i1") + " && git merge -q --no-edit refs/workers/b1/i1"),
     )
     out = machine.succeed(asUser("cd ~/alpha && workers take > /dev/null 2>&1; git status --porcelain"))
     assert out.strip() == "A  c", out
@@ -145,7 +154,7 @@ with subtest("V11: the manager merges in its own copy, the workers fetch from it
     machine.succeed(
         asUser("cd ~/alpha && echo by-the-user > a && git commit -q -a -m 'My own change'"),
         implementer("i1", "echo by-the-worker > a && git commit -q -a -m 'change a'"),
-        manager(f"git fetch -q {folders}/alpha/b1/i1/repo worker/b1/i1:refs/workers/b1/i1 && git merge -q --no-edit refs/workers/b1/i1"),
+        manager(bundle("b1/i1") + " && git merge -q --no-edit refs/workers/b1/i1"),
     )
     out = machine.fail(asUser("cd ~/alpha && workers take") + " 2>&1")
     assert "does not fit onto main without conflicts" in out, out
@@ -224,9 +233,9 @@ test -e /tmp/planted-ran && echo control=ran-inside
     def outside(label):
         """Everything of this design that touches the copy from outside its sandbox"""
         machine.succeed(asUser("workers list") + " > /tmp/list 2>&1", asUser("workers remove alpha/b1/i3; true") + " > /tmp/remove 2>&1")
-        # A queued run, whose record takes the copy's commit; and the manager's fetch, inside the manager's sandbox
+        # A queued run, whose record takes the copy's commit; and the manager's bundle and fetch inside its sandbox
         machine.succeed(implementer("i3", "queue run -- true; rm -f $WORKER_SCRATCH/planted-ran"))
-        fetched = machine.succeed(manager(f"git fetch -q {folders}/alpha/b1/i3/repo 2>&1; echo \"fetch=$?\"; test -e /tmp/planted-ran && echo ran-in-the-manager; true"))
+        fetched = machine.succeed(manager(bundle("b1/i3") + ' 2>&1; echo "fetch=$?"; test -e /tmp/planted-ran && echo ran-in-the-manager; true'))
         record = json.loads(machine.succeed(f"tail -n 1 {folders}/alpha/b1/i3/records/runs.jsonl"))
         print(f"V12 {label}:", machine.succeed("grep ' i3 ' /tmp/list; cat /tmp/remove").strip(), "| record commit:", record["commit"], "|", fetched.strip())
         machine.succeed(f"! test -e /tmp/planted-ran && ! test -e {areas}/alpha/b1/i3/planted-ran")

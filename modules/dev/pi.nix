@@ -136,7 +136,7 @@ let
           exit 1
         '';
       };
-      # A manager's stable instructions name the live broker route, rather than paths whose visibility was fixed at session start
+      # A manager's stable instructions name the live broker routes, because other workers' folders are never mounted in its sandbox
       workerRoleFiles =
         if workers == null then
           { }
@@ -145,8 +145,10 @@ let
           // {
             manager = pkgs.runCommand "worker-role-manager.md" { } ''
               cat ${workers.roleFiles.manager} > "$out"
-              printf '\n%s\n%s\n%s\n' \
-                'To read any worker’s reports or records, including a worker started after this manager, use `worker-read <branch>/<name> <reports|records> [<path>]`; do not rely on the worker being visible as a direct path.' \
+              printf '\n%s\n%s\n%s\n%s\n%s\n' \
+                'No other worker folder is mounted in a manager sandbox. Read every earlier or later worker through `worker-read <branch>/<name> <folder|reports|records|repo|sessions|scratch|diff|refs> [<path>]`.' \
+                'Receive committed work only through `worker-bundle <branch>/<name> > <file>`, and run `git fetch <file> worker/<branch>/<name>:refs/workers/<branch>/<name>` only after `worker-bundle` exits 0.' \
+                'A manager session that was already running when static mounts were removed keeps its old mounts until its next start. On the next start use only `worker-read` and `worker-bundle`; `workers status` shows its recorded `workers start <project>/manager/<name>` command, and `workers start --continue <project>/manager/<name>` resumes its chat.' \
                 'Manager advice must be written to `reports/advice/<branch>/<worker>.md` with the exact worker, form-sha256, task-sha256, and tests-commit headers; use `worker-read` for the form, the manager-owned task file for the task hash, and the project branch commit that supplies the tests.' \
                 'After each implementer reports completion, start a separate reviewer or deep-reviewer worker. Do not ask the implementer to wait for or perform its own review.' >> "$out"
             '';
@@ -700,23 +702,12 @@ let
                   workdir=$repo
                   ;;
                 manager)
-                  # Its own copy with every branch, where it merges and prepares what the user takes; the task files; and every worker, read-only
+                  # Its own copy with every branch, where it merges and prepares what the user takes, and the task files
+                  # Other workers are read only through the broker reader, and committed work arrives only through a broker bundle
                   repo=$folder/repo
                   mkdir -p "$repo"
                   projectBinds=(--bind "$repo" "$repo" "''${history[@]}" "''${copies[@]}")
                   workerBinds+=(--bind "$folders/instructions" "$folders/instructions")
-                  for other in "$folders"/*/*/ "$areas"/*/*/; do
-                    other=''${other%/}
-                    case "$other" in
-                      "$folder" | "$area" | "$folders"/instructions/* | "$folders"/archive/*) ;;
-                      *)
-                        if [ -d "$other" ] && [ ! -L "$other" ]; then
-                          rememberView "$other"
-                          workerBinds+=(--ro-bind "$other" "$other")
-                        fi
-                        ;;
-                    esac
-                  done
                   workdir=$repo
                   ;;
                 reviewer)

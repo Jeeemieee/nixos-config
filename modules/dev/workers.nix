@@ -765,6 +765,13 @@ in
             pyflakes ${../../workers/test-bundle.py}
             cp ${../../workers/test-bundle.py} "$out"
           '';
+      # The B5 installed access test stays outside the already near-limit roles script and is checked before the VM loads it
+      accessTestProgram =
+        pkgs.runCommand "test-access.py" { nativeBuildInputs = [ pkgs.python3Packages.pyflakes ]; }
+          ''
+            pyflakes ${../../workers/test-access.py}
+            cp ${../../workers/test-access.py} "$out"
+          '';
       # Inside a build on a host without hardware virtualisation the test machines are emulated and many times slower; the
       # test driver's own limit of an hour is too short there
       emulatedTimeout = 6 * 3600;
@@ -964,6 +971,121 @@ in
           user = "${user}"
         ''
         + builtins.readFile ../../workers/test-starts.py;
+      };
+
+      # Installed remembered starts, manager reads and bundles together, on plain folders
+      checks.workers-access = pkgs.testers.runNixOSTest {
+        name = "workers-access";
+        skipTypeCheck = true;
+        nodes.machine =
+          { config, pkgs, ... }:
+          let
+            accessProbe = pkgs.writeShellScript "worker-access-probe" ''
+              set -e
+              runWorker() {
+                name=$1
+                echo "$name-committed" > "$name.txt"
+                git add "$name.txt"
+                git commit -q -m "$name work"
+                echo "$name-draft" > draft
+                echo "$name-report" > ../reports/report
+                queue run -- true
+              }
+              assertNotMounted() {
+                id=$1
+                other="$HOME/workers/alpha/$id"
+                if findmnt -rn --mountpoint "$other" > /dev/null; then
+                  echo "another worker folder is still mounted: $other" >&2
+                  touch "$WORKER_SCRATCH/worker-mount-present"
+                  exit 23
+                fi
+              }
+              mergeWorker() {
+                id=$1
+                name=''${id#*/}
+                worker-read "$id" reports report
+                worker-read "$id" records runs.jsonl | grep -m1 "\"name\": \"$name\""
+                worker-read "$id" repo draft
+                before=$(worker-read --sha256 "$id" reports report)
+                if worker-read "$id" reports report > "$HOME/workers/alpha/$id/reports/reader-write" 2> /dev/null; then
+                  echo "the reader wrote to $id" >&2
+                  exit 20
+                fi
+                after=$(worker-read --sha256 "$id" reports report)
+                [ "$before" = "$after" ]
+                bundle="$WORKER_SCRATCH/$name.bundle"
+                worker-bundle "$id" > "$bundle"
+                git fetch -q "$bundle" "worker/$id:refs/workers/$id"
+                if git show "refs/workers/$id:draft" > /dev/null 2>&1; then
+                  echo "the bundle of $id contains an uncommitted file" >&2
+                  exit 21
+                fi
+                git checkout -q b1
+                git merge -q --no-edit "refs/workers/$id"
+              }
+              case "''${WORKER_ROLE:-plain}:''${WORKER_NAME:-plain}" in
+                implementer:early)
+                  runWorker early
+                  ;;
+                implementer:late)
+                  runWorker late
+                  ;;
+                manager:manager)
+                  assertNotMounted b1/early
+                  mergeWorker b1/early
+                  touch "$WORKER_SCRATCH/manager-ready"
+                  until [ -e "$WORKER_SCRATCH/later-ready" ]; do sleep 0.2; done
+                  assertNotMounted b1/late
+                  mergeWorker b1/late
+                  touch "$WORKER_SCRATCH/manager-done"
+                  ;;
+                plain:plain)
+                  {
+                    echo "role=''${WORKER_ROLE:-unset}"
+                    if worker-read --workers > /dev/null 2>&1; then echo reader=unexpected; else echo reader=refused; fi
+                    if worker-bundle b1/early > /dev/null 2>&1; then echo bundle=unexpected; else echo bundle=refused; fi
+                    if [ -e "$HOME/workers/alpha/knowledge/common/material" ]; then echo knowledge=visible; else echo knowledge=absent; fi
+                  } > "$WORKER_SCRATCH/plain-result"
+                  ;;
+                *)
+                  echo "unexpected access probe identity" >&2
+                  exit 22
+                  ;;
+              esac
+            '';
+            accessPi = topLevel.flake.lib.mkSandbox pkgs {
+              name = "pi";
+              command = "${accessProbe}";
+              workers = config.hostSpec.workers.sandbox;
+            };
+          in
+          {
+            imports = [ topLevel.flake.modules.nixos.workers ];
+            users.users.${user} = {
+              isNormalUser = true;
+              uid = 1000;
+              linger = true;
+              packages = [ accessPi ];
+            };
+            hostSpec.workers = {
+              inherit user;
+              roleFiles = standInRoles;
+              totalMemory = "1G";
+              agentsMemory = "768M";
+              agentMemory = "512M";
+            };
+            environment.systemPackages = [
+              pkgs.git
+              pkgs.python3
+            ];
+          };
+        globalTimeout = emulatedTimeout;
+        testScript = ''
+          accessTest = "${accessTestProgram}"
+          accessScope = {}
+          exec(compile(open(accessTest).read(), accessTest, "exec"), accessScope)
+          accessScope["runAccessTest"](machine, "${user}")
+        '';
       };
 
       # The roles and the start-up checks in a virtual machine, on plain folders

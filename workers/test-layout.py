@@ -67,6 +67,13 @@ def manager(script, project="alpha"):
     return asUser(f"cd ~/{project} && worker-shell --role manager -c {shlex.quote(script)}")
 
 
+def bundle(worker):
+    """Receive one worker branch through the manager's broker"""
+    branch, name = worker.split("/")
+    path = f"$WORKER_SCRATCH/{branch}-{name}.bundle"
+    return f"worker-bundle {worker} > {path} && git fetch -q {path} worker/{worker}:refs/workers/{worker}"
+
+
 def datasets():
     return machine.succeed("zfs list -H -o name -r rpool | sort").split()
 
@@ -360,7 +367,7 @@ with subtest("Views: an implementer's own places, its records read-only, its ses
     assert out.split()[0:2] == ["w2", "0"] and "other-report=1" in out and "other-area=1" in out, out
     out = machine.succeed(
         manager(
-            f'cat {folders}/alpha/b1/w1/reports/report {areas}/alpha/b1/w1/data; echo x > {folders}/alpha/b1/w1/reports/intruder; echo "folder-write=$?";'
+            f'worker-read b1/w1 reports report; worker-read b1/w1 scratch data; echo x > {folders}/alpha/b1/w1/reports/intruder; echo "folder-write=$?";'
             f' echo x > {areas}/alpha/b1/w1/intruder; echo "area-write=$?"; mkdir -p ~/workers/alpha/instructions/b1 && echo task > ~/workers/alpha/instructions/b1/w1.md; echo "instructions=$?";'
             ' echo m > ~/alpha/by-manager; echo "project=$?"; echo $WORKER_SCRATCH; pwd'
         )
@@ -394,8 +401,8 @@ with subtest("V16c: a folder and an area created after a manager and a deep revi
     print("V16c:", out)
     assert out.split() == ["runs"] + ["hidden", "protected"] * 2 + ["runs"] + ["hidden", "protected"] * 2, out
     machine.succeed(f"test ! -e {folders}/alpha/b1/late/x && test ! -e {areas}/alpha/b1/late/x")
-    # Control: a manager started afterwards reads it
-    assert "of-late" in machine.succeed(manager(f"cat {folders}/alpha/b1/late/reports/r"))
+    # Control: a manager started afterwards reads it through the broker
+    assert "of-late" in machine.succeed(manager("worker-read b1/late reports r"))
     assert "of-late" in machine.succeed(asUser(f"cd ~/alpha && worker-shell --role deep-reviewer --branch b1 --name d1 -c 'cat {folders}/alpha/b1/late/reports/r'"))
 
 with subtest("V16b: snapshot of one scratch area, a deletion, rollback"):
@@ -531,8 +538,8 @@ with subtest("V17: removing a worker keeps its folder for a time, and only the s
     assert "has uncommitted changes" in machine.fail(asUser("workers remove alpha/b1/rm1") + " 2>&1")
     machine.succeed(worker("b1", "rm1", "rm draft; queue run -- true"))
     assert "has 1 commit(s)" in machine.fail(asUser("workers remove alpha/b1/rm1") + " 2>&1")
-    # The manager merges the work and writes down the task it had given
-    machine.succeed(manager(f"git fetch -q {folders}/alpha/b1/rm1/repo worker/b1/rm1:refs/workers/b1/rm1 && git checkout -q b1 && git merge -q --no-edit refs/workers/b1/rm1 && echo the-task > ~/workers/alpha/instructions/b1/rm1.md"))
+    # The manager receives and merges the work, then writes down the task it had given
+    machine.succeed(manager(bundle("b1/rm1") + " && git checkout -q b1 && git merge -q --no-edit refs/workers/b1/rm1 && echo the-task > ~/workers/alpha/instructions/b1/rm1.md"))
     out = machine.succeed(asUser("workers remove alpha/b1/rm1"))
     print("V17 removed:", out, machine.succeed(f"zfs get -H -o property,value canmount,mounted,workers:retired {target}; (zfs list -H -o name rpool/scratch/workers/alpha/b1/rm1 2>&1 || true); ls {folders}/alpha/archive/b1-rm1-*; " + asUser("workers list") + " | grep rm1"))
     assert machine.succeed(f"zfs get -H -o value canmount,mounted {target}").split() == ["off", "no"] and machine.succeed(f"zfs get -H -o value workers:retired {target}").strip().isdigit()
@@ -583,20 +590,19 @@ with subtest("V17: removing a worker keeps its folder for a time, and only the s
     machine.succeed(worker("b1", "rm3", "grep -qx report ../reports/final"), "pkill -x -f 'sleep 600'; while pgrep -x -f 'sleep 600' > /dev/null; do sleep 0.1; done", asUser("workers remove alpha/b1/rm3"))
     assert machine.succeed(f"ls -d {folders}/alpha/archive/b1-rm3-* | wc -l").strip() == "1" and "removed" in machine.succeed(asUser("workers list") + " | grep rm3")
 
-    # R2: a manager that has the worker's places in its mount view causes a named refusal before any removal state changes
+    # R2: a live manager reads through the broker without holding a persistent mount that blocks removal
     machine.succeed(worker("b1", "rm6", "echo report > ../reports/final"))
-    before = state("rm6")
-    machine.succeed(f"({manager('touch $WORKER_SCRATCH/rm6-manager-runs; while [ ! -e $WORKER_SCRATCH/rm6-manager-end ]; do sleep 0.2; done')}) > /tmp/rm6-manager 2>&1 &")
+    reader = "worker-read b1/rm6 reports final; touch $WORKER_SCRATCH/rm6-manager-runs; while [ ! -e $WORKER_SCRATCH/rm6-manager-end ]; do sleep 0.2; done"
+    machine.succeed(f"({manager(reader)}) > /tmp/rm6-manager 2>&1 &")
     machine.wait_until_succeeds(f"test -e {areas}/alpha/manager/manager/rm6-manager-runs", timeout=30 * pace)
-    out = machine.fail(asUser("workers remove alpha/b1/rm6") + " 2>&1")
-    print("R2 manager holds worker places:", out.strip(), "| state:", state("rm6"))
-    assert "manager/manager" in out and "holds alpha/b1/rm6" in out and "was not removed and is as it was" in out and state("rm6") == before, (out, before, state("rm6"))
-    machine.succeed(f"touch {areas}/alpha/manager/manager/rm6-manager-end")
-    machine.wait_until_succeeds(asUser("! systemctl --user is-active --quiet worker:alpha:manager:manager.scope"), timeout=30 * pace)
+    assert machine.succeed("cat /tmp/rm6-manager").strip() == "report"
     out = machine.succeed(asUser("workers remove alpha/b1/rm6"))
+    print("R2 live manager reader during removal:", out.strip())
     assert "removed alpha/b1/rm6" in out and machine.succeed(f"ls -d {folders}/alpha/archive/b1-rm6-* | wc -l").strip() == "1", out
+    machine.succeed(asUser("systemctl --user is-active --quiet worker:alpha:manager:manager.scope"), f"touch {areas}/alpha/manager/manager/rm6-manager-end")
+    machine.wait_until_succeeds(asUser("! systemctl --user is-active --quiet worker:alpha:manager:manager.scope"), timeout=30 * pace)
 
-    # R2: the project lifecycle lock serializes a start against removal before that start can acquire worker places
+    # R2: the project lifecycle lock serializes a start against removal before that worker sandbox begins
     machine.succeed(f"rm -f /tmp/remove-lock-held /tmp/remove-lock-release {areas}/alpha/manager/manager/remove-race-mounted")
     machine.succeed(asUser("flock -x /run/user/1000/workers/worker:alpha.lifecycle.lock -c 'touch /tmp/remove-lock-held; while [ ! -e /tmp/remove-lock-release ]; do sleep 0.2; done'") + " > /tmp/remove-lock 2>&1 &")
     machine.wait_until_succeeds("test -e /tmp/remove-lock-held", timeout=10 * pace)
@@ -651,7 +657,7 @@ with subtest("V17: removing a worker keeps its folder for a time, and only the s
     assert session not in machine.succeed(asUser("workers list"))
 
 with subtest("W16: workers remove --merged removes merged implementers and their finished reviewers, and ignores the user's old folder"):
-    held = lambda name: f"git fetch -q {folders}/alpha/b1/{name}/repo worker/b1/{name}:refs/workers/b1/{name} && git checkout -q b1 && git merge -q --no-edit refs/workers/b1/{name}"
+    held = lambda name: bundle(f"b1/{name}") + f" && git checkout -q b1 && git merge -q --no-edit refs/workers/b1/{name}"
     machine.succeed(asUser("git -C ~/alpha branch old"), f"mkdir {folders}/alpha/old && echo kept-by-the-user > {folders}/alpha/old/marker")
     oldState = lambda: machine.succeed(f"stat -c '%U:%G:%a:%i' {folders}/alpha/old {folders}/alpha/old/marker; sha256sum {folders}/alpha/old/marker; find {folders}/alpha/old -mindepth 1 -maxdepth 1 -printf '%f\\n' | sort")
     oldBefore = oldState()

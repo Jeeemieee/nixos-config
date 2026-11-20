@@ -45,6 +45,13 @@ def refused(options, reason, **arguments):
     return out
 
 
+def bundle(worker):
+    """Receive one worker branch through the manager's broker"""
+    branch, name = worker.split("/")
+    path = f"$WORKER_SCRATCH/{branch}-{name}.bundle"
+    return f"worker-bundle {worker} > {path} && git fetch -q {path} worker/{worker}:refs/workers/{worker}"
+
+
 def gate(name):
     """Inside a sandbox or a job: wait here until the test lets it go on, with openGate()"""
     return f'until [ -e "$WORKER_SCRATCH/{name}" ]; do sleep 0.2; done'
@@ -215,7 +222,10 @@ with subtest("V9 and V21: a worker gets its role's file and its own task file, c
     out = machine.succeed(start("--role manager", launcher="worker-args"))
     print("V21 manager:", out)
     assert [line for line in out.splitlines() if line.startswith("argument:")][0] == "argument: --instructions" and out.count("argument:") == 2 and "role in this session is manager" in out, out
-    assert "To read any worker’s reports or records, including a worker started after this manager, use `worker-read <branch>/<name> <reports|records> [<path>]`; do not rely on the worker being visible as a direct path." in out, out
+    assert "No other worker folder is mounted in a manager sandbox. Read every earlier or later worker through `worker-read <branch>/<name> <folder|reports|records|repo|sessions|scratch|diff|refs> [<path>]`." in out, out
+    assert "Receive committed work only through `worker-bundle <branch>/<name> > <file>`" in out, out
+    assert "A manager session that was already running when static mounts were removed keeps its old mounts until its next start." in out, out
+    assert "`workers status` shows its recorded `workers start <project>/manager/<name>` command" in out, out
     assert "After each implementer reports completion, start a separate reviewer or deep-reviewer worker. Do not ask the implementer to wait for or perform its own review." in out, out
     assert "Manager advice must be written to `reports/advice/<branch>/<worker>.md` with the exact worker, form-sha256, task-sha256, and tests-commit headers; use `worker-read` for the form, the manager-owned task file for the task hash, and the project branch commit that supplies the tests." in out, out
     # A stand-in that takes no instructions gets none
@@ -353,7 +363,7 @@ with subtest("V14 and V15: what each role reads and writes"):
     # V15: a worker does not see another worker's sessions; the manager reads every worker, reviewers included
     out = machine.succeed(start("--branch b1 --name i2", f'ls ~/.pi/agent/sessions | wc -l; ls {target}/sessions; echo "other-sessions=$?"') + " 2>&1")
     assert out.split()[0] == "0" and "other-sessions=2" in out, out
-    out = machine.succeed(start("--role manager", f"cat {folders}/alpha/b1/r1/reports/review {folders}/alpha/b1/r2/reports/review {folders}/alpha/b2/j1/repo/file-of-j1 {target}/sessions/s"))
+    out = machine.succeed(start("--role manager", "worker-read b1/r1 reports review; worker-read b1/r2 reports review; worker-read b2/j1 repo file-of-j1; worker-read b1/i1 sessions s"))
     print("V15 manager:", out)
     assert out.split() == ["review-by-r1", "more", "review-by-r2", "of-j1", "session"], out
 
@@ -1532,7 +1542,7 @@ with subtest("The states: each one is reached, and says what it rests on; ahead,
     assert "next reviewer of stages/b1/s1" not in machine.succeed(asUser("workers status"))
 
     ## merged: a manager's copy holds every commit of it; here it has a file again that is not committed, so it is not removable
-    machine.succeed(start("--role manager", f"git fetch -q {folders}/stages/b1/s1/repo worker/b1/s1:refs/workers/b1/s1 && git checkout -q b1 && git -c user.name=t -c user.email=t@t merge -q --no-edit refs/workers/b1/s1", project="~/stages") + " 2>/dev/null")
+    machine.succeed(start("--role manager", bundle("b1/s1") + " && git checkout -q b1 && git -c user.name=t -c user.email=t@t merge -q --no-edit refs/workers/b1/s1", project="~/stages") + " 2>/dev/null")
     machine.succeed(stage("s1", "echo draft > draft; queue run -- true") + " 2>/dev/null")
     s1 = seen()
     print("merged:", {key: s1.get(key) for key in ("state", "commits", "removable")}, listed())
